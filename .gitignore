@@ -3,3 +3,11 @@
 .Rdata
 .httr-oauth
 .DS_Store
+
+# Project specific
+figures/
+references/
+resources/
+results/
+samples/
+meeting_notes_link.txt

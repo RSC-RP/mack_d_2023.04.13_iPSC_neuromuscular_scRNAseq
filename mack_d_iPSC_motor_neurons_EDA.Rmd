@@ -1,0 +1,832 @@
+---
+title: "iPSC Motor Neurons Time-series Data"
+author: "Jenny L Smith"
+date: "`R Sys.Date()`"
+output: html_document
+---
+
+# Set-up 
+
+```{r set-up, echo=FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80),
+                      tidy=TRUE,
+                      fig.align='center',
+                      fig.width = 10, fig.height = 10,
+                      eval = TRUE)
+
+options(stringsAsFactors = FALSE, max.print = 100)
+table = function (..., useNA = 'ifany') base::table(..., useNA = useNA)
+```
+
+```{r message=FALSE,warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(stringr)
+library(ggplot2)
+library(tibble)
+library(glue)
+library(RColorBrewer)
+
+library(Seurat)
+library(SeuratDisk)
+
+library(DoubletFinder)
+library(scDblFinder)
+library(BiocSingular)
+```
+
+```{r}
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter","dplyr")
+conflicted::conflict_prefer("saveRDS","base")
+```
+
+# Parallelization 
+
+```{r}
+library(future)
+# check the current active plan
+plan()
+```
+
+```{r}
+plan("multisession", workers = 16)
+plan()
+options(future.globals.maxSize = 60000 * 1024^2)
+```
+
+# Background 
+
+## For the iPSC-motor neuron library prep:
+
+1. Time points between the iPSC ~ day 27: 
+
+  * I froze the cells down along the differentiation at each time point from the same batch, by making multiple wells from the beginning. 
+  * When the diff reached day 27, I ended up having frozen vials of cells at 10 different time points (iPSC, d3, d5, d8, d11, d15, d18, d21, d24, d27).
+  * Since the 10x Chromium protocol recommends running the library experiment no more than 5 libraries at a time, I split them into 2 sets (5 time points each) and serially made the libraries. The reason for doing the freeze-thawing step in the early phase of differentiation -> Running the library experiment with the fresh (unfrozen) cells from all 16 different time points in one day was unrealistic. 
+  * But by experience, we knew that the cells younger than day27 survive pretty well (viability >75%) after getting defrosted. So we decided to use the freeze-thawing strategy for those early time points and make libraries whenever we want. 
+
+2. Time points after day 27: 
+
+  * Since the cells after the neurogenic phase do not survive well after the freeze-thawing cycle, we had to use 'fresh' culture for these library preps. 
+  * So I thawed & plated the day18 progenitor stock vials on several different days to do a sort of temporally 'staggered culture' 
+  * I harvested the 5 groups of cells (d30, d35, d40, d45, d50) on the same day for library experiment. 
+  * These 5 libraries were made on the same day. 
+  
+  
+## Human iPSCs
+
+https://www.nature.com/articles/ncomms7626
+
+https://www.ncbi.nlm.nih.gov/books/NBK554616/
+
+
+
+# Sample Manifest
+
+See https://support.10xgenomics.com/single-cell-gene-expression/software/pipelines/latest/output/gex-metrics
+
+```{r}
+expn_mats <- dir("resources", pattern = "filtered_feature_bc.+h5|filtered_feature_bc_matrix.h5", recursive = TRUE, full.names = TRUE) %>% 
+  grep("too few|Day50", ., value=TRUE, invert = TRUE)
+
+raw_mats <- dir("resources", pattern = "raw_feature_bc", recursive = TRUE, full.names = TRUE) 
+
+summaries <- dir("resources", pattern = "^metrics_summary.csv", recursive = TRUE, full.names = TRUE) %>% 
+  grep("too few|Day50", ., value=TRUE, invert = TRUE)
+
+length(expn_mats)
+length(raw_mats)
+length(summaries)
+```
+
+
+```{r}
+sample_manifest <- data.frame(expression_matrix_path = expn_mats, 
+                              raw_matrix_path = raw_mats,
+                              summary_path=summaries) %>%
+  mutate(time_point=str_split_fixed(expression_matrix_path, pattern="/", n=3)[,2]) %>% 
+  mutate(sample_id=paste0("iPSC_", tolower(time_point)), 
+         organism="human", 
+         tissue="motor_neuron", 
+         cell_type="iPSC") %>% 
+  mutate(time_point=gsub("Day", "", time_point) %>% gsub("iPSC", 0, .) %>% as.numeric(.)) %>% 
+  mutate(batch=case_when(
+    time_point < 15 ~ "batch1",
+    time_point >= 15 & time_point < 30 ~ "batch2",
+    time_point >= 30 & time_point <= 50 ~ "batch3"
+  )) %>% 
+  arrange(time_point) %>% 
+  filter(!grepl("too few cells", expression_matrix_path)) %>% 
+  select(sample_id, time_point,batch, organism:cell_type, everything())
+
+qc_data <- purrr::map_dfr(1:nrow(sample_manifest), function(i){
+    read.csv(sample_manifest[i,'summary_path']) %>% 
+      janitor::clean_names() %>% 
+      mutate(sample_id=sample_manifest[i,'sample_id']) %>% 
+      mutate_all(~as.character(.)) %>% 
+      select(sample_id, everything())
+}) 
+
+sample_manifest <- sample_manifest %>% 
+  left_join(., qc_data, by="sample_id") %>% 
+  mutate(across(.cols = c(estimated_number_of_cells:number_of_reads, total_genes_detected:median_umi_counts_per_cell),
+                .fns =  ~as.numeric(gsub(",","", .x)))) %>% 
+  rename_at(vars(valid_barcodes:fraction_reads_in_cells), ~paste0(.,"_percent")) %>% 
+  mutate(across(.cols = matches("_percent$"),
+                .fns =  ~as.numeric(gsub("\\%","", .x))))
+
+sample_manifest
+dim(sample_manifest)
+# any(duplicated(sample_manifest$sample_id))
+# write.csv(sample_manifest, "samples/mack_d_iPSC_motor_neurons_sample_manifest.csv", row.names = FALSE)
+```
+
+```{r}
+qc_plots_data <- sample_manifest %>% 
+  select(sample_id, batch, 
+         estimated_number_of_cells,
+         median_genes_per_cell, 
+         number_of_reads,
+         sequencing_saturation_percent, 
+         valid_barcodes_percent, 
+         reads_mapped_confidently_to_genome_percent,
+         reads_mapped_confidently_to_transcriptome_percent, 
+         total_genes_detected) %>% 
+  pivot_longer(cols = -c(sample_id,batch),
+               names_to = "stat", 
+               values_to = "value") %>% 
+  mutate(sample_id=factor(sample_id, levels=unique(sample_id)))
+
+# head(qc_plots_data)
+```
+
+```{r fig.height=10, fig.width=10}
+# pdf("figures/cellranger_qc_metrics_boxplots.pdf", height = 10, width = 10)
+p1 <- ggplot(qc_plots_data, aes(x = stat, y=value)) +
+  geom_boxplot(outlier.color = NA) +
+  geom_point(aes(color=sample_id), position = position_jitter(width = 0.2), 
+             size=1.5) +
+  facet_wrap(~stat, scales = 'free') +
+  scale_color_manual(values=c(brewer.pal(8, "Set1"), 
+                              ggpubr::get_palette(7, palette = "jco")[-1], 
+                              "darkseagreen2")) +
+  theme_classic() +
+  theme(legend.position = 'top', 
+        text = element_text(size=8))
+
+# p1
+# dev.off()
+```
+
+```{r fig.height=10, fig.width=10}
+# pdf("figures/cellranger_qc_metrics_byBatch_boxplots.pdf", height = 10, width = 10)
+
+p2 <- ggplot(qc_plots_data, aes(x = batch, y=value, fill=batch)) +
+  geom_boxplot(outlier.color = NA, alpha=0.25) +
+  geom_point(aes(color=sample_id), 
+             position = position_jitter(width = 0.2, height = 0), 
+             size=1.5) +
+  facet_wrap(~stat, scales = 'free') +
+  scale_fill_manual(values=c("seashell3", "paleturquoise3", "pink")) +
+  scale_color_manual(values=c(brewer.pal(8, "Set1"), 
+                              ggpubr::get_palette(7, palette = "jco")[-1], 
+                              "darkseagreen2")) +
+  theme_classic() +
+  theme(legend.position = 'top', 
+        text = element_text(size=8))
+
+# p2
+# dev.off()
+```
+
+
+# Genome Refs
+
+```{r eval=FALSE}
+suppressPackageStartupMessages(library(ensembldb))
+
+# db <- ensDbFromGtf("resources/genome/Homo_sapiens.GRCh38.109.chr.gtf.gz")
+
+#Warning: Could not determine length for all seqnames
+db <- ensDbFromGtf(gtf = "/gpfs/shared_data/10X/cellranger-7.0.0/refdata-gex-GRCh38-2020-A/genes/genes.gtf", 
+                   genomeVersion = "GRCh38",
+                   organism = "Homo_sapiens",
+                   version = 98)
+```
+
+```{r}
+edb <- ensembldb::EnsDb("resources/genome/Homo_sapiens.GRCh38.98.sqlite")
+
+# edb
+```
+
+```{r}
+gids <- ensembldb::keys(edb, keytype = "GENEID")
+
+idmap <- AnnotationDbi::select(edb, keytype="GENEID", 
+                      keys = gids, 
+                      columns = c("GENEID","GENEBIOTYPE","GENENAME","SYMBOL")) %>% 
+  janitor::clean_names()
+
+head(idmap)
+dim(idmap) #36601
+```
+
+
+# Read in iPSC
+
+```{r}
+filtered_matrices <- sample_manifest %>% 
+  pull(expression_matrix_path, name = sample_id)
+
+# temp <- Read10X_h5(filtered_matrices[3])
+# head(temp)
+# head(rownames(temp)) #gene symbols
+# grep("^MT-", rownames(temp), value = TRUE) #OK
+```
+
+```{r eval=FALSE}
+seurat_objs <- purrr::map(seq_along(filtered_matrices), function(i){
+  id <- names(filtered_matrices)[i]
+  path <- filtered_matrices[i]
+  counts <- Read10X_h5(path)
+  seurat_obj <-  CreateSeuratObject(counts=counts,
+                                    assay="RNA",
+                                    project=id)
+  
+  seurat_obj <- PercentageFeatureSet(seurat_obj,
+                                   assay="RNA",
+                                   pattern = "^MT-",
+                                   col.name = "percent.mt")
+  seurat_obj <- PercentageFeatureSet(seurat_obj,
+                                     assay="RNA",
+                                     pattern = "^RP[SL]", 
+                                     col.name = "percent.ribo")
+})
+names(seurat_objs) <- names(filtered_matrices)
+# base::saveRDS(seurat_objs, "results/seurat/individual_objs/mack_iPSC_motor_neuron_seurat_obj_list.RDS")
+
+# seurat_objs$iPSC_ipsc$percent.ribo %>% quantile()
+# seurat_objs$iPSC_ipsc$percent.mt %>%  quantile()
+```
+
+```{r eval=FALSE}
+if(!exists("seurat_objs")){
+  seurat_objs <- readRDS("results/seurat/individual_objs/mack_iPSC_motor_neuron_seurat_obj_list.RDS")
+}
+
+length(seurat_objs) #14
+# names(seurat_objs)
+# sapply(seurat_objs, dim)
+
+# missing 1,630 - need to map these. 
+table(rownames(seurat_objs$iPSC_ipsc@assays$RNA@meta.features) %in% idmap$genename) 
+
+merged_obj <- merge(seurat_objs$iPSC_ipsc, y=seurat_objs[2:14],
+                    add.cell.ids=names(filtered_matrices),
+                    project="iPSC")
+
+# An object of class Seurat 
+# 33538 features across 61,518 samples within 1 assay 
+# Active assay: RNA (33538 features, 0 variable features)
+#  2 layers present: counts, data
+merged_obj 
+# saveRDS(merged_obj,"results/seurat/iPSC_motor_neuron_time-course_Seurat_obj.RDS")
+```
+
+```{r}
+current_path <- file.path("results/seurat")
+current_obj <- NULL
+current_merge_obj <- "iPSC_motor_neuron_time-course_SCT_UMAP_LeidenClust_Seurat_obj.RDS"
+  #"iPSC_motor_neuron_time-course_Seurat_obj.RDS"
+
+if(!exists("filt_obj") & !is.null(current_obj)){
+  filt_obj <- readRDS(file.path(current_path, current_obj))
+}else if(!exists("merged_obj") & is.null(current_obj) ){
+  message(glue("Loading the merged object {current_merge_obj}"))
+  merged_obj <- readRDS(file.path(current_path,current_merge_obj))
+}
+```
+
+```{r}
+# colnames(merged_obj@meta.data)
+```
+
+
+## QC Plots
+
+nFeature_RNA is the number of genes detected in each cell. 
+* Low nFeature_RNA for a cell indicates that it may be dead/dying or an empty droplet.
+
+nCount_RNA is the total number of molecules (UMI) detected within a cell. 
+
+* High nCount_RNA and/or nFeature_RNA indicates that the "cell" may in fact be a doublet (or multiplet).
+
+```{r}
+colors <- c("#E41A1C", "#377EB8", "#4DAF4A", "#F781BF", 
+            "blue1", "darkslategray3", "burlywood3", "#984EA3", 
+            "#FF7F00", "seagreen1", "maroon", "orchid", "darkblue", 
+            "azure2", "chartreuse1", "orange1", 
+            "deeppink", "darkslategray1", "green4", "navajowhite2", 
+            "brown3", "darkgoldenrod4", "deepskyblue1", "lightcoral") %>% 
+  c(., ggpubr::get_palette("jco", 4),
+    ggpubr::get_palette("npg", 4))
+
+length(colors)
+```
+
+```{r eval=FALSE, fig.height=5, fig.width=10}
+# pdf("figures/iPSC_MN_seurat_all_QC_metrics_noFilter.pdf", height = 10, width = 15)
+VlnPlot(
+  object = merged_obj,
+  features = c("nCount_RNA", "nFeature_RNA", "percent.mt","percent.ribo"),
+  ncol = 2,
+  alpha = 0.5,
+  pt.size = 0
+)
+# dev.off()
+```
+
+# Preprocess QC 
+
+https://satijalab.org/seurat/articles/sctransform_vignette.html
+https://nbisweden.github.io/workshop-scRNAseq/labs/compiled/seurat/seurat_01_qc.html#MitoRibo_filtering
+
+```{r eval=FALSE}
+merged_obj <- SCTransform(merged_obj, vst.flavor = "v2", verbose = T) %>%
+    RunPCA(npcs = 50, verbose = T) %>%
+    RunUMAP(reduction = "pca", dims = 1:50, verbose = T) %>%
+    FindNeighbors(reduction = "pca", dims = 1:50, verbose = T) %>%
+    FindClusters(resolution = 0.8, verbose = T)
+
+# merged_obj
+
+new_meta <- merged_obj@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  left_join(., sample_manifest, by=c("orig.ident"="sample_id"))
+
+merged_obj <- AddMetaData(merged_obj,metadata = new_meta)
+merged_obj@meta.data %>% head()
+# merged_obj@reductions$umap # Number of dimensions: 2 
+# saveRDS(merged_obj, "results/seurat/iPSC_motor_neuron_time-course_SCT_UMAP_LeidenClust_Seurat_obj.RDS")
+```
+
+```{r fig.height=10, fig.width=10}
+# pdf("figures/iPSC_MN_seurat_UMAP_noFilter.pdf", height = 15, width = 15)
+DimPlot(merged_obj, label = T, repel = T, label.size = 7) + 
+  scale_color_manual(values = colors) +
+  ggtitle("Unsupervised clustering")
+# dev.off()
+```
+
+```{r}
+merged_obj$time_point_day <- factor(paste0("day_",merged_obj$time_point), levels=unique(paste0("day_",merged_obj$time_point)))
+
+# as.data.frame(table(merged_obj$batch, merged_obj$time_point_day))
+```
+
+```{r fig.height=10, fig.width=10}
+d1 <- DimPlot(merged_obj, 
+        group.by = c("batch","time_point_day"),
+        label = T, 
+        repel = T,
+        label.size = 7) + 
+  scale_color_manual(values = colors)
+
+# pdf("figures/iPSC_MN_seurat_UMAP_batch_day_noFilter.pdf", height = 15, width = 20)
+d1
+# dev.off()
+```
+
+```{r}
+# pdf("figures/iPSC_MN_seurat_PCA_elbow_noFilter.pdf", height = 5, width = 10)
+ElbowPlot(merged_obj,ndims = 50)
+# dev.off()
+```
+
+```{r fig.height=10, fig.width=10}
+# pdf("figures/iPSC_MN_seurat_PCA_elbow_noFilter.pdf", height = 10, width = 10)
+VizDimLoadings(merged_obj, dims = 1:4, reduction = "pca")
+# dev.off()
+```
+
+```{r}
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(merged_obj), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(merged_obj)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+
+# pdf("figures/iPSC_MN_seurat_topVarFeatures_noFilter.pdf", height = 5, width = 10)
+plot2
+# dev.off()
+```
+
+
+# Doublet Scores
+
+scDblFinder operation
+  * The input data for scDblFinder (denoted x below) can be either i) a count matrix (full or sparse), with genes/features as rows and cells/droplets as columns; or ii) an object of class SingleCellExperiment. 
+  * the object should not contain empty drops, but should **not otherwise have undergone very stringent filtering** (which would bias the estimate of the doublet rate). 
+  
+> initial processing, artificial doublets (either random or between-cluster, depending on the settings) are generated, then a nearest neighbor (kNN) network is generated. 
+
+> Rather than selecting a single neighborhood size, as most kNN-based methods do, scDblFinder gathers statistics at various neighborhood sizes, thereby enabling the downstream classifier to select the most informative size(s), which might also differ across the expression space. 
+
+Doublet Considerations:
+  * https://bioinformatics-core-shared-training.github.io/CrukCiScRnaSeqMatDev/AnaWiSce/AnaCourse1/BookDownCourse1/doubletDetectionTop.html
+  * "Doublet detection procedures should only be applied to libraries generated in the same experimental batch. It is obviously impossible for doublets to form between two cells that were captured separately." 
+  * "It is also difficult to interpret doublet predictions in data containing cellular trajectories."
+
+10x Doublets expected:
+  * https://kb.10xgenomics.com/hc/en-us/articles/360001378811-What-is-the-maximum-number-of-cells-that-can-be-profiled-
+  * closer to 4.8% expected by the docs, though many must be excluded by CellRanger in the filtered_bc_matrix
+
+Benchmarks:
+ - https://f1000research.com/articles/10-979/v2#ref19
+ - https://arxiv.org/pdf/2101.08860.pdf
+ - https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7897250/
+
+```{r eval=FALSE}
+if(!exists("seurat_objs")){
+  seurat_objs <- readRDS("results/seurat/individual_objs/mack_iPSC_motor_neuron_seurat_obj_list.RDS")
+}
+
+job::job({
+  
+  doublet_scores <- purrr::map_dfr(names(seurat_objs), function(x){
+    
+        outfile <- glue::glue("results/seurat/individual_objs/mack_{x}_motor_neuron_SCT_doublets_seurat_obj.RDS")
+        
+        if(!file.exists(outfile)){
+          
+          print(glue("Processing {x}"))
+          # normalize
+          obj <- SCTransform(seurat_objs[[x]], method = "glmGamPoi")  
+          
+          # cluster
+          obj <- obj %>%
+            RunPCA(npcs = 50, verbose = F) %>%
+            RunUMAP(n.components = 3, reduction = "pca",
+                    dims = 1:50, verbose = F) %>%
+            FindNeighbors(reduction = "pca", dims = 1:50, verbose = F) %>%
+            FindClusters(resolution = 0.8, verbose = F)
+          
+          print(glue("SCE to doublet finder {x}"))
+          sce <- Seurat::as.SingleCellExperiment(obj)
+          doublets <- computeDoubletDensity(sce,  
+                                            k = 50, #default
+                                            subset.row = VariableFeatures(obj))
+          doublets_clust <- scDblFinder(sce,
+                                        clusters = "seurat_clusters", 
+                                        nfeatures = VariableFeatures(obj), 
+                                        k = NULL, #default - allow alg to select K from examining a number of different values. 
+                                        returnType = "table")
+          
+          print(glue("Update Metadata for {x}"))
+          obj <- AddMetaData(obj, metadata = as.data.frame(obj@reductions$umap@cell.embeddings))
+          obj$doublet_score <- doublets
+          obj$doublet_outlier <- obj$doublet_score > quantile(obj$doublet_score, probs = c(0.98)) # assume 2% doublet rate?
+          obj <- AddMetaData(obj, metadata = filter(as.data.frame(doublets_clust), type =="real"))
+          
+          print(glue("Saving {outfile}"))
+          base::saveRDS(obj,outfile)
+        }else{
+          obj <- readRDS(outfile)
+        }
+        
+        meta <- as.data.frame(obj@meta.data)
+        return(meta)
+      })
+  # save the results in a csv file
+  write.csv(doublet_scores, "results/seurat/doublet_scores/mack_iPSC_MN_scDblFinder_scores.csv", row.names = TRUE)
+}, import = c("seurat_objs"))
+```
+
+```{r}
+doublet_scores <- read.csv("results/seurat/doublet_scores/mack_iPSC_MN_scDblFinder_scores.csv") %>% 
+  mutate(id=factor(orig.ident, levels=unique(orig.ident)),
+         barcode=X) %>%
+  left_join(., sample_manifest, by=c("orig.ident"="sample_id")) %>%
+  rename_at(vars(cluster,SCT_snn_res.0.8, seurat_clusters), ~paste0(.,"_per_sample"))
+
+# head(doublet_scores)
+```
+
+```{r}
+doublet_scores %>% 
+  select(orig.ident,barcode,
+         distanceToNearest,score,
+         class,matches("^ratio")) %>% 
+  head()
+```
+
+```{r eval=FALSE}
+purrr::map(unique(doublet_scores$orig.ident), function(x){
+  
+  basefile <- glue("figures/doublets/iPSC_MN_doublet_scores_{x}")
+  chk <- doublet_scores %>% 
+    filter(orig.ident == x)
+  
+  p1 <- ggplot(chk, aes(x=umap_1, y=umap_2, color = as.factor(seurat_clusters_per_sample))) +
+      geom_point(alpha=0.7) +
+      scale_color_manual(values=colors) +
+      theme_classic()
+
+  p2 <-  ggplot(chk, aes(x=umap_1, y=umap_2, color = doublet_score)) +
+    geom_point() +
+    scale_color_viridis_c() +
+    theme_classic()
+  
+  p3 <- ggplot(chk, aes(x=umap_1, y=umap_2, color = doublet_outlier)) +
+    geom_point(alpha=0.7) +
+    scale_color_viridis_d(direction = -1) +
+    theme_classic()
+  
+  p4 <- ggplot(chk, aes(x=umap_1, y=umap_2, color = score)) +
+    geom_point() +
+    scale_color_viridis_c() +
+    theme_classic()
+  
+  p5 <- ggplot(chk, aes(x=umap_1, y=umap_2, color = class)) +
+    geom_point(alpha=0.7) +
+    scale_color_viridis_d() +
+    theme_classic()
+  
+  png(glue(basefile, "_computeDoubletDensity.png"), width = 20, height = 8, res=150, units = "in")
+  print(p1 + p2 + p3 + patchwork::plot_layout(guides = 'collect') + patchwork::plot_annotation(title = x))
+  dev.off()
+  
+  png(glue(basefile, "_scDblFinder.png"), width = 20, height = 8, res=150, units = "in")
+  print(p1 + p4 + p5 + patchwork::plot_layout(guides = 'collect') + patchwork::plot_annotation(title = x))
+  dev.off()
+
+}) 
+```
+
+```{r}
+merged_obj@meta.data %>% 
+  mutate(id=factor(orig.ident, levels=unique(orig.ident))) %>% 
+
+  ggplot(., aes(x=id,fill=id)) +
+  geom_bar() +
+  scale_fill_manual(values=colors) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
+```
+
+```{r}
+# pdf("figures/doublets/iPSC_MN_doublet_scores_scDblFinder_barplot.pdf", height = 7, width = 12)
+doublet_scores %>% 
+  mutate(class=factor(class, levels=rev(c("doublet","singlet")))) %>% 
+ggplot(., aes(x=id, fill=class)) +
+  geom_bar() +
+  scale_fill_manual(values=colors) +
+  labs(y="number of cells",x="") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
+# dev.off()
+```
+
+
+```{r fig.height=5, fig.width=10, eval=FALSE}
+# pdf("figures/doublets/iPSC_MN_scDblFinder_noFilter_ridgePlot.pdf", height = 10, width = 10)
+ggplot(doublet_scores, aes(y=id, x=score, fill=id)) +
+  ggridges::stat_density_ridges(quantile_lines = TRUE, 
+                                quantiles = 0.5, alpha=0.75, 
+                                scale = 0.9) +
+  geom_point(aes(color=id), 
+             shape="|",
+             size=2,
+             alpha=0.7,
+             position = position_nudge(y=-0.15)) +
+  scale_fill_manual(values=colors) +
+  scale_color_manual(values=colors) +
+  theme_classic()
+# dev.off()
+```
+
+
+# Filter Cells
+
+https://www.10xgenomics.com/resources/analysis-guides/common-considerations-for-quality-control-filters-for-single-cell-rna-seq-data
+
+From Yadav 2023
+>All the 10x runs for each human sample were initially filtered with an nUMI cutoff of >1000 and then nuclei with less than 5% mitochondrial gene contamination were retained. Next, the mitochondrial genes were also removed from the matrices. A total of 55,289 nuclei that passed quality control filtering, with mean detection of 2,187 genes per nucleus (Figure S1).
+
+```{r}
+seurat_objs_dbls <- dir("results/seurat/individual_objs", 
+                        pattern = "mack_.+_motor_neuron_SCT_doublets_seurat_obj.RDS", full.names = TRUE) %>% 
+  set_names(str_split_fixed(basename(.), "_", n=4)[,3])
+
+head(seurat_objs_dbls)
+```
+
+```{r eval=FALSE}
+job::job({
+  # loop through each sample and create dynamic filting thresholds
+  filter_objs <- purrr::map(names(seurat_objs_dbls), function(x){
+    
+        outfile <- glue::glue("results/seurat/individual_objs/mack_{x}_motor_neuron_filtered_seurat_obj.RDS")
+        out_summary <- glue("results/seurat/filtering_stats/mack_iPSC_{x}_cell_filtering_threshold_summary.csv")
+        input <- readRDS(seurat_objs_dbls[x])
+    
+        if(!file.exists(outfile) | !file.exists(out_summary)){
+          
+          print(glue("Processing {x}"))
+          mito_outlier <- scuttle::isOutlier(input$percent.mt, type="higher")
+          rb_outlier <- scuttle::isOutlier(input$percent.ribo, type="lower")
+          ncount_outlier <- scuttle::isOutlier(input$nCount_RNA, type="higher")
+          nfeat_outlier <- scuttle::isOutlier(input$nFeature_RNA, type="higher")
+          
+          
+          mito_th <- attr(mito_outlier,which = "thresholds")["higher"]
+          rb_th <- attr(rb_outlier,which = "thresholds")["lower"]
+          ncount_th <- attr(ncount_outlier,which = "thresholds")["higher"]
+          nfeat_th <- attr(nfeat_outlier,which = "thresholds")["higher"]
+          
+          to_retain <- WhichCells(input, 
+                                  expression = 
+                                    nFeature_RNA > 200 & #at least 200 genes assayed per cell
+                                    percent.ribo > rb_th &
+                                    percent.mt < mito_th &
+                                    class == "singlet")
+          input$to_retain <- as.numeric(colnames(input) %in%  to_retain)
+          
+          d1 <- DimPlot(input)
+          f1 <- FeaturePlot(input, 
+                            features = c("percent.mt","percent.ribo","to_retain"),
+                            ncol=3)
+          
+          outplot <- glue("figures/filtering/mack_{x}_motor_neuron_filtered_seurat_UMAP.png")
+          png(outplot,height = 7, width = 20, units="in", res=150)
+          print(d1 + f1 + patchwork::plot_annotation(title=x) + patchwork::plot_layout(widths = c(0.5, 1)))
+          dev.off()
+          
+          obj_filt <- subset(
+                          x = input,
+                          subset = 
+                            nFeature_RNA > 200 &
+                            percent.ribo > rb_th &
+                            percent.mt < mito_th &
+                            class == "singlet"
+                        )
+
+          print(glue("Saving {outfile}"))
+          base::saveRDS(obj_filt, outfile)
+          # Save the thresholds to a file
+          ths <-  data.frame(sample=x,
+                           mito_th=mito_th,
+                           rb_th=rb_th,
+                           ncount_th=ncount_th,
+                           nfeat_th=nfeat_th,
+                           input_number_cells=ncol(input),
+                           output_number_cells=ncol(obj_filt))
+          write.csv(ths,out_summary, row.names = FALSE)
+
+        }else{
+          print(glue("Reading in RDS results for {x}"))
+          obj_filt <- readRDS(outfile)
+        }
+        return(obj_filt)
+      })
+
+}, import = c("seurat_objs_dbls"))
+```
+
+```{r}
+head(filter_objs)
+length(filter_objs)
+```
+
+```{r}
+threshold_summary <- purrr::map_dfr(dir("results/seurat/filtering_stats/",
+                                        pattern = "filtering_threshold_summary.csv", 
+                                        full.names = TRUE), function(x){
+  read.csv(x)
+})
+
+threshold_summary
+```
+
+# Merge Objests and Normalize 
+
+```{r}
+i
+seurat_objs_filt <- dir("results/seurat/individual_objs", 
+                        pattern = "mack_.+_motor_neuron_filtered_seurat_obj.RDS",
+                        full.names = TRUE) %>% 
+  set_names(str_split_fixed(basename(.), "_", n=4)[,3])
+
+head(seurat_objs_filt)
+```
+
+```{r}
+merged_obj <- merge(seurat_objs_filt$iPSC_ipsc, y=seurat_objs_filt[2:14],
+                    add.cell.ids=names(seurat_objs_filt),
+                    project="iPSC")
+
+# An object of class Seurat 
+# 33538 features across 61,518 samples within 1 assay 
+# Active assay: RNA (33538 features, 0 variable features)
+#  2 layers present: counts, data
+merged_obj 
+# saveRDS(merged_obj,"results/seurat/iPSC_motor_neuron_time-course_filtered_Seurat_obj.RDS")
+```
+
+
+```{r}
+#regularized negative binomial regression to normalize UMI count data
+#Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures().
+obj_filt <- SCTransform(obj_filt,
+                         assay="RNA",
+                         new.assay.name = "SCT",
+                         vars.to.regress = "percent.mt",
+                         method = "glmGamPoi",
+                         verbose = TRUE)  %>% 
+    RunPCA(npcs = 50, verbose = T) %>%
+    RunUMAP(reduction = "pca",
+            dims = 1:50, 
+            n.components = 3,
+            n.neighbors = 30,# default 30
+            metric = "cosine",
+            min.dist = 0.2, # default 0.3
+            return.model = TRUE,
+            verbose = T) %>%
+    FindNeighbors(reduction = "pca",
+                  dims = 1:50, 
+                  k.param = 20,
+                  nn.method = "annoy",
+                  annoy.metric = "cosine",
+                  n.trees = 100,
+                  verbose = T) %>%
+    FindClusters(resolution = 0.8, 
+                 algorithm = 4, 
+                 verbose = T)
+
+obj_filt <- AddMetaData(obj_filt, as.data.frame(obj_filt@reductions$umap@cell.embeddings))
+
+obj_filt #53,993 features across 23496 samples within 2 assays 
+```
+
+```{r fig.height=10}
+# pdf("figures/sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
+ElbowPlot(obj_filt,ndims = 100, reduction = "pca")
+# dev.off()
+# 
+# pdf("figures/transform_1-4PCs_loadings.pdf", height = 10, width=7)
+VizDimLoadings(obj_filt, dims = 1:4, reduction = "pca")
+# dev.off()
+```
+
+```{r}
+# pdf("figures/byLeidenCluster_sct_UMAP.pdf",height = 10, width= 17)
+DimPlot(obj_filt,
+        dims = c(1,2))
+# dev.off()
+
+# pdf("figures/bSampleID_sct_UMAP.pdf",height = 10, width= 17)
+sampplot1 <- DimPlot(SetIdent(obj_filt, value=obj_filt$sample),
+        dims = c(1,2))
+sampplot2 <- DimPlot(SetIdent(obj_filt, value=obj_filt$sample),
+        dims = c(1,3))
+sampplot1 + sampplot2
+# dev.off()
+
+# pdf("figures/byOutcome_sct_UMAP.pdf", height = 10, width = 10)
+DimPlot(SetIdent(obj_filt, value=obj_filt$outcome),
+        dims = c(1,2))
+# dev.off()
+```
+
+
+
+# Filtered Dataset Processing
+
+The FindClusters() function implements this procedure, and contains a resolution parameter that sets the ‘granularity’ of the downstream clustering, with increased values leading to a greater number of clusters. We find that setting this parameter between 0.4-1.2 typically returns good results for single-cell datasets of around 3K cells. Optimal resolution often increases for larger datasets. 
+
+## SoupX
+
+https://rawcdn.githack.com/constantAmateur/SoupX/204b602418df12e9fdb4b68775a8b486c6504fe4/inst/doc/pbmcTutorial.html
+
+https://academic.oup.com/gigascience/article/9/12/giaa151/6049831
+
+https://github.com/constantAmateur/SoupX/issues/44
+" Ideally you should run doublet removal first and exclude these cells when running SoupX, but it will make little practical difference." 
+
+https://github.com/constantAmateur/SoupX/issues/47
+
+
+
+
+
+# Session Info
+
+```{r}
+session_info()
+```
+
