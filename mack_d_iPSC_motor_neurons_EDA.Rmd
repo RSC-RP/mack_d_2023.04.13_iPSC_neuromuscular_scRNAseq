@@ -35,6 +35,7 @@ library(SeuratDisk)
 library(DoubletFinder)
 library(scDblFinder)
 library(BiocSingular)
+library(SoupX)
 ```
 
 ```{r}
@@ -59,7 +60,7 @@ options(future.globals.maxSize = 60000 * 1024^2)
 
 # Background 
 
-## For the iPSC-motor neuron library prep:
+## Library prep:
 
 1. Time points between the iPSC ~ day 27: 
 
@@ -75,6 +76,13 @@ options(future.globals.maxSize = 60000 * 1024^2)
   * I harvested the 5 groups of cells (d30, d35, d40, d45, d50) on the same day for library experiment. 
   * These 5 libraries were made on the same day. 
   
+Did the library prep use multiplexed samples?    
+https://support.10xgenomics.com/single-cell-gene-expression/software/pipelines/latest/what-is-cellplex -> 
+
+> No. I used one library per GEM well, but not mixing the libraries until the actual sequencing run with the Illumina cartridge. Please refer to the 10x protocol I used for all of the library prep: 
+
+https://cdn.10xgenomics.com/image/upload/v1660261285/support-documents/CG000204_ChromiumNextGEMSingleCell3_v3.1_Rev_D.pdf
+
   
 ## Human iPSCs
 
@@ -82,6 +90,36 @@ https://www.nature.com/articles/ncomms7626
 
 https://www.ncbi.nlm.nih.gov/books/NBK554616/
 
+The neurons are differentiated from WTC11 iPSCs. https://hpscreg.eu/cell-line/UCSFi001-A. For the MN differentiation, I attached our MN diff protocol used for this experiment. 
+>Population: Japanese.
+Omics: Genome sequenced.
+Derived from sampling site: Leg; skin. Cell type=Fibroblast.
+
+To help with understanding what cell types we might expect at Day 0 and early time-points. -> for the undifferentiated iPSC, we expect the culture enriched with pluripotent cells, usually show high expression of OCT4 (POU5F1), SOX2, NANOG. 
+
+https://github.com/regan-hamel/h-iPSCs-MNI/blob/master/R%20workflow_iMNs_LThiry_2020.Rmd
+
+GTEX - fibroblasts
+https://biospecimens.cancer.gov/resources/sops/docs/GTEx_SOPs/BBRB-PR-0004-W1%20GTEx%20Tissue%20Harvesting%20Work%20Instruction.pdf
+
+>Preferred Location: Left or right leg (designate side) 2 cm below
+patella on medial side. If not available, an “other” location should be
+chosen.
+GTEx Tissue Harvesting Work Instruction
+PR-0004-W1 VER. 03.05 Effective Date: mm/dd/yyyy Page 7 of 21
+4.3.6.6.2 Procedure: After cleaning with alcohol two times, remove a portion
+of skin and send to aliquot processing station. From the skin portion,
+prepare two 4 mm squared aliquots, place in fibroblast tube
+containing culture medium, and tightly seal with parafilm for
+shipment directly to the LDACC (Yellow Kit). Return to skin tissue and
+prepare the remaining aliquots of skin and subcutaneous adipose
+tissue.
+4.3.6.6.3 Skin for Fibroblast Culture
+4.3.6.6.3.1 Skin, fibroblast culture: Two 4 mm x 4 mm x thickness.
+Thickness not to exceed 4 mm.
+4.3.6.6.4 Skin Tissue for Fixation in PAXgene®
+Underlying visible
+subcutaneous fat should be trimmed off.
 
 
 # Sample Manifest
@@ -101,7 +139,6 @@ length(expn_mats)
 length(raw_mats)
 length(summaries)
 ```
-
 
 ```{r}
 sample_manifest <- data.frame(expression_matrix_path = expn_mats, 
@@ -231,12 +268,55 @@ idmap <- AnnotationDbi::select(edb, keytype="GENEID",
                       columns = c("GENEID","GENEBIOTYPE","GENENAME","SYMBOL")) %>% 
   janitor::clean_names()
 
-head(idmap)
-dim(idmap) #36601
+# head(idmap)
+# dim(idmap) #36601
+```
+
+```{r eval=FALSE}
+ref_expn <- read.delim("resources/human_protein_atlas/rna_single_cell_type.tsv") %>% 
+  janitor::clean_names()
+
+# head(ref_expn)
 ```
 
 
-# Read in iPSC
+```
+wget https://storage.googleapis.com/gtex_analysis_v8/annotations/GTEx_Analysis_v8_Annotations_SampleAttributesDS.txt
+wget https://storage.googleapis.com/gtex_analysis_v8/rna_seq_data/GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz
+````
+
+https://gtexportal.org/home/tissue/Cells_Cultured_fibroblasts?tissueSelect=Cells_Cultured_fibroblasts
+
+
+```{r eval=FALSE}
+gtex_samples <- read.delim("resources/GTEX/GTEx_Analysis_v8_Annotations_SampleAttributesDS.txt")
+
+# head(gtex_samples)
+
+gtex_fibroblast_genes <- read.delim("resources/GTEX/GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct", comment.char = "#", skip = 2) %>% 
+  janitor::clean_names() %>% 
+  select(name:description, matches("fibroblast")) %>% 
+  arrange(desc(cells_cultured_fibroblasts)) %>% 
+  filter(!grepl("^MT-|^GAPDH|^RP[LS]", description)) %>% 
+  dplyr::slice(1:10)
+
+# head(gtex_fibroblast_genes)
+```
+
+```{r eval=FALSE}
+HB_genes <- RCurl::getURI(url = "https://www.genenames.org/cgi-bin/genegroup/download?id=940&type=node") %>% 
+  str_split(., "\n") %>% 
+  lapply(., function(x) str_split_fixed(x, pattern = "\t", n=13)) %>% 
+  as.data.frame() %>% 
+  set_colnames(.[1,]) %>% 
+  janitor::clean_names() %>% 
+  filter(!grepl("Approved symbol|^$", approved_symbol))
+
+# head(HB_genes)
+```
+
+
+# Read in iPSC Object
 
 ```{r}
 filtered_matrices <- sample_manifest %>% 
@@ -299,20 +379,19 @@ merged_obj
 
 ```{r}
 current_path <- file.path("results/seurat")
-current_obj <- NULL
-current_merge_obj <- "iPSC_motor_neuron_time-course_SCT_UMAP_LeidenClust_Seurat_obj.RDS"
+current_obj <- "iPSC_motor_neuron_time-course_filtered_merged_soupX_normalized_seurat_obj.RDS"
+current_merge_obj <- 
+  "iPSC_motor_neuron_time-course_SCT_UMAP_LeidenClust_Seurat_obj.RDS"
   #"iPSC_motor_neuron_time-course_Seurat_obj.RDS"
 
 if(!exists("filt_obj") & !is.null(current_obj)){
-  filt_obj <- readRDS(file.path(current_path, current_obj))
+  message(glue("Loading the merged object {current_obj}"))
+  merged_filt_obj <- readRDS(file.path(current_path, current_obj))
+  
 }else if(!exists("merged_obj") & is.null(current_obj) ){
   message(glue("Loading the merged object {current_merge_obj}"))
-  merged_obj <- readRDS(file.path(current_path,current_merge_obj))
+  merged_obj <- readRDS(file.path(current_path,"intermediate_objs",current_merge_obj))
 }
-```
-
-```{r}
-# colnames(merged_obj@meta.data)
 ```
 
 
@@ -333,13 +412,17 @@ colors <- c("#E41A1C", "#377EB8", "#4DAF4A", "#F781BF",
             "deeppink", "darkslategray1", "green4", "navajowhite2", 
             "brown3", "darkgoldenrod4", "deepskyblue1", "lightcoral") %>% 
   c(., ggpubr::get_palette("jco", 4),
-    ggpubr::get_palette("npg", 4))
+    ggpubr::get_palette("npg", 4)) %>% 
+  c("darkorchid1","magenta", "peru")
 
 length(colors)
 ```
 
 ```{r eval=FALSE, fig.height=5, fig.width=10}
+merged_obj
+
 # pdf("figures/iPSC_MN_seurat_all_QC_metrics_noFilter.pdf", height = 10, width = 15)
+Idents(merged_obj) <- merged_obj$orig.ident
 VlnPlot(
   object = merged_obj,
   features = c("nCount_RNA", "nFeature_RNA", "percent.mt","percent.ribo"),
@@ -374,21 +457,18 @@ merged_obj@meta.data %>% head()
 # saveRDS(merged_obj, "results/seurat/iPSC_motor_neuron_time-course_SCT_UMAP_LeidenClust_Seurat_obj.RDS")
 ```
 
-```{r fig.height=10, fig.width=10}
+```{r fig.height=10, fig.width=10, eval=FALSE}
 # pdf("figures/iPSC_MN_seurat_UMAP_noFilter.pdf", height = 15, width = 15)
 DimPlot(merged_obj, label = T, repel = T, label.size = 7) + 
   scale_color_manual(values = colors) +
   ggtitle("Unsupervised clustering")
 # dev.off()
-```
 
-```{r}
-merged_obj$time_point_day <- factor(paste0("day_",merged_obj$time_point), levels=unique(paste0("day_",merged_obj$time_point)))
+merged_obj$time_point_day <- factor(paste0("day_",merged_obj$time_point),
+                                    levels=unique(paste0("day_",merged_obj$time_point)))
 
 # as.data.frame(table(merged_obj$batch, merged_obj$time_point_day))
-```
 
-```{r fig.height=10, fig.width=10}
 d1 <- DimPlot(merged_obj, 
         group.by = c("batch","time_point_day"),
         label = T, 
@@ -399,21 +479,15 @@ d1 <- DimPlot(merged_obj,
 # pdf("figures/iPSC_MN_seurat_UMAP_batch_day_noFilter.pdf", height = 15, width = 20)
 d1
 # dev.off()
-```
 
-```{r}
 # pdf("figures/iPSC_MN_seurat_PCA_elbow_noFilter.pdf", height = 5, width = 10)
 ElbowPlot(merged_obj,ndims = 50)
 # dev.off()
-```
 
-```{r fig.height=10, fig.width=10}
 # pdf("figures/iPSC_MN_seurat_PCA_elbow_noFilter.pdf", height = 10, width = 10)
 VizDimLoadings(merged_obj, dims = 1:4, reduction = "pca")
 # dev.off()
-```
 
-```{r}
 # Identify the 10 most highly variable genes
 top10 <- head(VariableFeatures(merged_obj), 10)
 
@@ -424,8 +498,35 @@ plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
 # pdf("figures/iPSC_MN_seurat_topVarFeatures_noFilter.pdf", height = 5, width = 10)
 plot2
 # dev.off()
-```
 
+
+n_cells_barplot <- merged_obj@meta.data %>% 
+  mutate(id=factor(orig.ident, levels=unique(orig.ident))) %>% 
+
+  ggplot(., aes(x=id,fill=id)) +
+  geom_bar() +
+  scale_fill_manual(values=colors) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
+
+# png("figures/preprocessed/iPSC_MN_seurat_number_cells_per_day_noFilter.png", 
+    height = 5, width = 8, units = "in", res = 150)
+n_cells_barplot
+# dev.off()
+
+median_umis <- merged_obj@meta.data %>% 
+  mutate(id=factor(orig.ident, levels=unique(orig.ident))) %>% 
+  select(id, median_umi_counts_per_cell, batch) %>% 
+  distinct() %>% 
+
+  ggplot(., aes(y=id, x = median_umi_counts_per_cell, fill = batch)) +
+  geom_col() +
+  theme_classic()
+
+# png("figures/preprocessed/cellranger_qc_metrics_byBatch_median_UMIs.png", height = 8, width = 7, units = "in",res = 150)
+median_umis
+# dev.off()
+```
 
 # Doublet Scores
 
@@ -517,7 +618,7 @@ doublet_scores <- read.csv("results/seurat/doublet_scores/mack_iPSC_MN_scDblFind
 # head(doublet_scores)
 ```
 
-```{r}
+```{r eval=FALSE}
 doublet_scores %>% 
   select(orig.ident,barcode,
          distanceToNearest,score,
@@ -569,17 +670,6 @@ purrr::map(unique(doublet_scores$orig.ident), function(x){
 ```
 
 ```{r}
-merged_obj@meta.data %>% 
-  mutate(id=factor(orig.ident, levels=unique(orig.ident))) %>% 
-
-  ggplot(., aes(x=id,fill=id)) +
-  geom_bar() +
-  scale_fill_manual(values=colors) +
-  theme_classic() +
-  theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
-```
-
-```{r}
 # pdf("figures/doublets/iPSC_MN_doublet_scores_scDblFinder_barplot.pdf", height = 7, width = 12)
 doublet_scores %>% 
   mutate(class=factor(class, levels=rev(c("doublet","singlet")))) %>% 
@@ -616,6 +706,7 @@ ggplot(doublet_scores, aes(y=id, x=score, fill=id)) +
 https://www.10xgenomics.com/resources/analysis-guides/common-considerations-for-quality-control-filters-for-single-cell-rna-seq-data
 
 From Yadav 2023
+
 >All the 10x runs for each human sample were initially filtered with an nUMI cutoff of >1000 and then nuclei with less than 5% mitochondrial gene contamination were retained. Next, the mitochondrial genes were also removed from the matrices. A total of 55,289 nuclei that passed quality control filtering, with mean detection of 2,187 genes per nucleus (Figure S1).
 
 ```{r}
@@ -623,7 +714,7 @@ seurat_objs_dbls <- dir("results/seurat/individual_objs",
                         pattern = "mack_.+_motor_neuron_SCT_doublets_seurat_obj.RDS", full.names = TRUE) %>% 
   set_names(str_split_fixed(basename(.), "_", n=4)[,3])
 
-head(seurat_objs_dbls)
+# head(seurat_objs_dbls)
 ```
 
 ```{r eval=FALSE}
@@ -667,7 +758,7 @@ job::job({
           print(d1 + f1 + patchwork::plot_annotation(title=x) + patchwork::plot_layout(widths = c(0.5, 1)))
           dev.off()
           
-          obj_filt <- subset(
+          merged_filt_obj <- subset(
                           x = input,
                           subset = 
                             nFeature_RNA > 200 &
@@ -677,7 +768,7 @@ job::job({
                         )
 
           print(glue("Saving {outfile}"))
-          base::saveRDS(obj_filt, outfile)
+          base::saveRDS(merged_filt_obj, outfile)
           # Save the thresholds to a file
           ths <-  data.frame(sample=x,
                            mito_th=mito_th,
@@ -685,20 +776,20 @@ job::job({
                            ncount_th=ncount_th,
                            nfeat_th=nfeat_th,
                            input_number_cells=ncol(input),
-                           output_number_cells=ncol(obj_filt))
+                           output_number_cells=ncol(merged_filt_obj))
           write.csv(ths,out_summary, row.names = FALSE)
 
         }else{
           print(glue("Reading in RDS results for {x}"))
-          obj_filt <- readRDS(outfile)
+          merged_filt_obj <- readRDS(outfile)
         }
-        return(obj_filt)
+        return(merged_filt_obj)
       })
 
 }, import = c("seurat_objs_dbls"))
-```
+names(filter_objs) <- paste0("iPSC_", names(seurat_objs_dbls))
 
-```{r}
+# merged_obj@meta.data %>% head()
 head(filter_objs)
 length(filter_objs)
 ```
@@ -708,117 +799,499 @@ threshold_summary <- purrr::map_dfr(dir("results/seurat/filtering_stats/",
                                         pattern = "filtering_threshold_summary.csv", 
                                         full.names = TRUE), function(x){
   read.csv(x)
+}) %>% 
+  mutate(id=paste0("iPSC_",sample)) %>% 
+  mutate(percent=round(output_number_cells/input_number_cells * 100, digits = 1)) %>% 
+  left_join(., sample_manifest, by=c("id"="sample_id")) %>% 
+  mutate(id=factor(id, levels=levels(doublet_scores$id))) %>% 
+  arrange(id)
+
+
+threshold_summary %>% head()
+# dim(threshold_summary) #14 36
+```
+
+```{r fig.width=10}
+# png("figures/filtering/mack_ipsc_motor_neuron_filtered_seurat_barplot.png",height = 8, width = 12, unit="in", res=150)
+threshold_summary %>% 
+  pivot_longer(cols = c(input_number_cells,output_number_cells), 
+               names_to = "status",
+               values_to = "number_of_cells") %>% 
+  group_by(id) %>% 
+  mutate_at(vars(percent), ~ifelse(duplicated(percent), "", paste0(.,"%\nretained"))) %>% 
+  ungroup() %>% 
+
+
+ggplot(., aes(y = number_of_cells, x = id, fill = status)) +
+  geom_col(position = position_dodge()) +
+  labs(x="") +
+  scale_y_continuous(limits = c(0, 10500)) +
+  geom_text(aes(label = percent), nudge_y = 300) +
+  scale_fill_viridis_d(option = "turbo", begin = 0.1) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
+# dev.off()
+```
+
+```{r}
+# pdf("figures/filtering/mack_ipsc_motor_neuron_filtered_seurat_mito_thresholds.pdf", height = 7, width = 10)
+ggplot(threshold_summary, aes(x=batch, y=mito_th, fill=batch)) +
+  geom_boxplot(alpha=0.25) +
+  geom_point(aes(color=id),
+             size=2,
+             position = position_jitter(width = 0.2, seed=2023)) +
+  scale_fill_brewer(palette = "Blues") +
+  scale_color_manual(values = colors) +
+  ggrepel::geom_text_repel(aes(label=id)) +
+  labs(x="",y="Mitochondrial Reads Threshold (%)") +
+  guides(color="none") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
+# dev.off()
+```
+
+
+
+# SoupX
+
+SoupX
+  * https://rawcdn.githack.com/constantAmateur/SoupX/204b602418df12e9fdb4b68775a8b486c6504fe4/inst/doc/pbmcTutorial.html
+  * https://academic.oup.com/gigascience/article/9/12/giaa151/6049831
+  * https://github.com/constantAmateur/SoupX/issues/44
+    * "Ideally you should run doublet removal first and exclude these cells when running SoupX, but it will make little practical difference." 
+  * https://github.com/constantAmateur/SoupX/issues/47
+
+
+The contamination fraction is parametrised as rho in the code, with rho=0 meaning no contamination and rho=1 meaning 100% of UMIs in a droplet are soup.
+
+While it is possible to run SoupX without clustering information, you will get far better results if some basic clustering is provided. Therefore, it is strongly recommended that you provide some clustering information to SoupX. 
+
+
+>  If you try and run it on a channel with  (e.g. a cell line, flow-sorted cells), you will likely get a warning, an error, and/or an extremely high contamination estimate. In such circumstances your best option is usually to manually set the contamination to something reasonable.
+
+```{r eval=FALSE}
+if(!exists("filter_objs")){
+  seurat_objs_filt <- dir("results/seurat/individual_objs", 
+                          pattern = "mack_.+_motor_neuron_filtered_seurat_obj.RDS",
+                          full.names = TRUE) %>% 
+    set_names(str_split_fixed(basename(.), "_", n=4)[,2])
+  
+  filter_objs <- purrr::map(seurat_objs_filt, function(x) {
+          obj <- readRDS(x) 
+    })
+  names(filter_objs) <- paste0("iPSC_", names(filter_objs))
+}
+
+# head(filter_objs)
+
+if(!exists("soup_channels")){
+  soup_channels <- purrr::map(names(filter_objs), function(x){
+  
+    subset <- sample_manifest %>% 
+      filter(sample_id == x) 
+    
+    full_counts <- Read10X_h5(subset$raw_matrix_path)
+    filt_obj <- filter_objs[[x]]
+    cell_counts <- filt_obj@assays$RNA@counts
+    clusts <- filt_obj@meta.data$seurat_clusters
+    dim_red <- filt_obj@reductions$umap@cell.embeddings
+  
+    sc <- SoupChannel(tod=full_counts,
+                      toc=cell_counts)
+    sc <- setClusters(sc, clusts)
+    sc <- suppressWarnings(setDR(sc, dim_red))
+  })
+  names(soup_channels) <- names(filter_objs)
+  # length(soup_channels)
+}
+
+est_first_pass <- purrr::map(names(soup_channels), function(x){
+  print(x)
+  min <- 1
+  sc <- soup_channels[[x]]
+  outfile2 <- glue("figures/soupX/{x}_autoEstCont_figure.pdf")
+  tryCatch(expr = {
+    # estimate contamination fraction
+    adj_sc <-  autoEstCont(sc, tfidfMin = min, 
+                           doPlot = FALSE,
+                           verbose = FALSE)
+    
+  }, error = function(err){
+    print(glue("{x} Too homogenous for reliable estimate"))
+    return(NULL)
+  })
+  
+    if(exists("adj_sc")){
+      pdf(outfile2, height = 7, width = 10)
+      autoEstCont(adj_sc, tfidfMin = min, verbose = FALSE)
+      dev.off()
+      return(adj_sc)
+    }else{
+      return(x)
+    }
+})
+names(est_first_pass) <- names(soup_channels)
+
+# Manually adjust the missing datasets using the mean rho value from all other samples  
+missing <- sapply(est_first_pass, function(x) is.character(x))
+ave_rho <- round(mean(sapply(est_first_pass[!missing],  function(x) unique(x$metaData$rho))), digits = 3)
+remaining_est <- purrr::map(names(est_first_pass[missing]), function(x){
+   sc <- soup_channels[[x]]
+    # set contamination fraction
+    adj_sc <-  setContaminationFraction(sc,ave_rho)
+})
+names(remaining_est) <- names(est_first_pass[missing])
+
+# save the results 
+final_estimates <- c(est_first_pass[!missing], remaining_est)
+save_corrected_counts <- purrr::map(names(final_estimates), function(x){
+  outdir <- file.path("results/seurat/soupX_counts", x)
+  print(outdir)
+  if(!dir.exists(outdir)){
+    out = adjustCounts(final_estimates[[x]])
+    DropletUtils:::write10xCounts(outdir, out)
+  }
+})
+```
+
+```{r eval=FALSE}
+job::job({
+  saveRDS(final_estimates, "results/seurat/soupX_counts/mack_iPSC_MN_soupX_channel_objs_list.RDS")
+}, import = c("final_estimates"))
+```
+
+
+
+* iPSC_day40
+4833 cells default filters 
+  - estimates ~20% contamination fraction which is wildly high. 
+4497 cells after addition filters
+ - estimates ~6% contamination fraction which is FAR more sensible
+ 
+* iPSC_ipsc (day 0)
+ - causes errors "No plausible marker genes found.  Is the channel low complexity (see help)?  If not, reduce tfidfMin or soupQuantile"
+ - regardless of level of filtering
+
+  outfile <- glue("figures/soupX/{x}_MarkerDistribution_figure.pdf")
+    tryCatch(expr = {
+       p <- plotMarkerDistribution(adj_sc)
+       
+    }, error = function(e){
+      print(e)
+      # print("cannot plot plotMarkerDistribution")
+    })
+    
+    # pdf(outfile, height = 7, width = 10)
+    print(p)
+    # dev.off()
+    
+```{r eval=FALSE}
+estimates_df <- purrr::map_dfr(names(final_estimates), function(x){
+  final_estimates[[x]]$metaData %>% 
+    rownames_to_column("barcode") %>% 
+    mutate(sample = x)
+}) %>% 
+  mutate(id=factor(sample, levels=levels(doublet_scores$id)))
+
+head(estimates_df)
+table(estimates_df$id)
+# write.csv(estimates_df, "results/seurat/soupX_counts/mack_iPSC_MN_soupX_contamination_estimates.csv", row.names = FALSE)
+```
+
+```{r}
+estimates_df <- read.csv("results/seurat/soupX_counts/mack_iPSC_MN_soupX_contamination_estimates.csv") %>% 
+  mutate(id=factor(sample, levels=levels(doublet_scores$id)))
+
+head(estimates_df)
+```
+
+```{r}
+est_df_subset <- estimates_df %>% 
+  select(id, rho) %>% 
+  distinct()  %>% 
+  mutate(id=factor(id, levels=levels(doublet_scores$id)))
+
+
+est_plot <- ggplot(est_df_subset, aes(x =  id, y=rho, fill = id)) +
+  geom_col() +
+  scale_fill_manual(values = colors) +
+  labs(title="SoupX Ambient DNA Contamination Estimates", y="contamination fraction", x="") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 25, vjust = 1, hjust = 1))
+
+# png("figures/soupX/iPSC_MN_contamination_estimates.png", height = 5, width = 8, units = "in", res = 150)
+est_plot
+# dev.off()
+```
+
+
+# Merge Filtered Objects
+
+```{r eval=FALSE}
+outs <- dir("results/seurat/soupX_counts",pattern = "^iPSC", full.names = TRUE)
+names(outs) <- basename(outs)
+# head(outs)
+# length(outs) #14
+
+metadata <- merged_obj@meta.data
+
+soupx_objs <- purrr::map(outs, function(res){
+
+  counts <- Read10X(res)
+  id <- basename(res)
+  print(glue("{id}"))
+  
+  mdata <- metadata %>% 
+    filter(orig.ident == id) %>% 
+    mutate(barcode=gsub("^iPSC_[A-Za-z].+_","", barcode)) %>% 
+    filter(barcode %in% intersect(colnames(counts), barcode)) %>% 
+    set_rownames(.$barcode) %>% 
+    as.data.frame()
+    
+  seurat_obj <-  CreateSeuratObject(counts=counts, 
+                                    assay="RNA",
+                                    project = id, 
+                                    meta.data = mdata)
+  
+  seurat_obj <- PercentageFeatureSet(seurat_obj,
+                                 assay="RNA",
+                                 pattern = "^MT-",
+                                 col.name = "filtered_percent.mt")
+  
+  seurat_obj <- PercentageFeatureSet(seurat_obj,
+                                     assay="RNA",
+                                     pattern = "^RP[SL]", 
+                                     col.name = "filtered_percent.ribo")
 })
 
-threshold_summary
+# reorder the objects
+soupx_objs <- soupx_objs[levels(threshold_summary$id)]
 ```
 
-# Merge Objests and Normalize 
-
-```{r}
-i
-seurat_objs_filt <- dir("results/seurat/individual_objs", 
-                        pattern = "mack_.+_motor_neuron_filtered_seurat_obj.RDS",
-                        full.names = TRUE) %>% 
-  set_names(str_split_fixed(basename(.), "_", n=4)[,3])
-
-head(seurat_objs_filt)
+```{r eval=FALSE}
+job::job({
+  sapply(names(soupx_objs), function(x) saveRDS(soupx_objs[[x]],glue("results/seurat/individual_objs/mack_{x}_motor_neuron_filtered_soupX_seurat_obj.RDS")))
+}, import = c("soupx_objs"))
 ```
 
-```{r}
-merged_obj <- merge(seurat_objs_filt$iPSC_ipsc, y=seurat_objs_filt[2:14],
-                    add.cell.ids=names(seurat_objs_filt),
-                    project="iPSC")
+
+```{r eval=FALSE}
+merged_filt_obj <-  merge(x = soupx_objs$iPSC_ipsc, 
+                          y = soupx_objs[2:14],
+                          merge.data = FALSE,
+                          add.cell.ids=names(soupx_objs),
+                          project="iPSC")
+
 
 # An object of class Seurat 
-# 33538 features across 61,518 samples within 1 assay 
+# 33538 features across 51534 samples within 1 assay 
 # Active assay: RNA (33538 features, 0 variable features)
 #  2 layers present: counts, data
-merged_obj 
-# saveRDS(merged_obj,"results/seurat/iPSC_motor_neuron_time-course_filtered_Seurat_obj.RDS")
-```
-
-
-```{r}
-#regularized negative binomial regression to normalize UMI count data
-#Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures().
-obj_filt <- SCTransform(obj_filt,
-                         assay="RNA",
-                         new.assay.name = "SCT",
-                         vars.to.regress = "percent.mt",
-                         method = "glmGamPoi",
-                         verbose = TRUE)  %>% 
-    RunPCA(npcs = 50, verbose = T) %>%
-    RunUMAP(reduction = "pca",
-            dims = 1:50, 
-            n.components = 3,
-            n.neighbors = 30,# default 30
-            metric = "cosine",
-            min.dist = 0.2, # default 0.3
-            return.model = TRUE,
-            verbose = T) %>%
-    FindNeighbors(reduction = "pca",
-                  dims = 1:50, 
-                  k.param = 20,
-                  nn.method = "annoy",
-                  annoy.metric = "cosine",
-                  n.trees = 100,
-                  verbose = T) %>%
-    FindClusters(resolution = 0.8, 
-                 algorithm = 4, 
-                 verbose = T)
-
-obj_filt <- AddMetaData(obj_filt, as.data.frame(obj_filt@reductions$umap@cell.embeddings))
-
-obj_filt #53,993 features across 23496 samples within 2 assays 
-```
-
-```{r fig.height=10}
-# pdf("figures/sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
-ElbowPlot(obj_filt,ndims = 100, reduction = "pca")
-# dev.off()
-# 
-# pdf("figures/transform_1-4PCs_loadings.pdf", height = 10, width=7)
-VizDimLoadings(obj_filt, dims = 1:4, reduction = "pca")
-# dev.off()
+merged_filt_obj 
+# saveRDS(merged_filt_obj,"results/seurat/iPSC_motor_neuron_time-course_filtered_merged_soupX_seurat_obj.RDS")
 ```
 
 ```{r}
-# pdf("figures/byLeidenCluster_sct_UMAP.pdf",height = 10, width= 17)
-DimPlot(obj_filt,
-        dims = c(1,2))
-# dev.off()
-
-# pdf("figures/bSampleID_sct_UMAP.pdf",height = 10, width= 17)
-sampplot1 <- DimPlot(SetIdent(obj_filt, value=obj_filt$sample),
-        dims = c(1,2))
-sampplot2 <- DimPlot(SetIdent(obj_filt, value=obj_filt$sample),
-        dims = c(1,3))
-sampplot1 + sampplot2
-# dev.off()
-
-# pdf("figures/byOutcome_sct_UMAP.pdf", height = 10, width = 10)
-DimPlot(SetIdent(obj_filt, value=obj_filt$outcome),
-        dims = c(1,2))
-# dev.off()
+merged_filt_obj
 ```
-
-
 
 # Filtered Dataset Processing
 
-The FindClusters() function implements this procedure, and contains a resolution parameter that sets the ‘granularity’ of the downstream clustering, with increased values leading to a greater number of clusters. We find that setting this parameter between 0.4-1.2 typically returns good results for single-cell datasets of around 3K cells. Optimal resolution often increases for larger datasets. 
+```{r}
+#https://github.com/satijalab/seurat/issues/3622
+options(future.rng.onMisuse="ignore")
+```
 
-## SoupX
+```{r}
+# https://github.com/regan-hamel/h-iPSCs-MNI/blob/master/R%20workflow_iMNs_LThiry_2020.Rmd
+marker_genes <- list(MNPCs = c("CHAT", "ISL1", "ISL2", "MNX1", "OLIG2", "NEUROG2"),
+                INs = c("PAX3", "VSX2", "GATA3", "SOX14", "SIM1", "LBX1", "TLX3"),
+                NPCs = c("SOX1", "SOX2", "MKI67"),
+                Glial = c("SOX9", "S100B", "GFAP"),
+                Oligodendrocytes = c("PDGFRA", "GALC"),
+                iPSCs = c("NANOG", "POU5F1"))
+```
 
-https://rawcdn.githack.com/constantAmateur/SoupX/204b602418df12e9fdb4b68775a8b486c6504fe4/inst/doc/pbmcTutorial.html
+From Yadav 2023
 
-https://academic.oup.com/gigascience/article/9/12/giaa151/6049831
+>All the 10x runs for each human sample were initially filtered with an nUMI cutoff of >1000 and then nuclei with less than 5% mitochondrial gene contamination were retained. Next, the mitochondrial genes were also removed from the matrices. A total of 55,289 nuclei that passed quality control filtering, with mean detection of 2,187 genes per nucleus (Figure S1).
 
-https://github.com/constantAmateur/SoupX/issues/44
-" Ideally you should run doublet removal first and exclude these cells when running SoupX, but it will make little practical difference." 
+The FindClusters() function implements this procedure, and contains a resolution parameter that sets the ‘granularity’ of the downstream clustering, with increased values leading to a greater number of clusters. 
 
-https://github.com/constantAmateur/SoupX/issues/47
+We find that setting this parameter between 0.4-1.2 typically returns good results for single-cell datasets of around 3K cells. Optimal resolution often increases for larger datasets. 
+
+```{r eval=FALSE}
+job::job({
+  #regularized negative binomial regression to normalize UMI count data
+  #Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures().
+  merged_filt_obj <- SCTransform(merged_filt_obj,
+                           assay="RNA",
+                           new.assay.name = "SCT",
+                           vars.to.regress = "percent.mt",
+                           method = "glmGamPoi",
+                           return.only.var.genes = TRUE,
+                           verbose = FALSE)  %>% 
+      RunPCA(npcs = 50, verbose = FALSE) %>%
+      RunUMAP(reduction = "pca",
+              dims = 1:50, 
+              n.components = 3,
+              n.neighbors = 30,# default 30
+              metric = "cosine",
+              min.dist = 0.2, # default 0.3
+              return.model = TRUE,
+              verbose = T) 
+  
+  merged_filt_obj <- merged_filt_obj %>% 
+      FindNeighbors(reduction = "pca",
+                    dims = 1:50, 
+                    k.param = 20,
+                    nn.method = "annoy",
+                    annoy.metric = "cosine",
+                    n.trees = 100,
+                    verbose = T)
+  
+  merged_filt_obj <- merged_filt_obj %>% 
+      FindClusters(resolution = 1.0, 
+                   algorithm = 2, 
+                   verbose = T) 
+  
+  merged_filt_obj <- merged_filt_obj %>% 
+      FindClusters(resolution = 1.5, 
+                   algorithm = 2, 
+                   verbose = T)
+  
+  merged_filt_obj <- AddMetaData(merged_filt_obj,
+                                 as.data.frame(merged_filt_obj@reductions$umap@cell.embeddings))
+  
+  merged_filt_obj
+}, import = c("merged_filt_obj"))
+
+```
+
+```{r eval=FALSE}
+job::job({
+  #/active/taylor_s/people/jsmi26/CP-iPSC_motor_neurons/mack_d_2023.04.13_iPSC_neuromuscular_scRNAseq/
+  saveRDS(merged_filt_obj, 
+          "results/seurat/iPSC_motor_neuron_time-course_filtered_merged_soupX_normalized_seurat_obj.RDS")
+}, import = c("merged_filt_obj"))
+```
+
+```{r}
+merged_filt_obj$id <- factor(merged_filt_obj$orig.ident, levels = c(unique(merged_filt_obj$orig.ident)))
+
+# merged_filt_obj$SCT_snn_res.1.5 %>% unique %>% length()
+# merged_filt_obj$SCT_snn_res.1 %>% unique %>% length()
+
+merged_filt_obj$seurat_clusters <- merged_filt_obj$SCT_snn_res.1
+# merged_filt_obj$seurat_clusters %>%  unique() %>%  length
+ 
+Idents(merged_filt_obj) <- merged_filt_obj$SCT_snn_res.1
+```
+
+```{r fig.height=10}
+# pdf("figures/filtered_merged_results/sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
+# ElbowPlot(merged_filt_obj,ndims = 50, reduction = "pca")
+# dev.off()
+# # 
+# pdf("figures/filtered_merged_results/transform_1-4PCs_loadings.pdf", height = 10, width=7)
+# VizDimLoadings(merged_filt_obj, dims = 1:4, reduction = "pca")
+# dev.off()
+
+pdf("figures/filtered_merged_results/byLouvainCluster_sct_UMAP.pdf",height = 10, width= 17)
+DimPlot(merged_filt_obj, dims = c(1,2)) +
+  scale_color_manual(values = colors)
+dev.off()
+```
+
+```{r fig.height=10}
+filt_d1 <- DimPlot(merged_filt_obj, 
+        group.by = c("batch","id"),
+        label = T, 
+        repel = T,
+        label.size = 7) + 
+  scale_color_manual(values = colors)
+
+png("figures/filtered_merged_results_iPSC_MN_seurat_UMAP_batch_day_filtered.png", height = 15, width = 25,
+    units = "in", res = 150)
+filt_d1
+dev.off()
+
+filt_s1 <- DimPlot(merged_filt_obj, 
+        group.by = c("id"),
+        split.by = "batch",
+        label = T, 
+        repel = T,
+        label.size = 7) + 
+  scale_color_manual(values = colors)
+
+png("figures/filtered_merged_results_iPSC_MN_seurat_UMAP_splitBy_batch_day_filtered.png",
+    height = 15, width = 25, units = "in", res = 150)
+filt_s1
+dev.off()
+```
+
+
+```{r fig.height=10}
+fig <- plot_ly(merged_filt_obj@meta.data,
+               x = ~umap_1, y = ~umap_2, z = ~umap_3, 
+               color = ~id,
+               colors = colors)
+fig <- fig %>% 
+  add_markers( 
+    marker = list(size = 1), 
+    text = merged_filt_obj@meta.data$orig.ident,
+      hoverinfo = 'text')
+
+# fig <- fig %>% plotly::layout(scene = list(xaxis = list(title = 'PC1'),
+#                      yaxis = list(title = 'PC2'),
+#                      zaxis = list(title = 'PC3')))
+
+fig
+```
+
+
+```{r}
+Idents(merged_filt_obj) <- merged_filt_obj$orig.ident
+purrr::map(names(marker_genes), function(type){
+  outfile <- glue("figures/filtered_merged_results/iPSC_MN_expression_{type}_marker_genes.png")
+  
+  png(outfile, height = 10, width = 20, units = "in", res = 100)
+  print(FeaturePlot(merged_filt_obj, 
+                    features = marker_genes[[type]],
+                    label = TRUE))
+  dev.off()
+  
+})
+
+```
+
+```{r}
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(merged_filt_obj), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(merged_filt_obj)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+
+pdf("figures/filtered_merged_results/iPSC_MN_seurat_topVarFeatures.pdf", height = 5, width = 10)
+plot2
+dev.off()
+```
+
+
+```{r}
+median_umis_filt <- merged_filt_obj@meta.data %>% 
+  mutate(id=factor(orig.ident, levels=unique(orig.ident))) %>% 
+  select(id, median_umi_counts_per_cell, batch) %>% 
+  distinct() %>% 
+
+  ggplot(., aes(y=id, x = median_umi_counts_per_cell, fill = batch)) +
+  geom_col() +
+  theme_classic()
+
+median_umis_filt
+```
+
 
 
 
@@ -829,4 +1302,9 @@ https://github.com/constantAmateur/SoupX/issues/47
 ```{r}
 session_info()
 ```
+
+
+
+
+
 

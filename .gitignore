@@ -4,10 +4,13 @@
 .httr-oauth
 .DS_Store
 
+
 # Project specific
+azcopy.sh
 figures/
 references/
 resources/
 results/
 samples/
+presentations/
 meeting_notes_link.txt
