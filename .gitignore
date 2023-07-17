@@ -6,6 +6,7 @@
 
 
 # Project specific
+00_archive/
 azcopy.sh
 figures/
 references/

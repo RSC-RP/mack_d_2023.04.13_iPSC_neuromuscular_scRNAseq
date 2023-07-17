@@ -283,7 +283,7 @@ ref_expn <- read.delim("resources/human_protein_atlas/rna_single_cell_type.tsv")
 ```
 wget https://storage.googleapis.com/gtex_analysis_v8/annotations/GTEx_Analysis_v8_Annotations_SampleAttributesDS.txt
 wget https://storage.googleapis.com/gtex_analysis_v8/rna_seq_data/GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz
-````
+```
 
 https://gtexportal.org/home/tissue/Cells_Cultured_fibroblasts?tissueSelect=Cells_Cultured_fibroblasts
 
@@ -1073,7 +1073,6 @@ job::job({
   sapply(names(soupx_objs), function(x) saveRDS(soupx_objs[[x]],glue("results/seurat/individual_objs/mack_{x}_motor_neuron_filtered_soupX_seurat_obj.RDS")))
 }, import = c("soupx_objs"))
 ```
-
 
 ```{r eval=FALSE}
 merged_filt_obj <-  merge(x = soupx_objs$iPSC_ipsc, 
