@@ -130,7 +130,8 @@ See https://support.10xgenomics.com/single-cell-gene-expression/software/pipelin
 expn_mats <- dir("resources", pattern = "filtered_feature_bc.+h5|filtered_feature_bc_matrix.h5", recursive = TRUE, full.names = TRUE) %>% 
   grep("too few|Day50", ., value=TRUE, invert = TRUE)
 
-raw_mats <- dir("resources", pattern = "raw_feature_bc", recursive = TRUE, full.names = TRUE) 
+raw_mats <- dir("resources", pattern = "raw_feature_bc", recursive = TRUE, full.names = TRUE) %>% 
+  grep("D50", ., value=TRUE, invert = TRUE)
 
 summaries <- dir("resources", pattern = "^metrics_summary.csv", recursive = TRUE, full.names = TRUE) %>% 
   grep("too few|Day50", ., value=TRUE, invert = TRUE)
@@ -380,9 +381,7 @@ merged_obj
 ```{r}
 current_path <- file.path("results/seurat")
 current_obj <- "iPSC_motor_neuron_time-course_filtered_merged_soupX_normalized_seurat_obj.RDS"
-current_merge_obj <- 
-  "iPSC_motor_neuron_time-course_SCT_UMAP_LeidenClust_Seurat_obj.RDS"
-  #"iPSC_motor_neuron_time-course_Seurat_obj.RDS"
+current_merge_obj <-  "iPSC_motor_neuron_time-course_SCT_UMAP_LeidenClust_Seurat_obj.RDS"
 
 if(!exists("filt_obj") & !is.null(current_obj)){
   message(glue("Loading the merged object {current_obj}"))
@@ -871,10 +870,11 @@ While it is possible to run SoupX without clustering information, you will get f
 
 ```{r eval=FALSE}
 if(!exists("filter_objs")){
-  seurat_objs_filt <- dir("results/seurat/individual_objs", 
+  seurat_objs_filt <- dir("results/individual_objs", 
                           pattern = "mack_.+_motor_neuron_filtered_seurat_obj.RDS",
                           full.names = TRUE) %>% 
     set_names(str_split_fixed(basename(.), "_", n=4)[,2])
+  seurat_objs_filt <- seurat_objs_filt[-grep("day50", names(seurat_objs_filt))]
   
   filter_objs <- purrr::map(seurat_objs_filt, function(x) {
           obj <- readRDS(x) 
@@ -882,6 +882,7 @@ if(!exists("filter_objs")){
   names(filter_objs) <- paste0("iPSC_", names(filter_objs))
 }
 
+length(filter_objs) #14
 # head(filter_objs)
 
 if(!exists("soup_channels")){
@@ -902,14 +903,14 @@ if(!exists("soup_channels")){
     sc <- suppressWarnings(setDR(sc, dim_red))
   })
   names(soup_channels) <- names(filter_objs)
-  # length(soup_channels)
+  # length(soup_channels) #14
 }
 
 est_first_pass <- purrr::map(names(soup_channels), function(x){
   print(x)
   min <- 1
   sc <- soup_channels[[x]]
-  outfile2 <- glue("figures/soupX/{x}_autoEstCont_figure.pdf")
+  outfile2 <- glue("figures/day0_day45/soupX/{x}_autoEstCont_figure.pdf")
   tryCatch(expr = {
     # estimate contamination fraction
     adj_sc <-  autoEstCont(sc, tfidfMin = min, 
@@ -945,19 +946,20 @@ names(remaining_est) <- names(est_first_pass[missing])
 # save the results 
 final_estimates <- c(est_first_pass[!missing], remaining_est)
 save_corrected_counts <- purrr::map(names(final_estimates), function(x){
-  outdir <- file.path("results/seurat/soupX_counts", x)
+  outdir <- file.path("results/soupX_counts", x)
   print(outdir)
   if(!dir.exists(outdir)){
+    print(x)
     out = adjustCounts(final_estimates[[x]])
-    DropletUtils:::write10xCounts(outdir, out)
+    # DropletUtils:::write10xCounts(outdir, out)
   }
 })
 ```
 
 ```{r eval=FALSE}
 job::job({
-  saveRDS(final_estimates, "results/seurat/soupX_counts/mack_iPSC_MN_soupX_channel_objs_list.RDS")
-}, import = c("final_estimates"))
+  saveRDS(soup_channels, "results/soupX_counts/mack_iPSC_MN_soupX_channel_objs_list.RDS")
+}, import = c("soup_channels"))
 ```
 
 

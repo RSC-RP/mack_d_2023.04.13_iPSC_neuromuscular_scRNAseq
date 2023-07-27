@@ -1,0 +1,3 @@
+# https://stat.ethz.ch/R-manual/R-devel/library/base/html/Startup.html
+R_LIBS_USER="/home/jsmi26/R/x86_64-pc-linux-gnu-library/mack"
+TMPDIR=/home/jsmi26/temp

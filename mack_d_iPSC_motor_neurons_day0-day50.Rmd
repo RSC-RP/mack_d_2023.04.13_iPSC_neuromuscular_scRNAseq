@@ -16,6 +16,7 @@ knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80),
                       eval = TRUE)
 
 options(stringsAsFactors = FALSE, max.print = 100)
+options(Seurat.object.assay.version = 'v5')
 table = function (..., useNA = 'ifany') base::table(..., useNA = useNA)
 ```
 
@@ -24,9 +25,11 @@ library(dplyr)
 library(tidyr)
 library(magrittr)
 library(stringr)
-library(ggplot2)
 library(tibble)
 library(glue)
+
+library(ggplot2)
+library(plotly)
 library(RColorBrewer)
 
 library(Seurat)
@@ -175,7 +178,7 @@ sample_manifest <- sample_manifest %>%
   mutate(across(.cols = matches("_percent$"),
                 .fns =  ~as.numeric(gsub("\\%","", .x))))
 
-sample_manifest
+# sample_manifest
 dim(sample_manifest)
 # any(duplicated(sample_manifest$sample_id))
 # write.csv(sample_manifest, "samples/mack_d_iPSC_motor_neurons_sample_manifest_v2.csv", row.names = FALSE)
@@ -429,8 +432,10 @@ preprocess_merge_obj <- "iPSC_motor_neuron_day0-day50_time-course_SCT_UMAP_Leide
 
 if(!exists("filt_obj") & !is.null(current_obj)){
   message(glue("Loading the merged object {current_obj}"))
-  merged_filt_obj <- readRDS(file.path(current_path, current_obj))
-  
+  merged_norm_obj <- readRDS(file.path(current_path, current_obj))
+  merged_norm_obj$id <- factor(merged_norm_obj$orig.ident, levels = c(unique(merged_norm_obj$orig.ident)))
+
+
 }else if(!exists("preprocess_merge_obj") & is.null(current_obj) ){
   message(glue("Loading the merged object {preprocess_merge_obj}"))
   merged_obj <- readRDS(file.path(current_path, preprocess_merge_obj))
@@ -487,11 +492,11 @@ merged_obj@meta.data %>% head()
 ```
 
 ```{r fig.height=10, fig.width=10, eval=FALSE}
-pdf("figures/day0_day50/iPSC_MN_seurat_UMAP_noFilter.pdf", height = 15, width = 15)
+# pdf("figures/day0_day50/iPSC_MN_seurat_UMAP_noFilter.pdf", height = 15, width = 15)
 DimPlot(merged_obj, label = T, repel = T, label.size = 7) + 
   scale_color_manual(values = colors) +
   ggtitle("Unsupervised clustering")
-dev.off()
+# dev.off()
 
 merged_obj$time_point_day <- factor(paste0("day_",merged_obj$time_point),
                                     levels=unique(paste0("day_",merged_obj$time_point)))
@@ -505,28 +510,28 @@ d1 <- DimPlot(merged_obj,
         label.size = 7) + 
   scale_color_manual(values = colors)
 
-pdf("figures/day0_day50/iPSC_MN_seurat_UMAP_batch_day_noFilter.pdf", height = 15, width = 20)
+# pdf("figures/day0_day50/iPSC_MN_seurat_UMAP_batch_day_noFilter.pdf", height = 15, width = 20)
 d1
-dev.off()
+# dev.off()
 
-pdf("figures/day0_day50/iPSC_MN_seurat_PCA_elbow_noFilter.pdf", height = 5, width = 10)
-ElbowPlot(merged_obj,ndims = 50)
-dev.off()
-
-pdf("figures/day0_day50/iPSC_MN_seurat_PCA_elbow_noFilter.pdf", height = 10, width = 10)
-VizDimLoadings(merged_obj, dims = 1:4, reduction = "pca")
-dev.off()
-
-# Identify the 10 most highly variable genes
-top10 <- head(VariableFeatures(merged_obj), 10)
-
-# plot variable features with and without labels
-plot1 <- VariableFeaturePlot(merged_obj)
-plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
-
-pdf("figures/day0_day50/iPSC_MN_seurat_topVarFeatures_noFilter.pdf", height = 5, width = 10)
-plot2
-dev.off()
+# pdf("figures/day0_day50/iPSC_MN_seurat_PCA_elbow_noFilter.pdf", height = 5, width = 10)
+# ElbowPlot(merged_obj,ndims = 50)
+# dev.off()
+# 
+# pdf("figures/day0_day50/iPSC_MN_seurat_PCA_loadings_noFilter.pdf", height = 10, width = 10)
+# VizDimLoadings(merged_obj, dims = 1:4, reduction = "pca")
+# dev.off()
+# 
+# # Identify the 10 most highly variable genes
+# top10 <- head(VariableFeatures(merged_obj), 10)
+# 
+# # plot variable features with and without labels
+# plot1 <- VariableFeaturePlot(merged_obj)
+# plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+# 
+# pdf("figures/day0_day50/iPSC_MN_seurat_topVarFeatures_noFilter.pdf", height = 5, width = 10)
+# plot2
+# dev.off()
 
 
 n_cells_barplot <- merged_obj@meta.data %>% 
@@ -538,9 +543,9 @@ n_cells_barplot <- merged_obj@meta.data %>%
   theme_classic() +
   theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
 
-png("figures/day0_day50/iPSC_MN_seurat_number_cells_per_day_noFilter.png", height = 5, width = 8, units = "in", res = 150)
+# png("figures/day0_day50/iPSC_MN_seurat_number_cells_per_day_noFilter.png", height = 5, width = 8, units = "in", res = 150)
 n_cells_barplot
-dev.off()
+# dev.off()
 
 median_umis <- merged_obj@meta.data %>% 
   mutate(id=factor(orig.ident, levels=unique(orig.ident))) %>% 
@@ -551,9 +556,9 @@ median_umis <- merged_obj@meta.data %>%
   geom_col() +
   theme_classic()
 
-png("figures/day0_day50/cellranger_qc_metrics_byBatch_median_UMIs.png", height = 8, width = 7, units = "in",res = 150)
+# png("figures/day0_day50/cellranger_qc_metrics_byBatch_median_UMIs.png", height = 8, width = 7, units = "in",res = 150)
 median_umis
-dev.off()
+# dev.off()
 ```
 
 # Doublet Scores
@@ -821,6 +826,7 @@ job::job({
 }, import = c("seurat_objs_dbls"))
 ```
 
+
 ```{r}
 threshold_summary <- purrr::map_dfr(dir("results/day0_day50/seurat/filtering_stats/",
                                         pattern = "filtering_threshold_summary.csv", 
@@ -908,11 +914,12 @@ if(!exists("filter_objs")){
     })
   names(filter_objs) <- paste0("iPSC_", names(filter_objs))
 }
+length(filter_objs) #15
 
-# head(filter_objs)
 outdirs <- glue("results/soupX_counts/{names(filter_objs)}")
 #Read in the previous processed data
 soup_channels <- readRDS("results/soupX_counts/mack_iPSC_MN_soupX_channel_objs_list.RDS")
+length(soup_channels) #14
 # only re-processes new data sets
 for(dir in outdirs){
   if(!dir.exists(dir)){
@@ -934,24 +941,25 @@ for(dir in outdirs){
     soup_channels[[x]] <- sc
   }
 }
+length(soup_channels) #15
 
-
-est_first_pass <- purrr::map(names(soup_channels), function(x){
-  print(x)
+est_first_pass <- purrr::map(outdirs, function(dir){
   min <- 1
-  sc <- soup_channels[[x]]
-  outfile2 <- glue("figures/day0_day50/soupX/{x}_autoEstCont_figure.pdf")
-  tryCatch(expr = {
+  sc <- soup_channels[[basename(dir)]]
+  outfile2 <- glue("figures/day0_day50/soupX/{basename(dir)}_autoEstCont_figure.pdf")
+  if(!dir.exists(dir)){
+    print(dir)
+   tryCatch(expr = {
     # estimate contamination fraction
-    adj_sc <-  autoEstCont(sc, tfidfMin = min, 
+    adj_sc <-  autoEstCont(sc, tfidfMin = min,
                            doPlot = FALSE,
                            verbose = FALSE)
-    
+
   }, error = function(err){
     print(glue("{x} Too homogenous for reliable estimate"))
     return(NULL)
   })
-  
+
     if(exists("adj_sc")){
       pdf(outfile2, height = 7, width = 10)
       autoEstCont(adj_sc, tfidfMin = min, verbose = FALSE)
@@ -960,6 +968,7 @@ est_first_pass <- purrr::map(names(soup_channels), function(x){
     }else{
       return(x)
     }
+  }
 })
 names(est_first_pass) <- names(soup_channels)
 
@@ -986,9 +995,11 @@ save_corrected_counts <- purrr::map(outdirs, function(outdir){
 })
 
 job::job({
-  saveRDS(final_estimates, "results/soupX_counts/mack_iPSC_MN_soupX_channel_objs_list.RDS")
-}, import = c("final_estimates"))
+  saveRDS(soup_channels, "results/soupX_counts/mack_iPSC_MN_soupX_channel_objs_list.RDS")
+}, import = c("soup_channels"))
 ```
+
+
 
 There are some issues in the plotting functions that haven't been updated. 
 * https://github.com/constantAmateur/SoupX/issues/102
@@ -1224,10 +1235,7 @@ job::job({
 ```
 
 ```{r}
-merged_norm_obj$id <- factor(merged_norm_obj$orig.ident, levels = c(unique(merged_norm_obj$orig.ident)))
-
 merged_norm_obj$seurat_clusters <- merged_norm_obj$SCT_snn_res.1
-length(unique(merged_norm_obj$seurat_clusters))
 Idents(merged_norm_obj) <- merged_norm_obj$SCT_snn_res.1
 ```
 
@@ -1277,11 +1285,11 @@ fig <- plot_ly(merged_norm_obj@meta.data,
                x = ~umap_1, y = ~umap_2, z = ~umap_3, 
                color = ~id,
                colors = colors)
-fig <- fig %>% 
-  add_markers( 
-    marker = list(size = 1), 
-    text = merged_norm_obj@meta.data$orig.ident,
-      hoverinfo = 'text')
+fig <- fig %>%
+  add_markers(
+    marker = list(size = 1),
+    text = pull(merged_norm_obj@meta.data, orig.ident, name = barcode),
+    hoverinfo = 'text')
 
 # fig <- fig %>% plotly::layout(scene = list(xaxis = list(title = 'PC1'),
 #                      yaxis = list(title = 'PC2'),
@@ -1291,17 +1299,19 @@ fig
 ```
 
 
-```{r}
+```{r eval=FALSE}
 Idents(merged_norm_obj) <- merged_norm_obj$orig.ident
 purrr::map(names(marker_genes_iPSC), function(type){
+ 
+   h <- ifelse(length(marker_genes_iPSC[[type]]) <= 4, 12, 20)
+  outfile <- glue("figures/day0_day50/filtered_merged_results/iPSC_MN_expression_{type}_marker_genes.png")
   
-  # outfile <- glue("figures/day0_day50/filtered_merged_results/iPSC_MN_expression_{type}_marker_genes.png")
-  png(outfile, height = 10, width = 20, units = "in", res = 100)
+  png(outfile, height = h, width = 20, units = "in", res = 100)
   print(FeaturePlot(merged_norm_obj, 
                     features = marker_genes_iPSC[[type]],
                     label = TRUE) +
           patchwork::plot_annotation(title = glue("{type} marker genes")))
-  # dev.off()
+  dev.off()
   
 })
 ```
@@ -1320,25 +1330,31 @@ plot2
 ```
 
 ```{r}
-median_umis_filt <- merged_norm_obj@meta.data %>% 
-  mutate(id=factor(orig.ident, levels=unique(orig.ident))) %>% 
-  select(id, median_umi_counts_per_cell, batch) %>% 
-  distinct() %>% 
+umi_counts_filt <-  sapply(as.data.frame(as.matrix(merged_norm_obj@assays$RNA@counts)), function(x) sum(x > 1))
 
-  ggplot(., aes(y=id, x = median_umi_counts_per_cell, fill = batch)) +
-  geom_col() +
-  theme_classic()
 
-median_umis_filt
+mean(umi_counts_filt)
 ```
-
 
 # Batch Effect Correction 
 
 return.only.var.genes -
 If set to TRUE the scale.data matrices in output assay are subset to contain only the variable genes; default is TRUE
 
+vars.to.regress	- 
+Variables to regress out in a second non-regularized linear regression. For example, percent.mito. 
+
+Note on scale_data and return.only.var.genes
+- https://github.com/satijalab/seurat/discussions/4259
+
+https://www.sc-best-practices.org/cellular_structure/integration.html
+* "one can say that Harmony and Seurat consistently perform well for simple batch correction tasks,"
+
 ```{r eval=FALSE}
+if(!exists("merged_filt_obj")){
+  merged_filt_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj.RDS")
+}
+
 job::job({
   #regularized negative binomial regression to normalize UMI count data
   #Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures().
@@ -1347,7 +1363,7 @@ job::job({
   merged_norm_batchcorr <- SCTransform(temp,
                            assay="RNA",
                            new.assay.name = "SCT",
-                           vars.to.regress = "batch",
+                           vars.to.regress = c("batch","percent.mt"),
                            method = "glmGamPoi",
                            return.only.var.genes = TRUE,
                            verbose = FALSE)  %>% 
@@ -1396,28 +1412,26 @@ job::job({
 ```
 
 ```{r}
-merged_norm_batchcorr <- readRDS(file.path(current_path, "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_batchcorrected_seurat_obj.RDS"))
+# merged_norm_batchcorr <- readRDS(file.path(current_path, "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_batchcorrected_seurat_obj.RDS"))
 
-merged_norm_batchcorr
-```
-
-```{r}
 merged_norm_batchcorr$id <- factor(merged_norm_batchcorr$orig.ident, 
                                    levels = c(unique(merged_norm_batchcorr$orig.ident)))
 merged_norm_batchcorr$seurat_clusters <- merged_norm_batchcorr$SCT_snn_res.1
 Idents(merged_norm_batchcorr) <- merged_norm_batchcorr$SCT_snn_res.1
+
+merged_norm_batchcorr
 ```
 
 ```{r fig.height=10}
-pdf("figures/day0_day50/filtered_merged_batchcorrected/sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
-ElbowPlot(merged_norm_batchcorr,ndims = 50, reduction = "pca")
-dev.off()
+# pdf("figures/day0_day50/filtered_merged_batchcorrected/sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
+# ElbowPlot(merged_norm_batchcorr,ndims = 50, reduction = "pca")
+# dev.off()
+# 
+# pdf("figures/day0_day50/filtered_merged_batchcorrected/transform_1-4PCs_loadings.pdf", height = 10, width=7)
+# VizDimLoadings(merged_norm_batchcorr, dims = 1:4, reduction = "pca")
+# dev.off()
 
-pdf("figures/day0_day50/filtered_merged_batchcorrected/transform_1-4PCs_loadings.pdf", height = 10, width=7)
-VizDimLoadings(merged_norm_batchcorr, dims = 1:4, reduction = "pca")
-dev.off()
-
-pdf("figures/day0_day50/filtered_merged_batchcorrected/byLouvainCluster_sct_UMAP.pdf",height = 10, width= 17)
+pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_byLouvainCluster_sct_UMAP.pdf",height = 10, width= 17)
 DimPlot(merged_norm_batchcorr, dims = c(1,2)) +
   scale_color_manual(values = colors)
 dev.off()
@@ -1431,7 +1445,7 @@ filt_d1 <- DimPlot(merged_norm_batchcorr,
         label.size = 7) + 
   scale_color_manual(values = colors)
 
-# png("figures/day0_day50/filtered_merged_results_iPSC_MN_seurat_UMAP_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
+# png("figures/day0_day50/filtered_merged_batchcorrected/filtered_merged_results_iPSC_MN_seurat_batchcorrected_UMAP_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
 filt_d1
 # dev.off()
 
@@ -1443,18 +1457,18 @@ filt_s1 <- DimPlot(merged_norm_batchcorr,
         label.size = 7) + 
   scale_color_manual(values = colors)
 
-# png("figures/day0_day50/filtered_merged_results_iPSC_MN_seurat_UMAP_splitBy_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
+# png("figures/day0_day50/filtered_merged_batchcorrected/filtered_merged_results_iPSC_MN_seurat_batchcorrected_UMAP_splitBy_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
 filt_s1
 # dev.off()
 ```
 
 
 ```{r fig.height=10}
-fig <- plot_ly(merged_norm_batchcorr@meta.data,
+fig_batchcorr <- plot_ly(merged_norm_batchcorr@meta.data,
                x = ~umap_1, y = ~umap_2, z = ~umap_3, 
                color = ~id,
                colors = colors)
-fig <- fig %>% 
+fig_batchcorr <- fig_batchcorr %>% 
   add_markers( 
     marker = list(size = 1), 
     text = merged_norm_batchcorr@meta.data$orig.ident,
@@ -1470,14 +1484,18 @@ fig
 
 ```{r}
 Idents(merged_norm_batchcorr) <- merged_norm_batchcorr$orig.ident
-purrr::map(names(marker_genes), function(type){
-  outfile <- glue("figures/day0_day50/filtered_merged_results/day0_day50/iPSC_MN_expression_{type}_marker_genes.png")
+purrr::map(names(marker_genes_iPSC), function(type){    
+  h <- ifelse(length(marker_genes_iPSC[[type]]) <= 4, 12, 20)
+  outfile <- glue("figures/day0_day50/filtered_merged_batchcorrected/iPSC_MN_batchcorrected_expression_{type}_marker_genes.png")
   
-  png(outfile, height = 10, width = 20, units = "in", res = 100)
-  print(FeaturePlot(merged_norm_batchcorr, 
-                    features = marker_genes[[type]],
-                    label = TRUE))
-  dev.off()
+  # png(outfile, height = h, width = 20, units = "in", res = 100)
+  print(
+    FeaturePlot(merged_norm_batchcorr, 
+                    features = marker_genes_iPSC[[type]],
+                    label = TRUE) +
+          patchwork::plot_annotation(title = glue("{type} marker genes"))
+        )
+  # dev.off()
   
 })
 ```
@@ -1490,24 +1508,10 @@ top10 <- head(VariableFeatures(merged_norm_batchcorr), 10)
 plot1 <- VariableFeaturePlot(merged_norm_batchcorr)
 plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
 
-pdf("figures/day0_day50/filtered_merged_results/day0_day50/iPSC_MN_seurat_topVarFeatures.pdf", height = 5, width = 10)
+pdf("figures/day0_day50/filtered_merged_batchcorrected/iPSC_MN_seurat_batchcorrected_topVarFeatures.pdf", height = 5, width = 10)
 plot2
 dev.off()
 ```
-
-```{r}
-median_umis_filt <- merged_norm_batchcorr@meta.data %>% 
-  mutate(id=factor(orig.ident, levels=unique(orig.ident))) %>% 
-  select(id, median_umi_counts_per_cell, batch) %>% 
-  distinct() %>% 
-
-  ggplot(., aes(y=id, x = median_umi_counts_per_cell, fill = batch)) +
-  geom_col() +
-  theme_classic()
-
-median_umis_filt
-```
-
 
 
 
