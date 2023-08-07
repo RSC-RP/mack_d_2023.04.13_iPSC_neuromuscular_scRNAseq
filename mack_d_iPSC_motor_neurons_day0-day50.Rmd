@@ -35,9 +35,8 @@ library(RColorBrewer)
 library(Seurat)
 library(SeuratDisk)
 
-library(DoubletFinder)
+
 library(scDblFinder)
-library(BiocSingular)
 library(SoupX)
 ```
 
@@ -426,22 +425,22 @@ if(exists("merged_obj")) {
 
 ```{r}
 current_path <- file.path("results/day0_day50/seurat")
-current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj.RDS"
+current_obj <- NULL
+  #"iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj.RDS"
 preprocess_merge_obj <- "iPSC_motor_neuron_day0-day50_time-course_SCT_UMAP_LeidenClust_Seurat_obj.RDS"
 
 
-if(!exists("filt_obj") & !is.null(current_obj)){
+if(!exists("merged_obj") & !is.null(current_obj)){
   message(glue("Loading the merged object {current_obj}"))
   merged_norm_obj <- readRDS(file.path(current_path, current_obj))
   merged_norm_obj$id <- factor(merged_norm_obj$orig.ident, levels = c(unique(merged_norm_obj$orig.ident)))
 
 
-}else if(!exists("preprocess_merge_obj") & is.null(current_obj) ){
+}else if(!exists("merged_obj") & is.null(current_obj) ){
   message(glue("Loading the merged object {preprocess_merge_obj}"))
   merged_obj <- readRDS(file.path(current_path, preprocess_merge_obj))
 }
 ```
-
 
 
 ## QC Plots
@@ -794,7 +793,7 @@ job::job({
           print(d1 + f1 + patchwork::plot_annotation(title=x) + patchwork::plot_layout(widths = c(0.5, 1)))
           dev.off()
           
-          merged_filt_obj <- subset(
+          sub_filt_obj <- subset(
                           x = input,
                           subset = 
                             nFeature_RNA > 200 &
@@ -804,7 +803,7 @@ job::job({
                         )
 
           print(glue("Saving {outfile}"))
-          base::saveRDS(merged_filt_obj, outfile)
+          base::saveRDS(sub_filt_obj, outfile)
           # Save the thresholds to a file
           ths <-  data.frame(sample=x,
                            mito_th=mito_th,
@@ -817,9 +816,9 @@ job::job({
 
         }else{
           print(glue("Reading in RDS results for {x}"))
-          merged_filt_obj <- readRDS(outfile)
+          sub_filt_obj <- readRDS(outfile)
         }
-        return(merged_filt_obj)
+        return(sub_filt_obj)
       })
   names(filter_objs) <- paste0("iPSC_", names(seurat_objs_dbls))
   
@@ -841,7 +840,24 @@ threshold_summary <- purrr::map_dfr(dir("results/day0_day50/seurat/filtering_sta
 
 
 threshold_summary %>% head()
-# dim(threshold_summary) #15 36
+dim(threshold_summary) #15 36
+```
+
+```{r}
+# pdf("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_mito_thresholds.pdf", height = 7, width = 10)
+ggplot(threshold_summary, aes(x=batch, y=mito_th, fill=batch)) +
+  geom_boxplot(alpha=0.25) +
+  geom_point(aes(color=id),
+             size=2,
+             position = position_jitter(width = 0.2, seed=2023)) +
+  scale_fill_brewer(palette = "Blues") +
+  scale_color_manual(values = colors) +
+  ggrepel::geom_text_repel(aes(label=id)) +
+  labs(x="",y="Mitochondrial Reads Threshold (%)") +
+  guides(color="none") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
+# dev.off()
 ```
 
 ```{r fig.width=10}
@@ -866,22 +882,6 @@ ggplot(., aes(y = number_of_cells, x = id, fill = status)) +
 # dev.off()
 ```
 
-```{r}
-# pdf("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_mito_thresholds.pdf", height = 7, width = 10)
-ggplot(threshold_summary, aes(x=batch, y=mito_th, fill=batch)) +
-  geom_boxplot(alpha=0.25) +
-  geom_point(aes(color=id),
-             size=2,
-             position = position_jitter(width = 0.2, seed=2023)) +
-  scale_fill_brewer(palette = "Blues") +
-  scale_color_manual(values = colors) +
-  ggrepel::geom_text_repel(aes(label=id)) +
-  labs(x="",y="Mitochondrial Reads Threshold (%)") +
-  guides(color="none") +
-  theme_classic() +
-  theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
-# dev.off()
-```
 
 
 
@@ -901,6 +901,12 @@ While it is possible to run SoupX without clustering information, you will get f
 
 
 >  If you try and run it on a channel with  (e.g. a cell line, flow-sorted cells), you will likely get a warning, an error, and/or an extremely high contamination estimate. In such circumstances your best option is usually to manually set the contamination to something reasonable.
+
+```bash
+# move the day5 and day 8 to archive but likely wont need these
+mv iPSC_day8 ../../00_archive/
+mv iPSC_day5 ../../00_archive/
+```
 
 ```{r eval=FALSE}
 if(!exists("filter_objs")){
@@ -947,28 +953,28 @@ est_first_pass <- purrr::map(outdirs, function(dir){
   min <- 1
   sc <- soup_channels[[basename(dir)]]
   outfile2 <- glue("figures/day0_day50/soupX/{basename(dir)}_autoEstCont_figure.pdf")
-  if(!dir.exists(dir)){
-    print(dir)
-   tryCatch(expr = {
-    # estimate contamination fraction
-    adj_sc <-  autoEstCont(sc, tfidfMin = min,
-                           doPlot = FALSE,
-                           verbose = FALSE)
-
-  }, error = function(err){
-    print(glue("{x} Too homogenous for reliable estimate"))
-    return(NULL)
-  })
-
+  # if(!dir.exists(dir)){
+     print(dir)
+     tryCatch(expr = {
+      # estimate contamination fraction
+      adj_sc <-  autoEstCont(sc, tfidfMin = min,
+                             doPlot = FALSE,
+                             verbose = FALSE)
+  
+    }, error = function(err){
+      print(glue("{dir} Too homogenous for reliable estimate"))
+      return(NULL)
+    })
+  
     if(exists("adj_sc")){
       pdf(outfile2, height = 7, width = 10)
       autoEstCont(adj_sc, tfidfMin = min, verbose = FALSE)
       dev.off()
       return(adj_sc)
     }else{
-      return(x)
+      return(dir)
     }
-  }
+  # }
 })
 names(est_first_pass) <- names(soup_channels)
 

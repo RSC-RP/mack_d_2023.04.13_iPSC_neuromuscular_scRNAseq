@@ -316,6 +316,19 @@ HB_genes <- RCurl::getURI(url = "https://www.genenames.org/cgi-bin/genegroup/dow
 # head(HB_genes)
 ```
 
+```{r}
+colors <- c("#E41A1C", "#377EB8", "#4DAF4A", "#F781BF", 
+            "blue1", "darkslategray3", "burlywood3", "#984EA3", 
+            "#FF7F00", "seagreen1", "maroon", "orchid", "darkblue", 
+            "azure2", "chartreuse1", "orange1", 
+            "deeppink", "darkslategray1", "green4", "navajowhite2", 
+            "brown3", "darkgoldenrod4", "deepskyblue1", "lightcoral") %>% 
+  c(., ggpubr::get_palette("jco", 4),
+    ggpubr::get_palette("npg", 4)) %>% 
+  c("darkorchid1","magenta", "peru")
+
+length(colors)
+```
 
 # Read in iPSC Object
 
@@ -379,7 +392,7 @@ merged_obj
 ```
 
 ```{r}
-current_path <- file.path("results/seurat")
+current_path <- file.path("results/day0_day45/seurat")
 current_obj <- "iPSC_motor_neuron_time-course_filtered_merged_soupX_normalized_seurat_obj.RDS"
 current_merge_obj <-  "iPSC_motor_neuron_time-course_SCT_UMAP_LeidenClust_Seurat_obj.RDS"
 
@@ -402,20 +415,6 @@ nFeature_RNA is the number of genes detected in each cell.
 nCount_RNA is the total number of molecules (UMI) detected within a cell. 
 
 * High nCount_RNA and/or nFeature_RNA indicates that the "cell" may in fact be a doublet (or multiplet).
-
-```{r}
-colors <- c("#E41A1C", "#377EB8", "#4DAF4A", "#F781BF", 
-            "blue1", "darkslategray3", "burlywood3", "#984EA3", 
-            "#FF7F00", "seagreen1", "maroon", "orchid", "darkblue", 
-            "azure2", "chartreuse1", "orange1", 
-            "deeppink", "darkslategray1", "green4", "navajowhite2", 
-            "brown3", "darkgoldenrod4", "deepskyblue1", "lightcoral") %>% 
-  c(., ggpubr::get_palette("jco", 4),
-    ggpubr::get_palette("npg", 4)) %>% 
-  c("darkorchid1","magenta", "peru")
-
-length(colors)
-```
 
 ```{r eval=FALSE, fig.height=5, fig.width=10}
 merged_obj
@@ -608,7 +607,7 @@ job::job({
 ```
 
 ```{r}
-doublet_scores <- read.csv("results/seurat/doublet_scores/mack_iPSC_MN_scDblFinder_scores.csv") %>% 
+doublet_scores <- read.csv("results/doublet_scores/mack_iPSC_MN_scDblFinder_scores.csv") %>% 
   mutate(id=factor(orig.ident, levels=unique(orig.ident)),
          barcode=X) %>%
   left_join(., sample_manifest, by=c("orig.ident"="sample_id")) %>%
@@ -794,7 +793,7 @@ length(filter_objs)
 ```
 
 ```{r}
-threshold_summary <- purrr::map_dfr(dir("results/seurat/filtering_stats/",
+threshold_summary <- purrr::map_dfr(dir("results/day0_day50/seurat/filtering_stats/",
                                         pattern = "filtering_threshold_summary.csv", 
                                         full.names = TRUE), function(x){
   read.csv(x)
@@ -807,7 +806,7 @@ threshold_summary <- purrr::map_dfr(dir("results/seurat/filtering_stats/",
 
 
 threshold_summary %>% head()
-# dim(threshold_summary) #14 36
+dim(threshold_summary) #14 36
 ```
 
 ```{r fig.width=10}
@@ -849,7 +848,107 @@ ggplot(threshold_summary, aes(x=batch, y=mito_th, fill=batch)) +
 # dev.off()
 ```
 
+### Day 5 and Day 8 
 
+Day5 and Day8 are outliers in terms of %mito - I'll manually set these to the mean of all the other time-points and filter them again. 
+
+```{r}
+mean_th <- threshold_summary %>% 
+  filter(!grepl("day5|day8", sample)) %>% 
+  summarize(mean_mito_th = mean(mito_th)) %>% 
+  pull(mean_mito_th)
+
+mean_th
+
+seurat_objs_filt <- dir("results/individual_objs", 
+                          pattern = "mack_.+_motor_neuron_filtered_seurat_obj.RDS",
+                          full.names = TRUE) %>% 
+    set_names(str_split_fixed(basename(.), "_", n=4)[,2])
+```
+
+
+Move the original files to a seperate subdirectory for later, if needed. 
+
+```bash
+cd results/individual_objs
+mv mack_day{5,8}_* first_pass_filter/
+```
+
+```{r}
+seurat_objs_filt_d5_d8 <- dir("results/individual_objs/first_pass_filter", 
+                          pattern = "mack_.+_motor_neuron_filtered_seurat_obj.RDS",
+                          full.names = TRUE) %>% 
+    set_names(str_split_fixed(basename(.), "_", n=4)[,2])
+
+filter_objs_d5_d8 <- purrr::map(names(seurat_objs_filt_d5_d8), function(x) {
+    outfile <- glue::glue("results/individual_objs/mack_{x}_motor_neuron_filtered_seurat_obj.RDS")
+    obj <- readRDS(seurat_objs_filt_d5_d8[[x]]) 
+    sub_filt_obj <- subset(
+            x = obj,
+            subset = percent.mt < mean_th)
+    base::saveRDS(sub_filt_obj, outfile)
+    return(sub_filt_obj)
+})
+names(filter_objs_d5_d8) <- paste0("iPSC_", names(seurat_objs_filt_d5_d8))
+
+filter_objs_d5_d8$iPSC_day5$percent.mt %>% quantile()
+filter_objs_d5_d8$iPSC_day8$percent.mt %>% quantile()
+```
+```{r}
+threshold_summary_update <- threshold_summary %>% 
+  mutate_at(vars(mito_th), ~case_when(
+    sample == "day5" ~ mean_th,
+    sample == "day8" ~ mean_th,
+    TRUE ~ .
+    )) %>%
+  mutate_at(vars(output_number_cells), ~case_when(
+    sample == "day5" ~ ncol(filter_objs_d5_d8$iPSC_day5),
+    sample == "day8" ~ ncol(filter_objs_d5_d8$iPSC_day8),
+    TRUE ~ .)) %>% 
+  mutate(percent=round(output_number_cells/input_number_cells * 100, digits = 1))
+
+threshold_summary_update
+# write.csv(threshold_summary_update, "results/day0_day50/seurat/filtering_stats/mack_iPSC_MN_day0-day50_cell_filtering_threshold_summary.csv", row.names = FALSE)
+```
+
+```{r}
+# pdf("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_mito_thresholds_update.pdf", height = 7, width = 10)
+ggplot(threshold_summary_update, aes(x=batch, y=mito_th, fill=batch)) +
+  geom_boxplot(alpha=0.25) +
+  geom_point(aes(color=id),
+             size=2,
+             position = position_jitter(width = 0.2, seed=2023)) +
+  scale_fill_brewer(palette = "Blues") +
+  scale_color_manual(values = colors) +
+  scale_y_continuous(limits = c(0,15)) +
+  ggrepel::geom_text_repel(aes(label=id)) +
+  labs(x="",y="Mitochondrial Reads Threshold (%)") +
+  guides(color="none") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
+# dev.off()
+```
+
+```{r fig.width=10}
+# png("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_barplot_update.png",height = 8, width = 12, unit="in", res=150)
+threshold_summary_update %>% 
+  pivot_longer(cols = c(input_number_cells,output_number_cells), 
+               names_to = "status",
+               values_to = "number_of_cells") %>% 
+  group_by(id) %>% 
+  mutate_at(vars(percent), ~ifelse(duplicated(percent), "", paste0(.,"%\nretained"))) %>% 
+  ungroup() %>% 
+
+ggplot(., aes(y = number_of_cells, x = id, fill = status)) +
+  geom_col(position = position_dodge()) +
+  labs(x="") +
+  scale_y_continuous(limits = c(0, 10500)) +
+  geom_text(aes(label = percent), nudge_y = 300) +
+  scale_fill_viridis_d(option = "turbo", begin = 0.1) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
+# dev.off()
+```
 
 # SoupX
 
@@ -906,6 +1005,10 @@ if(!exists("soup_channels")){
   # length(soup_channels) #14
 }
 
+# job::job({
+#   saveRDS(soup_channels, "results/soupX_counts/mack_iPSC_MN_soupX_channel_objs_list.RDS")
+# }, import = c("soup_channels"))
+
 est_first_pass <- purrr::map(names(soup_channels), function(x){
   print(x)
   min <- 1
@@ -913,15 +1016,15 @@ est_first_pass <- purrr::map(names(soup_channels), function(x){
   outfile2 <- glue("figures/day0_day45/soupX/{x}_autoEstCont_figure.pdf")
   tryCatch(expr = {
     # estimate contamination fraction
-    adj_sc <-  autoEstCont(sc, tfidfMin = min, 
+    adj_sc <-  autoEstCont(sc, tfidfMin = min,
                            doPlot = FALSE,
                            verbose = FALSE)
-    
+
   }, error = function(err){
     print(glue("{x} Too homogenous for reliable estimate"))
     return(NULL)
   })
-  
+
     if(exists("adj_sc")){
       pdf(outfile2, height = 7, width = 10)
       autoEstCont(adj_sc, tfidfMin = min, verbose = FALSE)
@@ -933,7 +1036,7 @@ est_first_pass <- purrr::map(names(soup_channels), function(x){
 })
 names(est_first_pass) <- names(soup_channels)
 
-# Manually adjust the missing datasets using the mean rho value from all other samples  
+# Manually adjust the missing datasets using the mean rho value from all other samples
 missing <- sapply(est_first_pass, function(x) is.character(x))
 ave_rho <- round(mean(sapply(est_first_pass[!missing],  function(x) unique(x$metaData$rho))), digits = 3)
 remaining_est <- purrr::map(names(est_first_pass[missing]), function(x){
@@ -943,26 +1046,21 @@ remaining_est <- purrr::map(names(est_first_pass[missing]), function(x){
 })
 names(remaining_est) <- names(est_first_pass[missing])
 
-# save the results 
+# save the results
 final_estimates <- c(est_first_pass[!missing], remaining_est)
 save_corrected_counts <- purrr::map(names(final_estimates), function(x){
   outdir <- file.path("results/soupX_counts", x)
-  print(outdir)
   if(!dir.exists(outdir)){
     print(x)
     out = adjustCounts(final_estimates[[x]])
-    # DropletUtils:::write10xCounts(outdir, out)
+    DropletUtils:::write10xCounts(outdir, out)
   }
 })
+
+# job::job({
+#   saveRDS(final_estimates, "results/soupX_counts/mack_iPSC_MN_soupX_channel_adj_objs_list.RDS")
+# }, import = c("final_estimates"))
 ```
-
-```{r eval=FALSE}
-job::job({
-  saveRDS(soup_channels, "results/soupX_counts/mack_iPSC_MN_soupX_channel_objs_list.RDS")
-}, import = c("soup_channels"))
-```
-
-
 
 * iPSC_day40
 4833 cells default filters 
@@ -974,18 +1072,6 @@ job::job({
  - causes errors "No plausible marker genes found.  Is the channel low complexity (see help)?  If not, reduce tfidfMin or soupQuantile"
  - regardless of level of filtering
 
-  outfile <- glue("figures/soupX/{x}_MarkerDistribution_figure.pdf")
-    tryCatch(expr = {
-       p <- plotMarkerDistribution(adj_sc)
-       
-    }, error = function(e){
-      print(e)
-      # print("cannot plot plotMarkerDistribution")
-    })
-    
-    # pdf(outfile, height = 7, width = 10)
-    print(p)
-    # dev.off()
     
 ```{r eval=FALSE}
 estimates_df <- purrr::map_dfr(names(final_estimates), function(x){
