@@ -425,15 +425,19 @@ if(exists("merged_obj")) {
 
 ```{r}
 current_path <- file.path("results/day0_day50/seurat")
-current_obj <- NULL
+current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj.RDS"
   #"iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj.RDS"
 preprocess_merge_obj <- "iPSC_motor_neuron_day0-day50_time-course_SCT_UMAP_LeidenClust_Seurat_obj.RDS"
 
 
 if(!exists("merged_obj") & !is.null(current_obj)){
   message(glue("Loading the merged object {current_obj}"))
-  merged_norm_obj <- readRDS(file.path(current_path, current_obj))
-  merged_norm_obj$id <- factor(merged_norm_obj$orig.ident, levels = c(unique(merged_norm_obj$orig.ident)))
+  if(grepl("normalized", current_obj)){
+      merged_norm_obj <- readRDS(file.path(current_path, current_obj))
+      merged_norm_obj$id <- factor(merged_norm_obj$orig.ident, levels = c(unique(merged_norm_obj$orig.ident)))
+  }else{
+    merged_filt_obj <- readRDS(file.path(current_path, current_obj))
+  }
 
 
 }else if(!exists("merged_obj") & is.null(current_obj) ){
@@ -825,16 +829,8 @@ job::job({
 }, import = c("seurat_objs_dbls"))
 ```
 
-
 ```{r}
-threshold_summary <- purrr::map_dfr(dir("results/day0_day50/seurat/filtering_stats/",
-                                        pattern = "filtering_threshold_summary.csv", 
-                                        full.names = TRUE), function(x){
-  read.csv(x)
-}) %>% 
-  mutate(id=paste0("iPSC_",sample)) %>% 
-  mutate(percent=round(output_number_cells/input_number_cells * 100, digits = 1)) %>% 
-  left_join(., sample_manifest, by=c("id"="sample_id")) %>% 
+threshold_summary <- read.csv("results/day0_day50/seurat/filtering_stats/mack_iPSC_MN_day0-day50_cell_filtering_threshold_summary.csv") %>% 
   mutate(id=factor(id, levels=levels(doublet_scores$id))) %>% 
   arrange(id)
 
@@ -844,7 +840,7 @@ dim(threshold_summary) #15 36
 ```
 
 ```{r}
-# pdf("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_mito_thresholds.pdf", height = 7, width = 10)
+# pdf("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_mito_thresholds_updated.pdf", height = 7, width = 10)
 ggplot(threshold_summary, aes(x=batch, y=mito_th, fill=batch)) +
   geom_boxplot(alpha=0.25) +
   geom_point(aes(color=id),
@@ -861,7 +857,7 @@ ggplot(threshold_summary, aes(x=batch, y=mito_th, fill=batch)) +
 ```
 
 ```{r fig.width=10}
-# png("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_barplot.png",height = 8, width = 12, unit="in", res=150)
+# png("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_barplot_updated.png",height = 8, width = 12, unit="in", res=150)
 threshold_summary %>% 
   pivot_longer(cols = c(input_number_cells,output_number_cells), 
                names_to = "status",
@@ -881,7 +877,6 @@ ggplot(., aes(y = number_of_cells, x = id, fill = status)) +
   theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
 # dev.off()
 ```
-
 
 
 
@@ -949,6 +944,8 @@ for(dir in outdirs){
 }
 length(soup_channels) #15
 
+names(outdirs) <- basename(outdirs)
+outdirs <- outdirs[levels(doublet_scores$id)] #re-order the entries by time
 est_first_pass <- purrr::map(outdirs, function(dir){
   min <- 1
   sc <- soup_channels[[basename(dir)]]
@@ -976,12 +973,13 @@ est_first_pass <- purrr::map(outdirs, function(dir){
     }
   # }
 })
-names(est_first_pass) <- names(soup_channels)
+names(est_first_pass) <- names(outdirs)
 
 # Manually adjust the missing datasets using the mean rho value from all other samples  
 missing <- sapply(est_first_pass, function(x) is.character(x))
 ave_rho <- round(mean(sapply(est_first_pass[!missing],  function(x) unique(x$metaData$rho))), digits = 3)
 remaining_est <- purrr::map(names(est_first_pass[missing]), function(x){
+  print(x)
    sc <- soup_channels[[x]]
     # set contamination fraction
     adj_sc <-  setContaminationFraction(sc,ave_rho)
@@ -990,10 +988,11 @@ names(remaining_est) <- names(est_first_pass[missing])
 
 # save the results 
 final_estimates <- c(est_first_pass[!missing], remaining_est)
+final_estimates <- final_estimates[names(outdirs)]
 length(final_estimates) #15
 save_corrected_counts <- purrr::map(outdirs, function(outdir){
-  # print(outdir)
   if(!dir.exists(outdir)){
+    print(outdir)
     x <- basename(outdir)
     out = adjustCounts(final_estimates[[x]])
     DropletUtils:::write10xCounts(outdir, out)
@@ -1001,7 +1000,7 @@ save_corrected_counts <- purrr::map(outdirs, function(outdir){
 })
 
 job::job({
-  saveRDS(soup_channels, "results/soupX_counts/mack_iPSC_MN_soupX_channel_objs_list.RDS")
+  saveRDS(soup_channels, "results/soupX_counts/mack_iPSC_MN_day0-day50_soupX_channel_objs_list.RDS")
 }, import = c("soup_channels"))
 ```
 
@@ -1011,32 +1010,9 @@ There are some issues in the plotting functions that haven't been updated.
 * https://github.com/constantAmateur/SoupX/issues/102
 
 ```{r eval=FALSE}
-marker_genes <- quickMarkers(toc = soup_channels$iPSC_day8$toc,
-             clusters = soup_channels$iPSC_day8$metaData$clusters,
-             N = 25,
-             FDR = 0.05,
-             expressCut = 0.9)
 
-cells <- estimateNonExpressingCells(
-  soup_channels$iPSC_day8,
-  nonExpressedGeneList = nonExp_list,
-  # clusters = NULL,
-  maximumContamination = 1,
-  FDR = 0.05
-)
-
-nonExp_list <- read.csv("allen_institute_azimuth_marker_gene_list.csv") %>% 
-  mutate(Label = gsub("\\s{1,}|\\/|-","_", Label)) %>% 
-  pull(Markers , name = Label) %>% 
-  as.list() %>% 
-  sapply(.,  function(x) str_split(gsub("\\.","-",x), pattern = ", ")) %>% 
-  sapply(., function(x) x[x %in% rownames(merged_obj)])
-
-
-# https://github.com/constantAmateur/SoupX/issues/102
-# plotMarkerDistribution(sc = soup_channels$iPSC_day8, maxCells = 150, tfidfMin = 0.7)
-plotMarkerDistribution(sc = soup_channels$iPSC_day8, 
-                       nonExpressedGeneList = nonExp_list,
+plotMarkerDistribution(sc = soup_channels, 
+                       nonExpressedGeneList = NULL,
                        maxCells = 150, 
                        tfidfMin = 1)
 
@@ -1063,18 +1039,21 @@ estimates_df <- purrr::map_dfr(names(final_estimates), function(x){
   mutate(id=factor(sample, levels=levels(doublet_scores$id)))
 
 head(estimates_df)
-# table(estimates_df$id)
+table(estimates_df$id)
 # write.csv(estimates_df, "results/soupX_counts/mack_iPSC_MN_day0-day50_soupX_contamination_estimates.csv", row.names = FALSE)
 ```
+
 
 ```{r}
 if(!exists("estimates_df")){
   estimates_df <- read.csv("results/soupX_counts/mack_iPSC_MN_day0-day50_soupX_contamination_estimates.csv") %>% 
     mutate(id=factor(sample, levels=levels(doublet_scores$id)))
-
 }
 
 head(estimates_df)
+estimates_df %>% 
+  select(rho, sample) %>% 
+  distinct()
 ```
 
 ```{r}
@@ -1090,9 +1069,10 @@ est_plot <- ggplot(est_df_subset, aes(x =  id, y=rho, fill = id)) +
   geom_hline(yintercept = 0.05, linetype="dashed") +
   labs(title="SoupX Ambient DNA Contamination Estimates", y="contamination fraction", x="") +
   theme_classic() +
+  scale_y_continuous(limits=c(0,0.15)) +
   theme(axis.text.x = element_text(angle = 25, vjust = 1, hjust = 1))
 
-# png("figures/day0_day50/soupX/iPSC_MN_contamination_estimates.png", height = 5, width = 8, units = "in", res = 150)
+# png("figures/day0_day50/soupX/iPSC_MN_contamination_estimates_update.png", height = 5, width = 8, units = "in", res = 150)
 est_plot
 # dev.off()
 ```
@@ -1164,7 +1144,8 @@ merged_filt_obj
 ```
 
 ```{r}
-# table(merged_filt_obj@meta.data$time_point_day)
+table(merged_filt_obj@meta.data$time_point)
+Layers(merged_filt_obj)
 ```
 
 
@@ -1184,7 +1165,7 @@ The FindClusters() function implements this procedure, and contains a resolution
 We find that setting this parameter between 0.4-1.2 typically returns good results for single-cell datasets of around 3K cells. Optimal resolution often increases for larger datasets. 
 
 ```{r eval=FALSE}
-job::job({
+# job::job({
   # remove MT genes
   temp <- merged_filt_obj[grep("^MT-", rownames(merged_filt_obj), invert = TRUE), ]
   
@@ -1195,9 +1176,9 @@ job::job({
                            new.assay.name = "SCT",
                            vars.to.regress = "percent.mt",
                            method = "glmGamPoi",
-                           return.only.var.genes = TRUE,
-                           verbose = FALSE)  %>% 
-      RunPCA(npcs = 50, verbose = FALSE) %>%
+                           return.only.var.genes = FALSE,
+                           verbose = TRUE)  %>% 
+      RunPCA(npcs = 50, verbose = TRUE) %>%
       RunUMAP(reduction = "pca",
               dims = 1:50, 
               n.components = 3,
@@ -1229,16 +1210,14 @@ job::job({
   merged_norm_obj <- AddMetaData(merged_norm_obj,
                                  as.data.frame(merged_norm_obj@reductions$umap@cell.embeddings))
   
-  merged_norm_obj
-}, import = c("merged_filt_obj"))
-```
-
-```{r eval=FALSE}
-job::job({
   saveRDS(merged_norm_obj, 
           "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj.RDS")
-}, import = c("merged_norm_obj"))
+  
+  merged_norm_obj
+  
+# }, import = c("merged_filt_obj"))
 ```
+
 
 ```{r}
 merged_norm_obj$seurat_clusters <- merged_norm_obj$SCT_snn_res.1
@@ -1356,6 +1335,8 @@ Note on scale_data and return.only.var.genes
 https://www.sc-best-practices.org/cellular_structure/integration.html
 * "one can say that Harmony and Seurat consistently perform well for simple batch correction tasks,"
 
+## Seurat regression 
+
 ```{r eval=FALSE}
 if(!exists("merged_filt_obj")){
   merged_filt_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj.RDS")
@@ -1405,16 +1386,11 @@ job::job({
   merged_norm_batchcorr <- AddMetaData(merged_norm_batchcorr,
                                  as.data.frame(merged_norm_batchcorr@reductions$umap@cell.embeddings))
   
+  saveRDS(merged_norm_batchcorr, 
+        "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_batchcorrected_seurat_obj.RDS")
+
   merged_norm_batchcorr
 }, import = c("merged_filt_obj"))
-```
-
-```{r eval=FALSE}
-job::job({
-  #/active/taylor_s/people/jsmi26/CP-iPSC_motor_neurons/mack_d_2023.04.13_iPSC_neuromuscular_scRNAseq/
-  saveRDS(merged_norm_batchcorr, 
-          "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_batchcorrected_seurat_obj.RDS")
-}, import = c("merged_norm_batchcorr"))
 ```
 
 ```{r}
@@ -1519,7 +1495,27 @@ plot2
 dev.off()
 ```
 
+## Harmony 
 
+```{r}
+merged_harmony_obj <- IntegrateLayers(
+  object = merged_filt_obj,
+  method = HarmonyIntegration,
+  orig.reduction = "pca",
+  new.reduction = "harmony",
+  verbose = TRUE ) %>% 
+ FindNeighbors(reduction = "harmony", 
+               dims = 1:50)
+ FindClusters(resolution = 1.0,
+              cluster.name = "harmony_clusters")
+```
+
+```{r}
+merged_harmony_obj <- merged_filt_obj
+
+merged_harmony_obj[["RNA"]] <- split(merged_harmony_obj[["RNA"]], f = merged_harmony_obj$batch)
+merged_harmony_obj
+```
 
 # Session Info
 
