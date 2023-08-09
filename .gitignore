@@ -3,7 +3,7 @@
 .Rdata
 .httr-oauth
 .DS_Store
-
+*.RDS
 
 # Project specific
 00_archive/

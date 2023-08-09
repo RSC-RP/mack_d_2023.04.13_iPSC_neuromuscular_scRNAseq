@@ -1,0 +1,15 @@
+#!/bin/bash
+
+#PBS -P 975014d2-6d75-442c-b43c-74e01340ec58
+#PBS -q paidq
+#PBS -N sctransform
+#PBS -l select=1:ncpus=1:mem=32g
+#PBS -l walltime=24:00:00
+#PBS -j oe
+
+# Set-up Environment
+cd $PBS_O_WORKDIR
+ml R/4.1.0-foss-2020b
+
+# Execute Rscript
+Rscript seurat_sctransform.R

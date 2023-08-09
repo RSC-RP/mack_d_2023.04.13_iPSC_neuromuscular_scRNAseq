@@ -34,7 +34,9 @@ library(RColorBrewer)
 
 library(Seurat)
 library(SeuratDisk)
-
+library(SeuratObject)
+library(SeuratData)
+library(SeuratWrappers)
 
 library(scDblFinder)
 library(SoupX)
@@ -55,9 +57,9 @@ plan()
 ```
 
 ```{r}
-plan("multisession", workers = 16)
-plan()
-options(future.globals.maxSize = 60000 * 1024^2)
+# plan("multisession", workers = 16)
+# plan()
+# options(future.globals.maxSize = 60000 * 1024^2)
 ```
 
 # Background 
@@ -425,7 +427,8 @@ if(exists("merged_obj")) {
 
 ```{r}
 current_path <- file.path("results/day0_day50/seurat")
-current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj.RDS"
+current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj_v3.RDS" #v3 Seurat object
+  #"iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj.RDS" #v5 Seurat Object
   #"iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj.RDS"
 preprocess_merge_obj <- "iPSC_motor_neuron_day0-day50_time-course_SCT_UMAP_LeidenClust_Seurat_obj.RDS"
 
@@ -438,7 +441,6 @@ if(!exists("merged_obj") & !is.null(current_obj)){
   }else{
     merged_filt_obj <- readRDS(file.path(current_path, current_obj))
   }
-
 
 }else if(!exists("merged_obj") & is.null(current_obj) ){
   message(glue("Loading the merged object {preprocess_merge_obj}"))
@@ -1081,6 +1083,13 @@ est_plot
 # Merge Filtered Objects
 
 ```{r eval=FALSE}
+preprocess_merge_obj <- "iPSC_motor_neuron_day0-day50_time-course_SCT_UMAP_LeidenClust_Seurat_obj.RDS"
+merged_obj <- readRDS(file.path(current_path, preprocess_merge_obj))
+```
+
+```{r eval=FALSE}
+options(Seurat.object.assay.version = "v3")
+
 outs <- dir("results/soupX_counts",pattern = "^iPSC", full.names = TRUE)
 names(outs) <- basename(outs)
 # head(outs)
@@ -1119,15 +1128,20 @@ soupx_objs <- purrr::map(outs, function(res){
 
 # reorder the objects
 soupx_objs <- soupx_objs[levels(threshold_summary$id)]
+names(soupx_objs)
 ```
 
 ```{r eval=FALSE}
 job::job({
-  sapply(names(soupx_objs), function(x) saveRDS(soupx_objs[[x]],glue("results/individual_objs/mack_{x}_motor_neuron_filtered_soupX_seurat_obj.RDS")))
+  sapply(names(soupx_objs), function(x)
+    saveRDS(soupx_objs[[x]],glue("results/individual_objs/mack_{x}_motor_neuron_filtered_soupX_seurat_obj_v3.RDS")))
 }, import = c("soupx_objs"))
 ```
 
 ```{r eval=FALSE}
+VERSION="v3"
+options(Seurat.object.assay.version = VERSION)
+
 merged_filt_obj <-  merge(x = soupx_objs$iPSC_ipsc, 
                           y = soupx_objs[grep("ipsc", names(soupx_objs), invert = TRUE)],
                           merge.data = FALSE,
@@ -1140,10 +1154,8 @@ merged_filt_obj <-  merge(x = soupx_objs$iPSC_ipsc,
 # Active assay: RNA (33538 features, 0 variable features)
 #  2 layers present: counts, data
 merged_filt_obj 
-# saveRDS(merged_filt_obj,"results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj.RDS")
-```
+# saveRDS(merged_filt_obj,"results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj_v3.RDS")
 
-```{r}
 table(merged_filt_obj@meta.data$time_point)
 Layers(merged_filt_obj)
 ```
@@ -1165,61 +1177,73 @@ The FindClusters() function implements this procedure, and contains a resolution
 We find that setting this parameter between 0.4-1.2 typically returns good results for single-cell datasets of around 3K cells. Optimal resolution often increases for larger datasets. 
 
 ```{r eval=FALSE}
-# job::job({
-  # remove MT genes
-  temp <- merged_filt_obj[grep("^MT-", rownames(merged_filt_obj), invert = TRUE), ]
-  
-  #regularized negative binomial regression to normalize UMI count data
-  #Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures().
-  merged_norm_obj <- SCTransform(temp,
-                           assay="RNA",
-                           new.assay.name = "SCT",
-                           vars.to.regress = "percent.mt",
-                           method = "glmGamPoi",
-                           return.only.var.genes = FALSE,
-                           verbose = TRUE)  %>% 
-      RunPCA(npcs = 50, verbose = TRUE) %>%
-      RunUMAP(reduction = "pca",
-              dims = 1:50, 
-              n.components = 3,
-              n.neighbors = 30,# default 30
-              metric = "cosine",
-              min.dist = 0.2, # default 0.3
-              return.model = TRUE,
-              verbose = T) 
-  
-  merged_norm_obj <- merged_norm_obj %>% 
-      FindNeighbors(reduction = "pca",
-                    dims = 1:50, 
-                    k.param = 20,
-                    nn.method = "annoy",
-                    annoy.metric = "cosine",
-                    n.trees = 100,
-                    verbose = T)
-  
-  merged_norm_obj <- merged_norm_obj %>% 
-      FindClusters(resolution = 1.0, 
-                   algorithm = 2, 
-                   verbose = T) 
-  
-  merged_norm_obj <- merged_norm_obj %>% 
-      FindClusters(resolution = 1.5, 
-                   algorithm = 2, 
-                   verbose = T)
-  
-  merged_norm_obj <- AddMetaData(merged_norm_obj,
-                                 as.data.frame(merged_norm_obj@reductions$umap@cell.embeddings))
-  
-  saveRDS(merged_norm_obj, 
-          "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj.RDS")
-  
-  merged_norm_obj
-  
-# }, import = c("merged_filt_obj"))
+VERSION="v3"
+options(Seurat.object.assay.version = VERSION)
+
+# remove MT genes
+temp <- merged_filt_obj[grep("^MT-", rownames(merged_filt_obj), invert = TRUE), ]
+
+#regularized negative binomial regression to normalize UMI count data
+#Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures().
+merged_norm_obj <- SCTransform(temp,
+                         assay="RNA",
+                         new.assay.name = "SCT",
+                         vars.to.regress = "percent.mt",
+                         method = "glmGamPoi",
+                         return.only.var.genes = FALSE,
+                         verbose = TRUE)
+```
+
+```{r}
+merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v3.RDS")
+
+merged_norm_obj
+```
+
+```{r}
+merged_norm_obj <-   RunPCA(merged_norm_obj,
+                            assay = "SCT",
+                            npcs = 50,
+                            verbose = TRUE) 
+
+  #     RunUMAP(reduction = "pca",
+  #             dims = 1:50, 
+  #             n.components = 3,
+  #             n.neighbors = 30,# default 30
+  #             metric = "cosine",
+  #             min.dist = 0.2, # default 0.3
+  #             return.model = TRUE,
+  #             verbose = T) 
+  # 
+  # merged_norm_obj <- merged_norm_obj %>% 
+  #     FindNeighbors(reduction = "pca",
+  #                   dims = 1:50, 
+  #                   k.param = 20,
+  #                   nn.method = "annoy",
+  #                   annoy.metric = "cosine",
+  #                   n.trees = 100,
+  #                   verbose = T)
+  # 
+  # merged_norm_obj <- merged_norm_obj %>% 
+  #     FindClusters(resolution = 1.0, 
+  #                  algorithm = 2, 
+  #                  verbose = T) 
+  # 
+  # merged_norm_obj <- merged_norm_obj %>% 
+  #     FindClusters(resolution = 1.5, 
+  #                  algorithm = 2, 
+  #                  verbose = T)
+  # 
+  # merged_norm_obj <- AddMetaData(merged_norm_obj,
+  #                                as.data.frame(merged_norm_obj@reductions$umap@cell.embeddings))
+  # 
+  # 
+  # merged_norm_obj
 ```
 
 
 ```{r}
+merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj.RDS")
 merged_norm_obj$seurat_clusters <- merged_norm_obj$SCT_snn_res.1
 Idents(merged_norm_obj) <- merged_norm_obj$SCT_snn_res.1
 ```
@@ -1342,7 +1366,7 @@ if(!exists("merged_filt_obj")){
   merged_filt_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj.RDS")
 }
 
-job::job({
+# job::job({
   #regularized negative binomial regression to normalize UMI count data
   #Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures().
   temp <- merged_filt_obj[grep("^MT-", rownames(merged_filt_obj), invert = TRUE), ]
@@ -1353,8 +1377,8 @@ job::job({
                            vars.to.regress = c("batch","percent.mt"),
                            method = "glmGamPoi",
                            return.only.var.genes = TRUE,
-                           verbose = FALSE)  %>% 
-      RunPCA(npcs = 50, verbose = FALSE) %>%
+                           verbose = TRUE)  %>% 
+      RunPCA(npcs = 50, verbose = TRUE) %>%
       RunUMAP(reduction = "pca",
               dims = 1:50, 
               n.components = 3,
@@ -1390,7 +1414,7 @@ job::job({
         "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_batchcorrected_seurat_obj.RDS")
 
   merged_norm_batchcorr
-}, import = c("merged_filt_obj"))
+# }, import = c("merged_filt_obj"))
 ```
 
 ```{r}
