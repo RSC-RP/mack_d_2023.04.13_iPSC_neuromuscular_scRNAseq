@@ -34,7 +34,9 @@ library(RColorBrewer)
 
 library(Seurat)
 library(SeuratDisk)
-
+library(SeuratObject)
+library(SeuratWrappers)
+library(Matrix)
 
 library(scDblFinder)
 library(SoupX)
@@ -52,12 +54,10 @@ conflicted::conflict_prefer("saveRDS","base")
 library(future)
 # check the current active plan
 plan()
-```
-
-```{r}
-plan("multisession", workers = 16)
-plan()
-options(future.globals.maxSize = 60000 * 1024^2)
+# 
+# plan("multisession", workers = 6)
+# plan()
+# options(future.globals.maxSize = 60000 * 1024^2)
 ```
 
 # Background 
@@ -196,7 +196,7 @@ colors <- c("#E41A1C", "#377EB8", "#4DAF4A", "#F781BF",
     ggpubr::get_palette("npg", 4)) %>% 
   c("darkorchid1","magenta", "peru")
 
-length(colors)
+length(colors) #35
 ```
 
 ```{r}
@@ -306,6 +306,14 @@ marker_genes_iPSC <- list(MNPCs = c("CHAT", "ISL1", "ISL2", "MNX1", "OLIG2", "NE
                 Glial = c("SOX9", "S100B", "GFAP"),
                 Oligodendrocytes = c("PDGFRA", "GALC"),
                 iPSCs = c("NANOG", "POU5F1"))
+```
+
+```{r}
+marker_genes_endoderm <- c("CXCR4", "KRT12", "SOX17", "KLF8", "MYCT1", "DKK4", "GATA4", "GATA6","SOX7", "EOMES","KRT19","CLDN6","FOXA1","FOXA2")
+
+length(marker_genes_endoderm)
+table(marker_genes_endoderm %in% rownames(merged_norm_obj))
+# marker_genes_endoderm[!marker_genes_endoderm %in% rownames(merged_norm_obj)]
 ```
 
 ```{r eval=FALSE}
@@ -1141,11 +1149,11 @@ merged_filt_obj <-  merge(x = soupx_objs$iPSC_ipsc,
 #  2 layers present: counts, data
 merged_filt_obj 
 # saveRDS(merged_filt_obj,"results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj.RDS")
-```
 
-```{r}
 table(merged_filt_obj@meta.data$time_point)
-Layers(merged_filt_obj)
+Layers(merged_filt_obj) # version Seurat object v5 
+# [1] "counts.iPSC_ipsc"  "counts.iPSC_day3"  "counts.iPSC_day5"  "counts.iPSC_day8"  "counts.iPSC_day11" "counts.iPSC_day15" "counts.iPSC_day18" "counts.iPSC_day21"
+# [9] "counts.iPSC_day24" "counts.iPSC_day27" "counts.iPSC_day30" "counts.iPSC_day35" "counts.iPSC_day40" "counts.iPSC_day45" "counts.iPSC_day50"
 ```
 
 
@@ -1165,76 +1173,81 @@ The FindClusters() function implements this procedure, and contains a resolution
 We find that setting this parameter between 0.4-1.2 typically returns good results for single-cell datasets of around 3K cells. Optimal resolution often increases for larger datasets. 
 
 ```{r eval=FALSE}
-# job::job({
-  # remove MT genes
-  temp <- merged_filt_obj[grep("^MT-", rownames(merged_filt_obj), invert = TRUE), ]
-  
-  #regularized negative binomial regression to normalize UMI count data
-  #Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures().
-  merged_norm_obj <- SCTransform(temp,
-                           assay="RNA",
-                           new.assay.name = "SCT",
-                           vars.to.regress = "percent.mt",
-                           method = "glmGamPoi",
-                           return.only.var.genes = FALSE,
-                           verbose = TRUE)  %>% 
-      RunPCA(npcs = 50, verbose = TRUE) %>%
-      RunUMAP(reduction = "pca",
-              dims = 1:50, 
-              n.components = 3,
-              n.neighbors = 30,# default 30
-              metric = "cosine",
-              min.dist = 0.2, # default 0.3
-              return.model = TRUE,
-              verbose = T) 
-  
-  merged_norm_obj <- merged_norm_obj %>% 
-      FindNeighbors(reduction = "pca",
-                    dims = 1:50, 
-                    k.param = 20,
-                    nn.method = "annoy",
-                    annoy.metric = "cosine",
-                    n.trees = 100,
-                    verbose = T)
-  
-  merged_norm_obj <- merged_norm_obj %>% 
-      FindClusters(resolution = 1.0, 
-                   algorithm = 2, 
-                   verbose = T) 
-  
-  merged_norm_obj <- merged_norm_obj %>% 
-      FindClusters(resolution = 1.5, 
-                   algorithm = 2, 
-                   verbose = T)
-  
-  merged_norm_obj <- AddMetaData(merged_norm_obj,
-                                 as.data.frame(merged_norm_obj@reductions$umap@cell.embeddings))
-  
-  saveRDS(merged_norm_obj, 
-          "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj.RDS")
-  
-  merged_norm_obj
-  
-# }, import = c("merged_filt_obj"))
+# remove MT genes
+temp <- merged_filt_obj[grep("^MT-", rownames(merged_filt_obj), invert = TRUE), ]
+
+#regularized negative binomial regression to normalize UMI count data
+#Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures().
+merged_norm_obj <- SCTransform(temp,
+                         assay="RNA",
+                         new.assay.name = "SCT",
+                         vars.to.regress = "percent.mt",
+                         method = "glmGamPoi",
+                         return.only.var.genes = FALSE,
+                         verbose = TRUE)  %>% 
+    RunPCA(npcs = 50, verbose = TRUE) %>%
+    RunUMAP(reduction = "pca",
+            dims = 1:50, 
+            n.components = 3,
+            n.neighbors = 30,# default 30
+            metric = "cosine",
+            min.dist = 0.2, # default 0.3
+            return.model = TRUE,
+            verbose = T) 
+
+merged_norm_obj <- merged_norm_obj %>% 
+    FindNeighbors(reduction = "pca",
+                  dims = 1:50, 
+                  k.param = 20,
+                  nn.method = "annoy",
+                  annoy.metric = "cosine",
+                  n.trees = 100,
+                  verbose = T)
+
+merged_norm_obj <- merged_norm_obj %>% 
+    FindClusters(resolution = 1.0, 
+                 algorithm = 2, 
+                 verbose = T) 
+
+merged_norm_obj <- merged_norm_obj %>% 
+    FindClusters(resolution = 1.5, 
+                 algorithm = 2, 
+                 verbose = T)
+
+merged_norm_obj <- AddMetaData(merged_norm_obj,
+                               as.data.frame(merged_norm_obj@reductions$umap@cell.embeddings))
+
+saveRDS(merged_norm_obj, 
+        "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
+
+merged_norm_obj
 ```
 
-
 ```{r}
+merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
+
+# Add metadata and idents
+merged_norm_obj$id <- factor(merged_norm_obj$orig.ident, levels=unique(merged_norm_obj$orig.ident))
 merged_norm_obj$seurat_clusters <- merged_norm_obj$SCT_snn_res.1
 Idents(merged_norm_obj) <- merged_norm_obj$SCT_snn_res.1
+
+merged_norm_obj
+# class(merged_norm_obj[["RNA"]]) #v5
 ```
 
 ```{r fig.height=10}
 # pdf("figures/day0_day50/filtered_merged_results/sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
 # ElbowPlot(merged_norm_obj,ndims = 50, reduction = "pca")
 # dev.off()
-# #
+
 # pdf("figures/day0_day50/filtered_merged_results/transform_1-4PCs_loadings.pdf", height = 10, width=7)
 # VizDimLoadings(merged_norm_obj, dims = 1:4, reduction = "pca")
 # dev.off()
 
 # pdf("figures/day0_day50/filtered_merged_results/byLouvainCluster_sct_UMAP.pdf",height = 10, width= 17)
-DimPlot(merged_norm_obj, dims = c(1,2)) +
+DimPlot(merged_norm_obj, 
+        reduction = "umap",
+        dims = c(1,2)) +
   scale_color_manual(values = colors)
 # dev.off()
 ```
@@ -1283,7 +1296,6 @@ fig <- fig %>%
 fig
 ```
 
-
 ```{r eval=FALSE}
 Idents(merged_norm_obj) <- merged_norm_obj$orig.ident
 purrr::map(names(marker_genes_iPSC), function(type){
@@ -1301,7 +1313,28 @@ purrr::map(names(marker_genes_iPSC), function(type){
 })
 ```
 
+
+
+```{r fig.height=10, fig.width=10}
+Idents(merged_norm_obj) <- merged_norm_obj$orig.ident
+png("figures/day0_day50/filtered_merged_results/filtered_merged_results_iPSC_MN_seurat_endoderm_markers_p1.png", height = 10, width = 12, res = 100, units="in")
+VlnPlot(merged_norm_obj,
+        features = marker_genes_endoderm[1:7])
+dev.off()
+
+png("figures/day0_day50/filtered_merged_results/filtered_merged_results_iPSC_MN_seurat_endoderm_markers_p2.png", height = 10, width = 12, res = 100, units="in")
+VlnPlot(merged_norm_obj,
+        features = marker_genes_endoderm[8:14])
+dev.off()
+```
+
 ```{r}
+most_var_genes_per_sample <- SCTResults(merged_norm_obj, slot = "feature.attributes")
+
+# most_var_genes_per_sample
+```
+
+```{r eval=FALSE}
 # Identify the 10 most highly variable genes
 top10 <- head(VariableFeatures(merged_norm_obj), 10)
 
@@ -1315,10 +1348,34 @@ plot2
 ```
 
 ```{r}
-umi_counts_filt <-  sapply(as.data.frame(as.matrix(merged_norm_obj@assays$RNA@counts)), function(x) sum(x > 1))
+umi_counts_filt <-  sapply( Layers(merged_norm_obj@assays$RNA), function(x) {
+   colSums(merged_norm_obj@assays$RNA[[x]] > 1)
+})
 
 
-mean(umi_counts_filt)
+# mean(umi_counts_filt)
+med_per_day <- sapply(umi_counts_filt, median)
+mean_per_day <- sapply(umi_counts_filt, mean)
+
+# unlist(umi_counts_filt) %>% length()
+
+median(unlist(umi_counts_filt)) # 1723 genes detected across all cells
+mean(unlist(umi_counts_filt)) #1885 genes detected across all cells
+```
+
+```{r}
+data.frame(counts=umi_counts_filt$counts.iPSC_day40) %>% 
+  ggplot(., aes(x=counts)) +
+  geom_histogram(binwidth = 1)
+
+data.frame(counts=umi_counts_filt$counts.iPSC_ipsc) %>% 
+  ggplot(., aes(x=counts)) +
+  geom_histogram(binwidth = 1)
+```
+
+
+```{r}
+mean_per_day[order(mean_per_day)]
 ```
 
 # Batch Effect Correction 
@@ -1337,25 +1394,42 @@ https://www.sc-best-practices.org/cellular_structure/integration.html
 
 ## Seurat regression 
 
+Since each sample was made a "layer" and so in Layer1 these cells are in the same batch, so lacks 2 factor levels. 
+
+> required or else Error in `contrasts<-`(`*tmp*`, value = contr.funs[1 + isOF[nn]]) :
+
+https://github.com/satijalab/seurat/issues/3657
+
 ```{r eval=FALSE}
-if(!exists("merged_filt_obj")){
-  merged_filt_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj.RDS")
+if(!exists("merged_filt_obj_v3")){
+  merged_filt_obj_v3 <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj_v3.RDS")
 }
 
-job::job({
+merged_filt_obj_v3
+# class(merged_filt_obj_v3[["RNA"]]) #v3
+table(merged_filt_obj_v3$batch)
+```
+
+```{r eval=FALSE}
+options(Seurat.object.assay.version = 'v3')
   #regularized negative binomial regression to normalize UMI count data
   #Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures().
-  temp <- merged_filt_obj[grep("^MT-", rownames(merged_filt_obj), invert = TRUE), ]
+  temp <- merged_filt_obj_v3[grep("^MT-", rownames(merged_filt_obj_v3), invert = TRUE), ]
+  temp$batch <- as.factor(merged_filt_obj_v3$batch)
+  
+  merged_norm_batchcorr <- SCTransform(merged_filt_obj_v3,
+                             assay="RNA",
+                             new.assay.name = "SCT",
+                             vars.to.regress = c("batch","percent.mt"),
+                             method = "glmGamPoi",
+                             return.only.var.genes = TRUE,
+                             verbose = TRUE)
+  
+  merged_norm_batchcorr <- merged_norm_batchcorr %>%  
+    RunPCA(npcs = 50, verbose = FALSE) 
 
-  merged_norm_batchcorr <- SCTransform(temp,
-                           assay="RNA",
-                           new.assay.name = "SCT",
-                           vars.to.regress = c("batch","percent.mt"),
-                           method = "glmGamPoi",
-                           return.only.var.genes = TRUE,
-                           verbose = FALSE)  %>% 
-      RunPCA(npcs = 50, verbose = FALSE) %>%
-      RunUMAP(reduction = "pca",
+  merged_norm_batchcorr <- merged_norm_batchcorr %>% 
+    RunUMAP(reduction = "pca",
               dims = 1:50, 
               n.components = 3,
               n.neighbors = 30,# default 30
@@ -1386,18 +1460,17 @@ job::job({
   merged_norm_batchcorr <- AddMetaData(merged_norm_batchcorr,
                                  as.data.frame(merged_norm_batchcorr@reductions$umap@cell.embeddings))
   
-  saveRDS(merged_norm_batchcorr, 
-        "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_batchcorrected_seurat_obj.RDS")
-
-  merged_norm_batchcorr
-}, import = c("merged_filt_obj"))
+  # saveRDS(merged_norm_batchcorr, 
+  #       "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_batchcorrected_seurat_obj_v3.RDS")
 ```
-
 ```{r}
-# merged_norm_batchcorr <- readRDS(file.path(current_path, "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_batchcorrected_seurat_obj.RDS"))
+if(!exists("merged_norm_batchcorr")){
+  merged_norm_batchcorr <- readRDS(file.path(current_path, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_batchcorrected_seurat_obj_v3.RDS"))
+}
 
 merged_norm_batchcorr$id <- factor(merged_norm_batchcorr$orig.ident, 
                                    levels = c(unique(merged_norm_batchcorr$orig.ident)))
+
 merged_norm_batchcorr$seurat_clusters <- merged_norm_batchcorr$SCT_snn_res.1
 Idents(merged_norm_batchcorr) <- merged_norm_batchcorr$SCT_snn_res.1
 
@@ -1405,22 +1478,22 @@ merged_norm_batchcorr
 ```
 
 ```{r fig.height=10}
-# pdf("figures/day0_day50/filtered_merged_batchcorrected/sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
+# pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
 # ElbowPlot(merged_norm_batchcorr,ndims = 50, reduction = "pca")
 # dev.off()
 # 
-# pdf("figures/day0_day50/filtered_merged_batchcorrected/transform_1-4PCs_loadings.pdf", height = 10, width=7)
+# pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_transform_1-4PCs_loadings.pdf", height = 10, width=7)
 # VizDimLoadings(merged_norm_batchcorr, dims = 1:4, reduction = "pca")
 # dev.off()
-
-pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_byLouvainCluster_sct_UMAP.pdf",height = 10, width= 17)
-DimPlot(merged_norm_batchcorr, dims = c(1,2)) +
-  scale_color_manual(values = colors)
-dev.off()
+# 
+# pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_byLouvainCluster_sct_UMAP.pdf",height = 10, width= 17)
+# DimPlot(merged_norm_batchcorr, dims = c(1,2)) +
+#   scale_color_manual(values = colors)
+# dev.off()
 ```
 
 ```{r fig.height=10}
-filt_d1 <- DimPlot(merged_norm_batchcorr, 
+bc_d1 <- DimPlot(merged_norm_batchcorr, 
         group.by = c("batch","id"),
         label = T, 
         repel = T,
@@ -1428,10 +1501,10 @@ filt_d1 <- DimPlot(merged_norm_batchcorr,
   scale_color_manual(values = colors)
 
 # png("figures/day0_day50/filtered_merged_batchcorrected/filtered_merged_results_iPSC_MN_seurat_batchcorrected_UMAP_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
-filt_d1
+bc_d1
 # dev.off()
 
-filt_s1 <- DimPlot(merged_norm_batchcorr, 
+bc_s1 <- DimPlot(merged_norm_batchcorr, 
         group.by = c("id"),
         split.by = "batch",
         label = T, 
@@ -1440,7 +1513,7 @@ filt_s1 <- DimPlot(merged_norm_batchcorr,
   scale_color_manual(values = colors)
 
 # png("figures/day0_day50/filtered_merged_batchcorrected/filtered_merged_results_iPSC_MN_seurat_batchcorrected_UMAP_splitBy_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
-filt_s1
+bc_s1
 # dev.off()
 ```
 
@@ -1490,31 +1563,179 @@ top10 <- head(VariableFeatures(merged_norm_batchcorr), 10)
 plot1 <- VariableFeaturePlot(merged_norm_batchcorr)
 plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
 
-pdf("figures/day0_day50/filtered_merged_batchcorrected/iPSC_MN_seurat_batchcorrected_topVarFeatures.pdf", height = 5, width = 10)
+# pdf("figures/day0_day50/filtered_merged_batchcorrected/iPSC_MN_seurat_batchcorrected_topVarFeatures.pdf", height = 5, width = 10)
 plot2
-dev.off()
+# dev.off()
 ```
+
 
 ## Harmony 
 
 ```{r}
-merged_harmony_obj <- IntegrateLayers(
-  object = merged_filt_obj,
+VERSION = 'v5'
+```
+
+```{r eval=FALSE}
+if VERSION == 'v3'{
+  merged_harmony_obj <- merged_filt_obj
+
+  merged_harmony_obj[["RNA"]] <- split(merged_harmony_obj[["RNA"]], f = merged_harmony_obj$sample)
+  merged_harmony_obj
+}
+```
+
+Warning: Groups are set automatically by model when integrating SCT assaysWarning: Quick-TRANSfer stage steps exceeded maximum (= 2694850)Harmony 1/10
+
+2023-08-08 12:31:54.280978: Done. Exporting 12336.2MB: .Random.seed, merged_harmony_obj_batch...
+Error in save(list = vars, file = exportRdata, envir = globalenv()) : 
+  'file' must be non-empty string
+Execution halted
+
+```{r eval=FALSE}
+
+merged_harmony_obj_batch <- IntegrateLayers(
+  object = merged_norm_obj,
+  group.by = "batch",
   method = HarmonyIntegration,
   orig.reduction = "pca",
   new.reduction = "harmony",
-  verbose = TRUE ) %>% 
- FindNeighbors(reduction = "harmony", 
+  verbose = TRUE ) %>%
+ FindNeighbors(reduction = "harmony",
                dims = 1:50)
+
+merged_harmony_obj_batch <- merged_harmony_obj_batch %>% 
  FindClusters(resolution = 1.0,
-              cluster.name = "harmony_clusters")
+              cluster.name = "harmony_clusters") %>% 
+    RunUMAP(reduction = "harmony",
+            reduction.name = "umap.harmony",
+            dims = 1:50, 
+            n.components = 3,
+            n.neighbors = 30,# default 30
+            metric = "cosine",
+            min.dist = 0.2, # default 0.3
+            return.model = TRUE,
+            verbose = T) 
+
+merged_harmony_obj_batch$id <- factor(merged_harmony_obj_batch$orig.ident, levels=unique(merged_harmony_obj_batch$orig.ident))
+# saveRDS(merged_harmony_obj_batch, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_harmonyPerBatch_seurat_obj_v5.RDS")
+
+# class(merged_harmony_obj_batch[["RNA"]])
+```
+
+```{r eval=FALSE}
+# defaults to Layers which are the sample IDs in this case
+merged_harmony_obj <- IntegrateLayers(
+    object = merged_norm_obj,
+    method = HarmonyIntegration,
+    orig.reduction = "pca",
+    new.reduction = "harmony",
+    verbose = TRUE ) %>%
+   FindNeighbors(reduction = "harmony",
+                 dims = 1:50)
+  
+merged_harmony_obj <- merged_harmony_obj %>% 
+   FindClusters(resolution = 1.0,
+                cluster.name = "harmony_clusters") %>% 
+   RunUMAP(reduction = "harmony",
+           dims = 1:50, 
+           reduction.name = "umap.harmony")
+  
+merged_harmony_obj$id <- factor(merged_harmony_obj$orig.ident, levels=unique(merged_harmony_obj$orig.ident))
+# saveRDS(merged_harmony_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_harmonyPerSample_seurat_obj_v5.RDS")
 ```
 
 ```{r}
-merged_harmony_obj <- merged_filt_obj
+merged_harmony_obj_batch <- AddMetaData(merged_harmony_obj_batch,
+                                        merged_harmony_obj_batch@reductions$umap.harmony@cell.embeddings)
+```
 
-merged_harmony_obj[["RNA"]] <- split(merged_harmony_obj[["RNA"]], f = merged_harmony_obj$batch)
-merged_harmony_obj
+```{r fig.height=10}
+# pdf("figures/day0_day50/harmony/merged_harmony_obj_batch_sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
+ElbowPlot(merged_harmony_obj_batch,ndims = 50, reduction = "pca")
+# dev.off()
+
+# pdf("figures/day0_day50/harmony/merged_harmony_obj_batch_transform_1-4PCs_loadings.pdf", height = 10, width=7)
+VizDimLoadings(merged_harmony_obj_batch, dims = 1:4, reduction = "pca")
+# dev.off()
+
+# pdf("figures/day0_day50/harmony/merged_harmony_obj_batch_byLouvainCluster_sct_UMAP.pdf",height = 10, width= 17)
+DimPlot(merged_harmony_obj_batch,
+        reduction = "umap",
+        dims = c(1,2)) +
+  scale_color_manual(values = colors)
+# dev.off()
+```
+
+```{r fig.height=10}
+filt_harmony_d1 <- DimPlot(merged_harmony_obj_batch, 
+        group.by = c("batch","id"),
+        reduction = "umap.harmony", 
+        label = T, 
+        repel = T,
+        label.size = 7) + 
+  scale_color_manual(values = colors)
+
+# 
+# filt_harmony_d2 <- DimPlot(merged_harmony_obj, 
+#         group.by = c("batch","id"),
+#         reduction = "umap.harmony",
+#         label = T, 
+#         repel = T,
+#         label.size = 7) + 
+#   scale_color_manual(values = colors)
+
+# png("figures/day0_day50/harmony/merged_harmony_obj_batch_iPSC_MN_seurat_UMAP_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
+filt_harmony_d1
+# dev.off()
+
+```
+
+
+```{r eval=FALSE}
+Idents(merged_harmony_obj_batch) <- merged_harmony_obj_batch$orig.ident
+purrr::map(names(marker_genes_iPSC), function(type){
+ 
+   h <- ifelse(length(marker_genes_iPSC[[type]]) <= 4, 12, 20)
+  outfile <- glue("figures/day0_day50/harmony/merged_harmony_obj_batch_iPSC_MN_expression_{type}_marker_genes.png")
+  
+  png(outfile, height = h, width = 20, units = "in", res = 100)
+  print(FeaturePlot(merged_harmony_obj_batch, 
+                    features = marker_genes_iPSC[[type]],
+                    label = TRUE) +
+          patchwork::plot_annotation(title = glue("{type} marker genes")))
+  dev.off()
+})
+```
+
+```{r}
+merged_harmony_obj_batch
+Idents(merged_harmony_obj_batch) <- merged_harmony_obj_batch$orig.ident
+```
+
+```{r fig.height=10, fig.width=10}
+# png("figures/day0_day50/harmony/merged_harmony_obj_batch_iPSC_MN_seurat_endoderm_markers_p1.png", height = 10, width = 12, res = 100, units="in")
+VlnPlot(merged_harmony_obj_batch,
+        features = marker_genes_endoderm[1:7])
+# dev.off()
+
+# png("figures/day0_day50/harmony/merged_harmony_obj_batch_iPSC_MN_seurat_endoderm_markers_p2.png", height = 10, width = 12, res = 100, units="in")
+VlnPlot(merged_harmony_obj_batch,
+        features = marker_genes_endoderm[8:14])
+# dev.off()
+```
+
+```{r}
+fig2 <- plot_ly(merged_harmony_obj_batch@meta.data,
+               x = ~umapharmony_1, y = ~umapharmony_2, z = ~umapharmony_3, 
+               color = ~id,
+               colors = colors)
+fig2 <- fig2 %>%
+  add_markers(
+    marker = list(size = 1),
+    text = pull(merged_harmony_obj_batch@meta.data, orig.ident, name = barcode),
+    hoverinfo = 'text')
+
+fig2
 ```
 
 # Session Info
