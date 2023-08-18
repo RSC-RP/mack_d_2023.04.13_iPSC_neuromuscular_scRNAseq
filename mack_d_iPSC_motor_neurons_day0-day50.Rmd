@@ -317,8 +317,6 @@ marker_genes_iPSC <- list(MNPCs = c("CHAT", "ISL1", "ISL2", "MNX1", "OLIG2", "NE
 marker_genes_endoderm <- c("CXCR4", "KRT12", "SOX17", "KLF8", "MYCT1", "DKK4", "GATA4", "GATA6","SOX7", "EOMES","KRT19","CLDN6","FOXA1","FOXA2")
 
 length(marker_genes_endoderm)
-table(marker_genes_endoderm %in% rownames(merged_norm_obj))
-# marker_genes_endoderm[!marker_genes_endoderm %in% rownames(merged_norm_obj)]
 ```
 
 ```{r eval=FALSE}
@@ -436,13 +434,13 @@ if(exists("merged_obj")) {
 }
 ```
 
+
 ```{r}
 current_path <- file.path("results/day0_day50/seurat")
 current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj_v3.RDS" #v3 Seurat object
   #"iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj.RDS" #v5 Seurat Object
   #"iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj.RDS"
 preprocess_merge_obj <- "iPSC_motor_neuron_day0-day50_time-course_SCT_UMAP_LeidenClust_Seurat_obj.RDS"
-
 
 if(!exists("merged_obj") & !is.null(current_obj)){
   message(glue("Loading the merged object {current_obj}"))
@@ -1170,9 +1168,9 @@ merged_filt_obj
 
 table(merged_filt_obj@meta.data$time_point)
 Layers(merged_filt_obj) # version Seurat object v5 
-# [1] "counts.iPSC_ipsc"  "counts.iPSC_day3"  "counts.iPSC_day5"  "counts.iPSC_day8"  "counts.iPSC_day11" "counts.iPSC_day15" "counts.iPSC_day18" "counts.iPSC_day21"
-# [9] "counts.iPSC_day24" "counts.iPSC_day27" "counts.iPSC_day30" "counts.iPSC_day35" "counts.iPSC_day40" "counts.iPSC_day45" "counts.iPSC_day50"
-```
+ [1] "counts.iPSC_ipsc"  "counts.iPSC_day3"  "counts.iPSC_day5"  "counts.iPSC_day8"  "counts.iPSC_day11" "counts.iPSC_day15" "counts.iPSC_day18" "counts.iPSC_day21"
+ [9] "counts.iPSC_day24" "counts.iPSC_day27" "counts.iPSC_day30" "counts.iPSC_day35" "counts.iPSC_day40" "counts.iPSC_day45" "counts.iPSC_day50"
+
 
 
 # Filtered Dataset Processing
