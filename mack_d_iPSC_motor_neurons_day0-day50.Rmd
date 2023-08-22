@@ -437,9 +437,9 @@ if(exists("merged_obj")) {
 
 ```{r}
 current_path <- file.path("results/day0_day50/seurat")
-current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj_v3.RDS" #v3 Seurat object
-  #"iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj.RDS" #v5 Seurat Object
-  #"iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj.RDS"
+current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS" #v5 Seurat Object
+  # "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj_v3.RDS" #v3 Seurat object
+  # "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj.RDS"
 preprocess_merge_obj <- "iPSC_motor_neuron_day0-day50_time-course_SCT_UMAP_LeidenClust_Seurat_obj.RDS"
 
 if(!exists("merged_obj") & !is.null(current_obj)){
@@ -452,7 +452,7 @@ if(!exists("merged_obj") & !is.null(current_obj)){
   }
 
 }else if(!exists("merged_obj") & is.null(current_obj) ){
-  message(glue("Loading the merged object {preprocess_merge_obj}"))
+  message(glue("Loading the preprocessed merged object {preprocess_merge_obj}"))
   merged_obj <- readRDS(file.path(current_path, preprocess_merge_obj))
 }
 ```

@@ -24,14 +24,24 @@ library(dplyr)
 library(tidyr)
 library(magrittr)
 library(stringr)
-library(ggplot2)
 library(tibble)
+library(glue)
+
+library(ggplot2)
+library(plotly)
+library(RColorBrewer)
 
 library(Seurat)
 library(SeuratDisk)
+library(SeuratObject)
+library(SeuratWrappers)
+library(Matrix)
+library(SeuratObject)
+library(SeuratData)
+library(SeuratWrappers)
 
-
-library(RColorBrewer)
+library(scDblFinder)
+library(SoupX)
 ```
 
 ```{r}
@@ -39,6 +49,7 @@ conflicted::conflict_prefer("select", "dplyr")
 conflicted::conflict_prefer("filter","dplyr")
 conflicted::conflict_prefer("saveRDS","base")
 ```
+
 
 # Parallelization 
 
@@ -104,12 +115,12 @@ Allen Institute:
 * https://brainmapportal-live-4cc80a57cd6e400d854-f7fdcae.divio-media.net/filer_public/30/80/30803016-9515-45fd-a6af-8595902c176f/readme_human_ctx.txt 
 
 ```{r}
-
 # Assay data with 50281 features for 6235 cells
 # First 10 features:
 #  3.8-1.2, 3.8-1.3, 3.8-1.4, 3.8-1.5, 5-HT3C2, A1BG, A1BG-AS1, A1CF, A2M, A2M-AS1 
 ref_counts="resources/cell_refs/allen_institute/allen_m1c_2019_ssv4.rds"
 ref_motor_cortex <- readRDS(ref_counts)
+
 ref_motor_cortex
 
 # head(ref_motor_cortex@meta.data)
