@@ -65,6 +65,41 @@ plan()
 options(future.globals.maxSize = 60000 * 1024^2)
 ```
 
+# Reference Data Set(s)
+
+1. https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE136719
+2. https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE138121
+3. https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE171892
+3-1. https://juliendelile.github.io/Antler/
+3-2. https://shiny.crick.ac.uk/scviewer/neuraltube/
+
+4. Yadav 2023 
+  https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE190442
+  https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE222322
+
+```{bash eval=FALSE}
+wget https://ftp.ncbi.nlm.nih.gov/geo/series/GSE190nnn/GSE190442/suppl/GSE190442_aggregated_counts_postqc.csv.gz
+wget https://ftp.ncbi.nlm.nih.gov/geo/series/GSE190nnn/GSE190442/suppl/GSE190442_aggregated_metadata_postqc.csv.gz
+
+# https://azimuth.hubmapconsortium.org/references/#Human%20-%20Motor%20Cortex
+rsync -av https://zenodo.org/record/4546932
+wget https://seurat.nygenome.org/azimuth/demo_datasets/allen_m1c_2019_ssv4.rds
+rsync -av http://celltypes.brain-map.org/api/v2/well_known_file_download/694416044
+rsync -av http://celltypes.brain-map.org/api/v2/well_known_file_download/502175284
+```
+
+```{bash eval=FALSE}
+cd resources/cell_refs/allen_institute/M1
+
+rclone copy --http-url https://brainmapportal-live-4cc80a57cd6e400d854-f7fdcae.divio-media.net :http:filer_public/70/32/70326830-e306-4743-a02c-a8da5bf9eb56/readme-m1-10.txt  . -P
+
+rclone copy --http-url https://brainmapportal-live-4cc80a57cd6e400d854-f7fdcae.divio-media.net \
+  :http:filer_public/0c/0c/0c0c882d-1c31-40a9-8039-3bf2706a77cd/sample-exp_component_mapping_human_10x_apr2020.zip . -P 
+
+rclone copy --http-url https://idk-etl-prod-download-bucket.s3.amazonaws.com :http:aibs_human_m1_10x/metadata.csv . -P
+rclone copy --http-url https://idk-etl-prod-download-bucket.s3.amazonaws.com :http:aibs_human_m1_10x/matrix.csv . -P
+```
+
 
 # Genome Refs
 
@@ -85,34 +120,36 @@ idmap <- AnnotationDbi::select(edb, keytype="GENEID",
 head(idmap)
 ```
 
-# Reference Data Set(s)
+```{r}
+MTG_genes <- read.csv("resources/cell_refs/allen_institute/human_MTG_2018-06-14_genes-rows.csv")
 
-1. https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE136719
-2. https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE138121
-3. https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE171892
-3-1. https://juliendelile.github.io/Antler/
-3-2. https://shiny.crick.ac.uk/scviewer/neuraltube/
-
-4. Yadav 2023 
-  https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE190442
-  https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE222322
-
-```{bash eval=FALSE}
-wget https://ftp.ncbi.nlm.nih.gov/geo/series/GSE190nnn/GSE190442/suppl/GSE190442_aggregated_counts_postqc.csv.gz
-wget https://ftp.ncbi.nlm.nih.gov/geo/series/GSE190nnn/GSE190442/suppl/GSE190442_aggregated_metadata_postqc.csv.gz
-
-rsync -av https://zenodo.org/record/4546932
-wget https://seurat.nygenome.org/azimuth/demo_datasets/allen_m1c_2019_ssv4.rds
-rsync -av http://celltypes.brain-map.org/api/v2/well_known_file_download/694416044
-rsync -av http://celltypes.brain-map.org/api/v2/well_known_file_download/502175284
+head(MTG_genes)
 ```
 
 # Preprocessing
 
-Allen Institute:
+## Allen Institute:
 * The sequencing results were aligned to exons and introns in the GRCh38.p2 reference genome using the STAR algorithm, and aggregated intron and exon counts at the gene level were calculated.
 
 * https://brainmapportal-live-4cc80a57cd6e400d854-f7fdcae.divio-media.net/filer_public/30/80/30803016-9515-45fd-a6af-8595902c176f/readme_human_ctx.txt 
+
+* https://github.com/satijalab/azimuth-references/tree/master/human_motorcortex 
+* https://knowledge.brain-map.org/data/8GU8FPSNLBUBCJWQDZ5/summary
+
+```{r}
+ref_mc_meta <- read.csv("resources/cell_refs/allen_institute/human_MTG_2018-06-14_samples-columns.csv")
+
+head(ref_mc_meta)
+tail(ref_mc_meta)
+# dim(ref_mc_meta) # 15,928    34
+```
+
+```{r}
+mc_azimuth_ref <- readRDS("resources/cell_refs/allen_institute/ref.Rds")
+
+mc_azimuth_ref # 24,526 with 3000 features
+# mc_azimuth_ref@meta.data
+```
 
 ```{r}
 # Assay data with 50281 features for 6235 cells
@@ -121,11 +158,63 @@ Allen Institute:
 ref_counts="resources/cell_refs/allen_institute/allen_m1c_2019_ssv4.rds"
 ref_motor_cortex <- readRDS(ref_counts)
 
-ref_motor_cortex
-
+dim(ref_motor_cortex) #42920  6,235
 # head(ref_motor_cortex@meta.data)
+dim(ref_motor_cortex@meta.data) #6235   15
+# head(rownames(ref_motor_cortex), n=20)
 ```
-Yadav:
+
+```{r}
+ref_motor_cortex@meta.data %>% 
+  group_by(cluster) %>% 
+  dplyr::count()
+
+ref_mc_meta %>% 
+  group_by(cluster) %>% 
+  dplyr::count()
+```
+
+```{r}
+table(ref_motor_cortex@meta.data$class)
+table(ref_motor_cortex@meta.data$subclass)
+
+grep("^MT-", rownames(ref_motor_cortex)) #MT genes are removed?
+grep("^RP[SL]", rownames(ref_motor_cortex), value=TRUE)
+```
+
+
+```{r}
+ref_motor_cortex <- PercentageFeatureSet(ref_motor_cortex,
+                               assay="RNA",
+                               pattern = "^MT-",
+                               col.name = "percent.mt")
+
+ref_motor_cortex <- PercentageFeatureSet(ref_motor_cortex,
+                                   assay="RNA",
+                                   pattern = "^RP[SL]", 
+                                   col.name = "percent.ribo")
+
+ref_motor_cortex <- SCTransform(ref_motor_cortex, 
+                                vst.flavor = "v2", 
+                                method = "glmGamPoi",
+                                verbose = T) %>%
+    RunPCA(npcs = 50, verbose = T) %>%
+    RunUMAP(reduction = "pca", 
+            dims = 1:50,
+            n.components = 3, 
+            min.dist = 0.3,
+            verbose = T) %>%
+    FindNeighbors(reduction = "pca",
+                  dims = 1:50, verbose = T) %>%
+    FindClusters(resolution = 0.8, verbose = T)
+```
+
+```{r}
+Idents(ref_motor_cortex) <- ref_motor_cortex$class
+```
+
+
+## Yadav:
 
 fastq files were run through 10x Genomics Cellranger v3.0.2
 output bam files from cellranger were processed using BAMboozle for anonymization
@@ -142,7 +231,8 @@ ref_mat_sc <- as.matrix(ref_counts_sc[,-1])
 head(ref_mat_sc[,1:5])
 dim(ref_mat_sc) #22238 55290
 
-ref_cell_meta=read.csv("resources/cell_refs/Yadav_2023/GSE190442_aggregated_metadata_postqc.csv", row.names = 1)
+ref_cell_meta=read.csv("resources/cell_refs/Yadav_2023/GSE190442_aggregated_metadata_postqc.csv", 
+                       row.names = 1)
 dim(ref_cell_meta) # 55289     6
 
 ref_spinal_cord <- CreateSeuratObject(counts = ref_mat_sc,
@@ -154,11 +244,20 @@ ref_spinal_cord
 # saveRDS(ref_spinal_cord, "resources/cell_refs/Yadav_2023/GSE190442_aggregated_postqc_seurat_obj.RDS")
 ```
 
+### Visualization and QC
+
+```{r}
+
+```
+
+
+# Compare Gene Refs
+
 ```{r}
 head(ref_motor_cortex@assays$RNA)
 head(ref_spinal_cord@assays$RNA)
 
-genes_common <- intersect(rownames(ref_motor_cortex), rownames(ref_spinal_cord))
+genes_common <- base::intersect(rownames(ref_motor_cortex), rownames(ref_spinal_cord))
 length(genes_common) #20243 only in common :/
 ```
 
@@ -173,6 +272,7 @@ missing_genes %>%
   filter(is.na(data_set.x))
 ```
 
+# Integrate
 
 # Session Info
 
