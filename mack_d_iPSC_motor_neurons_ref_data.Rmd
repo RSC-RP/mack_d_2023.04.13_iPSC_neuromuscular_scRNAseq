@@ -202,18 +202,24 @@ ref_motor_cortex <- ref_motor_cortex %>%
                   dims = 1:50, verbose = T) %>%
     FindClusters(resolution = 0.8, verbose = T)
 
-saveRDS(ref_motor_cortex,"resources/cell_refs/allen_institute/M1/human_M1_normalized_seurat_object.RDS")
+# saveRDS(ref_motor_cortex,"resources/cell_refs/allen_institute/M1/human_M1_normalized_seurat_object.RDS")
 ```
 
 ```{r}
-Idents(ref_motor_cortex) <- ref_motor_cortex$class
+ref_motor_cortex <- readRDS("resources/cell_refs/allen_institute/M1/human_M1_normalized_seurat_object.RDS")
+
+# Idents(ref_motor_cortex) <- ref_motor_cortex$cluster_label
+```
+
+```{r}
+ref_motor_cortex@meta.data
 ```
 
 ### MTG 
 
 Not using the MTG dataset as M1 is larger and more comprehensice
 
-```{r}
+```{r eval=FALSE}
 ref_mc_meta <- read.csv("resources/cell_refs/allen_institute/human_MTG_2018-06-14_samples-columns.csv")
 
 head(ref_mc_meta)
@@ -279,7 +285,7 @@ sc_meta %>%
   dplyr::count() %>% 
   arrange(desc(n))
 
-# Motoneurons	1331 only
+# Motoneurons	- 1331 only
 ```
 
 ```{r eval=FALSE}
@@ -305,9 +311,7 @@ ref_spinal_cord
 # grep("^RP[SL]", rownames(ref_spinal_cord), value=TRUE)
 
 # saveRDS(ref_spinal_cord, "resources/cell_refs/Yadav_2023/GSE190442_aggregated_postqc_seurat_obj.RDS")
-```
 
-```{r}
 ref_spinal_cord <- readRDS("resources/cell_refs/Yadav_2023/GSE190442_aggregated_postqc_seurat_obj.RDS") %>% 
   PercentageFeatureSet(
                        assay="RNA",
@@ -335,6 +339,12 @@ ref_spinal_cord <- readRDS("resources/cell_refs/Yadav_2023/GSE190442_aggregated_
 ref_spinal_cord <- AddMetaData(ref_spinal_cord, select(sc_meta, barcode:Visium_ID))
 table(ref_spinal_cord@meta.data$top_level_annotation)
 # saveRDS(ref_spinal_cord, "resources/cell_refs/Yadav_2023/GSE190442_aggregated_postqc_normalized_seurat_obj.RDS")
+```
+
+```{r}
+ref_spinal_cord <- readRDS("resources/cell_refs/Yadav_2023/GSE190442_aggregated_postqc_normalized_seurat_obj.RDS")
+
+ref_spinal_cord
 ```
 
 
