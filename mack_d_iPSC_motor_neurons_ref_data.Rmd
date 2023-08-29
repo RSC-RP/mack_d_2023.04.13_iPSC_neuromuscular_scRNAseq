@@ -153,6 +153,7 @@ rownames(mc_meta) <- mc_meta$sample_name
 # head(mc_meta)
 ```
 
+
 ```{r}
 sample_mapping <- read.csv("resources/cell_refs/allen_institute/M1/sample-exp_component mapping_human_10x_apr2020.csv")
 
@@ -176,6 +177,15 @@ mc_meta %>%
   group_by(cluster_label) %>% 
   dplyr::count() %>% 
   arrange(desc(n))
+
+
+
+mc_meta %>% 
+  group_by(subclass_label) %>% 
+  dplyr::count() %>% 
+  arrange(desc(n)) %>% 
+  write.csv(., "allen_celltypes.csv", row.names = FALSE)
+
 ```
 
 ```{r eval=FALSE}
@@ -434,9 +444,10 @@ head(ref_spinal_cord@meta.data)
 
 # Motoneurons	- 1331 only
 sc_meta %>% 
-  group_by(subtype_annotation) %>% 
+  group_by(top_level_annotation) %>% 
   dplyr::count() %>% 
-  arrange(desc(n))
+  arrange(desc(n)) %>% 
+  write.csv(., "yadav_celltypes.csv", row.names = FALSE)
 
 table(sc_meta$top_level_annotation)
 
