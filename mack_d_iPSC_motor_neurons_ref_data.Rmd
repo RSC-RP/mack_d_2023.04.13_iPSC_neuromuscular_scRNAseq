@@ -631,8 +631,10 @@ merged_split_obj <- RunUMAP(merged_split_obj,
 
 # set idents
 Idents(merged_split_obj) <- merged_split_obj$orig.ident 
-```
 
+# save object
+saveRDS(merged_split_obj,"resources/cell_refs/integrated/spinal_cord_motor_cortex_integrated_normalized_seurat_obj.RDS")
+```
 
 ```{r}
 merged_split_obj$orig.ident %>% table()
