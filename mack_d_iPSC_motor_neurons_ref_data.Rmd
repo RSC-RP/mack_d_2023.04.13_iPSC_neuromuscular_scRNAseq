@@ -159,20 +159,20 @@ cell type diversity in the primary motor cortex (M1C or M1).
 mc_meta <- read.csv("resources/cell_refs/allen_institute/M1/metadata.csv")
 rownames(mc_meta) <- mc_meta$sample_name
 
-head(mc_meta)
+# head(mc_meta)
 ```
 
 ```{r}
 sample_mapping <- read.csv("resources/cell_refs/allen_institute/M1/sample-exp_component mapping_human_10x_apr2020.csv")
 
-head(sample_mapping)
+# head(sample_mapping)
 ```
 
 ```{r}
 az_mc_meta <- read.csv("resources/cell_refs/allen_institute/allen_institute_azimuth_subclass_marker_gene_list.csv") %>% 
   janitor::clean_names()
 
-head(az_mc_meta)
+# head(az_mc_meta)
 ```
 
 ```{r fig.width=10}
@@ -254,7 +254,7 @@ ref_motor_cortex@meta.data <- new_meta
 ref_motor_cortex <- AddMetaData(ref_motor_cortex, metadata = ref_motor_cortex@reductions$umap@cell.embeddings)
 
 # ref_motor_cortex
-dim(ref_motor_cortex) #28271 76533
+dim(ref_motor_cortex) #28271 76,533
 Idents(ref_motor_cortex) <- ref_motor_cortex$cluster_label
 ```
 
@@ -279,7 +279,9 @@ ref_motor_cortex@meta.data %>%
   group_by(obo_ontology_id, subclass_label, class_label) %>% 
   dplyr::count() %>% 
   View()
+```
 
+```{r}
 cluster_color <- ref_motor_cortex@meta.data %>% 
   select(cluster_color, cluster_label) %>% 
   distinct() %>% 
@@ -359,7 +361,7 @@ sc_meta <- read.csv("resources/cell_refs/Yadav_2023/GSE190442_aggregated_metadat
   column_to_rownames("X") 
   
 
-head(sc_meta)
+# head(sc_meta)
 dim(sc_meta) # 55289     7
 ```
 
@@ -368,7 +370,7 @@ sc_pt_meta <- openxlsx::read.xlsx("resources/cell_refs/Yadav_2023/1-s2.0-S089662
   janitor::clean_names() %>% 
   filter(use=="Sequencing")
 
-head(sc_pt_meta)
+# head(sc_pt_meta)
 dim(sc_pt_meta)
 ```
 
@@ -524,20 +526,77 @@ missing_genes %>%
 
 # Integrate
 
-```{r}
-ref_spinal_cord$donor <- ref_spinal_cord$sample
+un-normalized counts (layer='counts'), 
+normalized data (layer='data'), 
+z-scored/variance-stabilized data (layer='scale.data')
+
+```{r eval=FALSE}
+ref_spinal_cord$donor <- paste0("sample.", ref_spinal_cord$sample)
 ref_motor_cortex$donor <- ref_motor_cortex$external_donor_name_label
+
+# top_level_annotation == subclass_label
+# subtype_annotation == cluster_label
+
+merged_meta <- ref_spinal_cord@meta.data %>% 
+  bind_rows(., 
+            select(ref_motor_cortex@meta.data, 
+                   barcode = sample_name,
+                   subtype_annotation = cluster_label ,
+                   top_level_annotation = subclass_label, 
+                   everything())) %>% 
+  select(barcode, orig.ident:subtype_annotation, donor, everything())
+
+# head(merged_meta)
+dim(merged_meta) #131,822
+table(merged_meta$donor)
+```
+
+https://github.com/satijalab/seurat/issues/7587
+if using merge() 
+> Error in DelayedArray::colAutoGrid(x = counts, ncol = length(x = layer.cells)) :
+> 'ncol' is too big. Blocks of length > .Machine$integer.max are not supported yet. Please specify a smaller 'ncol'.
+merged_obj <- merge(x = ref_spinal_cord, 
+                    y = ref_motor_cortex,
+                    merge.data = FALSE)
+
+```{r eval=FALSE}
+merged_obj <-  CreateSeuratObject(counts = list("ref_spinal_cord"=GetAssayData(ref_spinal_cord, layer = 'counts'),
+                                                "ref_motor_cortex"=GetAssayData(ref_motor_cortex, layer = 'counts')), 
+                                  meta.data = merged_meta)
+
+merged_obj <- JoinLayers(merged_obj)
+
+merged_obj
+rm(ref_spinal_cord, ref_motor_cortex)
+# table(merged_obj$donor)
+# saveRDS(merged_obj, "resources/cell_refs/integrated/spinal_cord_motor_cortex_merged_seurat_obj.RDS")
+```
+```{r}
+merged_obj <- readRDS("resources/cell_refs/integrated/spinal_cord_motor_cortex_merged_seurat_obj.RDS")
+merged_obj
 ```
 
 ```{r}
-ref_spinal_cord <- split(ref_spinal_cord, f = ref_spinal_cord$donor)
-ref_motor_cortex <- split(ref_motor_cortex, f = ref_motor_cortex$donor)
+merged_split_obj <-  split(merged_obj, f = merged_obj$donor) 
+
+merged_split_obj <- merged_split_obj %>% 
+  SCTransform(method = "glmGamPoi",
+              vst.flavor = "v2", 
+              verbose = TRUE) %>% 
+  RunPCA(npcs = 50,
+         verbose = TRUE)
+
+saveRDS(merged_split_obj,"resources/cell_refs/integrated/spinal_cord_motor_cortex_merged_split_normalized_seurat_obj.RDS")
 ```
 
 ```{r}
-ref_spinal_cord
-
+integrated <- IntegrateLayers(merged_split_obj, 
+                              method = RPCAIntegration,
+                              orig.reduction = "pca",
+                              new.reduction = "integrated.rpca", 
+                              verbose = TRUE)
 ```
+
 
 
 # Session Info
