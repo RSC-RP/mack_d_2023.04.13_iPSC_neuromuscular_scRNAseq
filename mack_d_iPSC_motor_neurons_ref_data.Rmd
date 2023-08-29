@@ -33,16 +33,6 @@ library(plotly)
 library(RColorBrewer)
 
 library(Seurat)
-library(SeuratDisk)
-library(SeuratObject)
-library(SeuratWrappers)
-library(Matrix)
-library(SeuratObject)
-library(SeuratData)
-library(SeuratWrappers)
-
-library(scDblFinder)
-library(SoupX)
 ```
 
 ```{r}
@@ -59,10 +49,11 @@ library(future)
 # check the current active plan
 plan()
 
-plan("multisession", workers = 16)
-plan()
-options(future.globals.maxSize = 50000 * 1024^2)
+# plan("multisession", workers = 2)
+# plan()
+options(future.globals.maxSize = 10000 * 1024^2)
 ```
+
 
 # Reference Data Set(s)
 
@@ -120,7 +111,7 @@ head(idmap)
 ```
 
 ```{r eval=FALSE}
-MTG_genes <- read.csv("resources/cell_refs/allen_institute/human_MTG_2018-06-14_genes-rows.csv")
+MTG_genes <- read.csv("resources/cell_refs/allen_institute/MTG/human_MTG_2018-06-14_genes-rows.csv")
 
 head(MTG_genes)
 ```
@@ -441,13 +432,14 @@ Idents(ref_spinal_cord) <- ref_spinal_cord$subtype_annotation
 ```{r}
 head(ref_spinal_cord@meta.data)
 
+# Motoneurons	- 1331 only
 sc_meta %>% 
   group_by(subtype_annotation) %>% 
   dplyr::count() %>% 
   arrange(desc(n))
 
 table(sc_meta$top_level_annotation)
-# Motoneurons	- 1331 only
+
 
 table(sc_meta$Visium_ID)
 table(sc_meta$sample)
@@ -571,13 +563,18 @@ rm(ref_spinal_cord, ref_motor_cortex)
 # table(merged_obj$donor)
 # saveRDS(merged_obj, "resources/cell_refs/integrated/spinal_cord_motor_cortex_merged_seurat_obj.RDS")
 ```
-```{r}
-merged_obj <- readRDS("resources/cell_refs/integrated/spinal_cord_motor_cortex_merged_seurat_obj.RDS")
-merged_obj
-```
 
-```{r}
+SCT integration: 
+https://github.com/satijalab/seurat/issues/7542
+
+```{r eval=FALSE}
+merged_obj <- readRDS("resources/cell_refs/integrated/spinal_cord_motor_cortex_merged_seurat_obj.RDS")
+# merged_obj
+
 merged_split_obj <-  split(merged_obj, f = merged_obj$donor) 
+rm(merged_obj)
+gc()
+gcinfo(TRUE)
 
 merged_split_obj <- merged_split_obj %>% 
   SCTransform(method = "glmGamPoi",
@@ -586,15 +583,158 @@ merged_split_obj <- merged_split_obj %>%
   RunPCA(npcs = 50,
          verbose = TRUE)
 
-saveRDS(merged_split_obj,"resources/cell_refs/integrated/spinal_cord_motor_cortex_merged_split_normalized_seurat_obj.RDS")
+# saveRDS(merged_split_obj,"resources/cell_refs/integrated/spinal_cord_motor_cortex_merged_split_normalized_seurat_obj.RDS")
 ```
 
-```{r}
-integrated <- IntegrateLayers(merged_split_obj, 
+ https://github.com/satijalab/seurat/issues/7145 - You don't need to worry about those warnings. We will fix them in Seurat-object package.
+ Warning: Different cells and/or features from existing assay SCT
+
+--> Also, did not use plan(multisession) though unsure if that was actually causing the errors.
+
+
+```{r eval=FALSE}
+merged_split_obj <- readRDS("resources/cell_refs/integrated/spinal_cord_motor_cortex_merged_split_normalized_seurat_obj.RDS")
+
+# merged_split_obj
+merged_split_obj$motorneuron <- ifelse(merged_split_obj$subtype_annotation == "Motoneurons", "MN", "Other")
+
+# Integration
+# k.anchor = 5 is default used here
+merged_split_obj <- IntegrateLayers(merged_split_obj, 
                               method = RPCAIntegration,
                               orig.reduction = "pca",
                               new.reduction = "integrated.rpca", 
+                              normalization.method = 'SCT', #why is this required?
+                              assay = "SCT",
                               verbose = TRUE)
+
+merged_split_obj <- IntegrateLayers(merged_split_obj, 
+                              method = HarmonyIntegration,
+                              orig.reduction = "pca",
+                              new.reduction = "harmony", 
+                              assay = "SCT",
+                              verbose = TRUE)
+
+# Run UMAP
+merged_split_obj <- RunUMAP(merged_split_obj,
+               reduction = "pca",
+               dims = 1:50,
+               reduction.name = "umap.unintegrated") %>% 
+  RunUMAP(
+               reduction = "harmony",
+               dims = 1:50,
+               reduction.name = "umap.harmony") %>% 
+  RunUMAP(
+              reduction = "integrated.rpca",
+               dims = 1:50,
+               reduction.name = "umap.rpca")
+
+# set idents
+Idents(merged_split_obj) <- merged_split_obj$orig.ident 
+```
+
+
+```{r}
+merged_split_obj$orig.ident %>% table()
+merged_split_obj$subtype_annotation %>% table()
+merged_split_obj$top_level_annotation %>% table()
+merged_split_obj$donor %>% table()
+merged_split_obj$motorneuron %>% table()
+```
+
+
+```{r fig.height=10, fig.width=11}
+# pdf("figures/cell_refs/unintegrated_merged_bySource_UMAP.pdf", height = 10, width = 11)
+DimPlot(merged_split_obj, reduction = 'umap.unintegrated') 
+# dev.off()
+
+# pdf("figures/cell_refs/integrated_harmony_bySource_UMAP.pdf", height = 10, width = 11)
+DimPlot(merged_split_obj, reduction = 'umap.harmony')
+# dev.off()
+
+# pdf("figures/cell_refs/integrated_rpca_bySource_UMAP.pdf", height = 10, width = 11)
+DimPlot(merged_split_obj, reduction = 'umap.rpca')
+# dev.off()
+```
+
+```{r fig.height=10, fig.width=11}
+# pdf("figures/cell_refs/unintegrated_merged_motorneuron_UMAP.pdf", height = 10, width = 11)
+DimPlot(merged_split_obj,
+        group.by = 'motorneuron',
+        reduction = 'umap.unintegrated') +
+  scale_color_viridis_d(option="B", begin = 0.3, end = 0.95)
+# dev.off()
+
+# pdf("figures/cell_refs/integrated_harmony_motorneuron_UMAP.pdf", height = 10, width = 11)
+DimPlot(merged_split_obj, 
+        group.by = 'motorneuron',
+        reduction = 'umap.harmony') +
+  scale_color_viridis_d(option="B", begin = 0.3, end = 0.95)
+# dev.off()
+
+# pdf("figures/cell_refs/integrated_rpca_motorneuron_UMAP.pdf", height = 10, width = 11)
+DimPlot(merged_split_obj,
+        group.by = 'motorneuron',
+        reduction = 'umap.rpca') +
+  scale_color_viridis_d(option="B", begin = 0.3, end = 0.95)
+# dev.off()
+```
+
+
+```{r fig.height=10, fig.width=11}
+# pdf("figures/cell_refs/unintegrated_merged_byDonor_UMAP.pdf", height = 10, width = 11)
+DimPlot(merged_split_obj, 
+        group.by = 'donor',
+        reduction = 'umap.unintegrated') +
+  scale_color_manual(values = colors_vector) 
+# dev.off()
+
+# pdf("figures/cell_refs/integrated_harmony_byDonor_UMAP.pdf", height = 10, width = 11)
+DimPlot(merged_split_obj, 
+        group.by = 'donor',
+        reduction = 'umap.harmony') +
+  scale_color_manual(values = colors_vector) 
+# dev.off()
+
+# pdf("figures/cell_refs/integrated_rpca_byDonor_UMAP.pdf", height = 10, width = 11)
+DimPlot(merged_split_obj, 
+        group.by = 'donor',
+        reduction = 'umap.rpca') +
+  scale_color_manual(values = colors_vector) 
+# dev.off()
+```
+
+
+```{r fig.height=10, fig.width=11}
+# pdf("figures/cell_refs/unintegrated_merged_top_level_annotation_UMAP.pdf", height = 10, width = 11)
+DimPlot(merged_split_obj, 
+        label = TRUE,
+        repel = TRUE,
+        group.by = 'top_level_annotation',
+        reduction = 'umap.unintegrated')  +
+  scale_color_manual(values = colors_vector) +
+  theme(legend.position = 'bottom')
+# dev.off()
+
+# pdf("figures/cell_refs/integrated_harmony_top_level_annotation_UMAP.pdf", height = 10, width = 11)
+DimPlot(merged_split_obj, 
+        label = TRUE,
+        repel = TRUE,
+        group.by = 'top_level_annotation',
+        reduction = 'umap.harmony') +
+  scale_color_manual(values = colors_vector) +
+  theme(legend.position = 'bottom')
+# dev.off()
+
+# pdf("figures/cell_refs/integrated_rpca_top_level_annotation_UMAP.pdf", height = 10, width = 11)
+DimPlot(merged_split_obj,
+        label = TRUE,
+        repel = TRUE,
+        group.by = 'top_level_annotation',
+        reduction = 'umap.rpca') +
+  scale_color_manual(values = colors_vector) +
+  theme(legend.position = 'bottom')
+# dev.off()
 ```
 
 
