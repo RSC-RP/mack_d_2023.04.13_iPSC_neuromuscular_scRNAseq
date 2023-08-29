@@ -91,6 +91,9 @@ https://support.10xgenomics.com/single-cell-gene-expression/software/pipelines/l
 https://cdn.10xgenomics.com/image/upload/v1660261285/support-documents/CG000204_ChromiumNextGEMSingleCell3_v3.1_Rev_D.pdf
 
   
+**Mack Lab diff protocol derives stem cells into ventral horn of the spinal cord which not only have motor neurons but different subtypes of interneurons.**
+
+
 ## Human iPSCs
 
 https://www.nature.com/articles/ncomms7626
