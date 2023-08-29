@@ -16,6 +16,7 @@ knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80),
                       eval = TRUE)
 
 options(stringsAsFactors = FALSE, max.print = 100)
+options(Seurat.object.assay.version = "v5")
 table = function (..., useNA = 'ifany') base::table(..., useNA = useNA)
 ```
 
@@ -57,32 +58,10 @@ conflicted::conflict_prefer("saveRDS","base")
 library(future)
 # check the current active plan
 plan()
-```
 
-```{r}
 plan("multisession", workers = 16)
 plan()
-options(future.globals.maxSize = 60000 * 1024^2)
-```
-
-
-# Genome Refs
-
-```{r}
-edb <- ensembldb::EnsDb("resources/genome/Homo_sapiens.GRCh38.98.sqlite")
-
-# edb
-```
-
-```{r}
-gids <- ensembldb::keys(edb, keytype = "GENEID")
-
-idmap <- AnnotationDbi::select(edb, keytype="GENEID", 
-                      keys = gids, 
-                      columns = c("GENEID","GENEBIOTYPE","GENENAME","SYMBOL")) %>% 
-  janitor::clean_names()
-
-head(idmap)
+options(future.globals.maxSize = 50000 * 1024^2)
 ```
 
 # Reference Data Set(s)
@@ -101,48 +80,310 @@ head(idmap)
 wget https://ftp.ncbi.nlm.nih.gov/geo/series/GSE190nnn/GSE190442/suppl/GSE190442_aggregated_counts_postqc.csv.gz
 wget https://ftp.ncbi.nlm.nih.gov/geo/series/GSE190nnn/GSE190442/suppl/GSE190442_aggregated_metadata_postqc.csv.gz
 
-rsync -av https://zenodo.org/record/4546932
-wget https://seurat.nygenome.org/azimuth/demo_datasets/allen_m1c_2019_ssv4.rds
-rsync -av http://celltypes.brain-map.org/api/v2/well_known_file_download/694416044
-rsync -av http://celltypes.brain-map.org/api/v2/well_known_file_download/502175284
+rclone copy --http-url https://zenodo.org :http:record/4546932 . -P
+rclone copy --http-url http://celltypes.brain-map.org :http:api/v2/well_known_file_download/694416044 . -P
+rclone copy --http-url http://celltypes.brain-map.org :http:api/v2/well_known_file_download/502175284 . -P
+rclone copy refseq:/geo/series/GSE190nnn/GSE190442/suppl/GSE190442_RAW.tar . -P
 ```
+
+```{bash eval=FALSE}
+cd resources/cell_refs/allen_institute/M1
+
+# https://azimuth.hubmapconsortium.org/references/#Human%20-%20Motor%20Cortex
+#wget https://seurat.nygenome.org/azimuth/demo_datasets/allen_m1c_2019_ssv4.rds
+
+rclone copy --http-url https://brainmapportal-live-4cc80a57cd6e400d854-f7fdcae.divio-media.net :http:filer_public/70/32/70326830-e306-4743-a02c-a8da5bf9eb56/readme-m1-10.txt  . -P
+
+rclone copy --http-url https://brainmapportal-live-4cc80a57cd6e400d854-f7fdcae.divio-media.net \
+  :http:filer_public/0c/0c/0c0c882d-1c31-40a9-8039-3bf2706a77cd/sample-exp_component_mapping_human_10x_apr2020.zip . -P 
+
+rclone copy --http-url https://idk-etl-prod-download-bucket.s3.amazonaws.com :http:aibs_human_m1_10x/metadata.csv . -P
+rclone copy --http-url https://idk-etl-prod-download-bucket.s3.amazonaws.com :http:aibs_human_m1_10x/matrix.csv . -P
+```
+
+
+# Genome Refs
+
+```{r eval=FALSE}
+edb <- ensembldb::EnsDb("resources/genome/Homo_sapiens.GRCh38.98.sqlite")
+
+# edb
+
+gids <- ensembldb::keys(edb, keytype = "GENEID")
+
+idmap <- AnnotationDbi::select(edb, keytype="GENEID", 
+                      keys = gids, 
+                      columns = c("GENEID","GENEBIOTYPE","GENENAME","SYMBOL")) %>% 
+  janitor::clean_names()
+
+head(idmap)
+```
+
+```{r eval=FALSE}
+MTG_genes <- read.csv("resources/cell_refs/allen_institute/human_MTG_2018-06-14_genes-rows.csv")
+
+head(MTG_genes)
+```
+
+```{r}
+colors_vector <- c("#E41A1C", "#377EB8", "#4DAF4A", "#F781BF", 
+            "blue1", "darkslategray3", "burlywood3", "#984EA3", 
+            "#FF7F00", "seagreen1", "maroon", "orchid", "darkblue", 
+            "azure2", "chartreuse1", "orange1", 
+            "deeppink", "darkslategray1", "green4", "navajowhite2", 
+            "brown3", "darkgoldenrod4", "deepskyblue1", "lightcoral") %>% 
+  c(., ggpubr::get_palette("jco", 4),
+    ggpubr::get_palette("npg", 4)) %>% 
+  c("darkorchid1","magenta", "peru") %>% 
+  c(ggsci::pal_igv()(51))
+
+length(colors_vector) 
+```
+
 
 # Preprocessing
 
-Allen Institute:
-* The sequencing results were aligned to exons and introns in the GRCh38.p2 reference genome using the STAR algorithm, and aggregated intron and exon counts at the gene level were calculated.
+## Allen Institute:
 
-* https://brainmapportal-live-4cc80a57cd6e400d854-f7fdcae.divio-media.net/filer_public/30/80/30803016-9515-45fd-a6af-8595902c176f/readme_human_ctx.txt 
+* This data set includes single-nucleus transcriptomes from 76,533 total nuclei derived from 2 post-mortem human brain specimens, to survey 
+cell type diversity in the primary motor cortex (M1C or M1).
+*  default 10x Cell Ranger v3
+
+
+* https://azimuth.hubmapconsortium.org/references/#Human%20-%20Motor%20Cortex
+* https://github.com/satijalab/azimuth-references/tree/master/human_motorcortex 
+* https://portal.brain-map.org/atlases-and-data/rnaseq/human-m1-10x 
+* https://knowledge.brain-map.org/data/8GU8FPSNLBUBCJWQDZ5/summary
 
 ```{r}
-# Assay data with 50281 features for 6235 cells
-# First 10 features:
-#  3.8-1.2, 3.8-1.3, 3.8-1.4, 3.8-1.5, 5-HT3C2, A1BG, A1BG-AS1, A1CF, A2M, A2M-AS1 
-ref_counts="resources/cell_refs/allen_institute/allen_m1c_2019_ssv4.rds"
-ref_motor_cortex <- readRDS(ref_counts)
+mc_meta <- read.csv("resources/cell_refs/allen_institute/M1/metadata.csv")
+rownames(mc_meta) <- mc_meta$sample_name
 
-ref_motor_cortex
-
-# head(ref_motor_cortex@meta.data)
+# head(mc_meta)
 ```
-Yadav:
+
+```{r}
+sample_mapping <- read.csv("resources/cell_refs/allen_institute/M1/sample-exp_component mapping_human_10x_apr2020.csv")
+
+# head(sample_mapping)
+```
+
+```{r}
+az_mc_meta <- read.csv("resources/cell_refs/allen_institute/allen_institute_azimuth_subclass_marker_gene_list.csv") %>% 
+  janitor::clean_names()
+
+# head(az_mc_meta)
+```
+
+```{r fig.width=10}
+cell_tax <- readRDS("resources/cell_refs/allen_institute/M1/human_dendrogram.rds")
+plot(cell_tax)
+```
+
+```{r}
+mc_meta %>% 
+  group_by(cluster_label) %>% 
+  dplyr::count() %>% 
+  arrange(desc(n))
+```
+
+```{r eval=FALSE}
+ref_mc_counts <- data.table::fread("resources/cell_refs/allen_institute/M1/matrix.csv") 
+
+
+ref_mc_counts <- as.data.frame(ref_mc_counts)
+rownames(ref_mc_counts) <- ref_mc_counts$sample_name
+ref_mc_counts <- t(as.matrix(ref_mc_counts[,-1]))
+
+dim(ref_mc_counts) #76533 50282
+head(ref_mc_counts[,1:5])
+```
+
+```{r eval=FALSE}
+ref_motor_cortex <- CreateSeuratObject(counts = ref_mc_counts,
+                                   meta.data = mc_meta,
+                                   assay="RNA",
+                                   project="Allen_M1") 
+rm(ref_mc_counts)
+rm(mc_meta)
+gc()
+
+ref_motor_cortex <- ref_motor_cortex %>% 
+  PercentageFeatureSet(
+                         assay="RNA",
+                         pattern = "^MT-",
+                         col.name = "percent.mt") %>% 
+  PercentageFeatureSet(
+                       assay="RNA",
+                       pattern = "^RP[SL]", 
+                       col.name = "percent.ribo") %>% 
+  SCTransform(
+              vst.flavor = "v2", 
+              method = "glmGamPoi",
+              verbose = T) %>%
+    RunPCA(npcs = 50, verbose = T) %>%
+    RunUMAP(reduction = "pca", 
+            dims = 1:50,
+            n.components = 3, 
+            min.dist = 0.3,
+            verbose = T) %>%
+    FindNeighbors(reduction = "pca",
+                  dims = 1:50, verbose = T) %>%
+    FindClusters(resolution = 0.8, verbose = T)
+
+# saveRDS(ref_motor_cortex,"resources/cell_refs/allen_institute/M1/human_M1_normalized_seurat_object.RDS")
+```
+
+```{r}
+ref_motor_cortex <- readRDS("resources/cell_refs/allen_institute/M1/human_M1_normalized_seurat_object.RDS")
+
+new_meta <- ref_motor_cortex@meta.data %>% 
+  left_join(., az_mc_meta, by=c("cluster_label"="label")) %>% 
+  select(sample_name,
+         cell_type_designation_label,
+         expanded_label, 
+         obo_ontology_id,
+         cell_type_alias_label, 
+         class_label, 
+         cluster_label, 
+         markers, 
+         everything()) %>% 
+  set_rownames(.$sample_name)
+
+ref_motor_cortex@meta.data <- new_meta
+ref_motor_cortex <- AddMetaData(ref_motor_cortex, metadata = ref_motor_cortex@reductions$umap@cell.embeddings)
+
+# ref_motor_cortex
+dim(ref_motor_cortex) #28271 76,533
+Idents(ref_motor_cortex) <- ref_motor_cortex$cluster_label
+```
+
+```{r eval=FALSE}
+ref_motor_cortex@meta.data %>% 
+  group_by(obo_ontology_id, expanded_label) %>% 
+  dplyr::count() %>% 
+  View()
+
+ref_motor_cortex@meta.data %>% 
+  group_by(obo_ontology_id, cluster_label) %>% 
+  dplyr::count() %>% 
+  View()
+
+ref_motor_cortex@meta.data %>% 
+  group_by(obo_ontology_id, cell_type_alias_label, class_label) %>% 
+  dplyr::count() %>% 
+  View()
+
+
+ref_motor_cortex@meta.data %>% 
+  group_by(obo_ontology_id, subclass_label, class_label) %>% 
+  dplyr::count() %>% 
+  View()
+```
+
+```{r}
+cluster_color <- ref_motor_cortex@meta.data %>% 
+  select(cluster_color, cluster_label) %>% 
+  distinct() %>% 
+  pull(cluster_color, name = cluster_label)
+
+length(cluster_color)
+head(cluster_color)
+
+subclass_color <- ref_motor_cortex@meta.data  %>% 
+  select(subclass_label, subclass_color) %>% 
+  distinct() %>% 
+  pull(subclass_color, name = subclass_label)
+
+table(ref_motor_cortex$external_donor_name_label)
+```
+
+```{r fig.height=20, fig.width=20}
+# pdf("figures/cell_refs/allen_M1_ref_motor_cortex_cluster_label_UMAP.pdf", height = 20, width = 15)
+DimPlot(ref_motor_cortex, 
+        repel = TRUE,
+        label = TRUE) +
+  theme(legend.position = 'bottom') +
+  scale_color_manual(values = cluster_color)
+# dev.off()
+```
+
+```{r fig.height=20, fig.width=20}
+# pdf("figures/cell_refs/allen_M1_ref_motor_cortex_subclass_label_UMAP.pdf", height = 20, width = 15)
+DimPlot(ref_motor_cortex, 
+        group.by = 'subclass_label',
+        label.size = 10,
+        label.color = 'black',
+        label.box = FALSE,
+        repel = TRUE,
+        label = TRUE) +
+  theme(legend.position = 'bottom') +
+  scale_color_manual(values = subclass_color)
+# dev.off()
+```
+
+```{r fig.height=20, fig.width=20}
+# pdf("figures/cell_refs/allen_M1_ref_motor_cortex_external_donor_name_label_UMAP.pdf", height = 20, width = 15)
+DimPlot(ref_motor_cortex, 
+        group.by = "external_donor_name_label",
+        label = TRUE) +
+  theme(legend.position = 'bottom')
+# dev.off()
+```
+
+```{r fig.height=20, fig.width=20}
+DimPlot(ref_motor_cortex, 
+        group.by = "donor_sex_label",
+        label = TRUE) +
+  theme(legend.position = 'bottom')
+```
+
+
+## Yadav:
 
 fastq files were run through 10x Genomics Cellranger v3.0.2
 output bam files from cellranger were processed using BAMboozle for anonymization
+
 * Genome_build: hg38
 Supplementary_files_format_and_content: Counts tables for all barcodes in standard hdf5 output from Cellranger
+
+* The 7 human datasets were integrated using SCTransform normalization followed by CCA based integration using the Seurat 
 
 * https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM5723843
 
 ```{r}
-ref_counts_sc=data.table::fread("resources/cell_refs/Yadav_2023/GSE190442_aggregated_counts_postqc.csv")
+sc_pts <- read.csv("resources/cell_refs/Yadav_2023/GSE222322_donor_to_patient_ids.csv")
+
+
+sc_meta <- read.csv("resources/cell_refs/Yadav_2023/GSE190442_aggregated_metadata_postqc.csv") %>% 
+  mutate(barcode=X) %>% 
+  left_join(., sc_pts, by=c("sample"="Patient_ID")) %>% 
+  column_to_rownames("X") 
+  
+
+# head(sc_meta)
+dim(sc_meta) # 55289     7
+```
+
+```{r}
+sc_pt_meta <- openxlsx::read.xlsx("resources/cell_refs/Yadav_2023/1-s2.0-S0896627323000314-mmc2.xlsx") %>% 
+  janitor::clean_names() %>% 
+  filter(use=="Sequencing")
+
+# head(sc_pt_meta)
+dim(sc_pt_meta)
+```
+
+```{r eval=FALSE}
+ref_counts_sc <- data.table::fread("resources/cell_refs/Yadav_2023/GSE190442_aggregated_counts_postqc.csv")
 ref_counts_sc <- as.data.frame(ref_counts_sc)
 rownames(ref_counts_sc) <- ref_counts_sc$V1
 ref_mat_sc <- as.matrix(ref_counts_sc[,-1])
 head(ref_mat_sc[,1:5])
-dim(ref_mat_sc) #22238 55290
+dim(ref_mat_sc) #22238 55,290
 
-ref_cell_meta=read.csv("resources/cell_refs/Yadav_2023/GSE190442_aggregated_metadata_postqc.csv", row.names = 1)
+ref_cell_meta=read.csv("resources/cell_refs/Yadav_2023/GSE190442_aggregated_metadata_postqc.csv", 
+                       row.names = 1)
 dim(ref_cell_meta) # 55289     6
 
 ref_spinal_cord <- CreateSeuratObject(counts = ref_mat_sc,
@@ -151,15 +392,125 @@ ref_spinal_cord <- CreateSeuratObject(counts = ref_mat_sc,
                                    project="yadav_2023")
 
 ref_spinal_cord
+
+# grep("^MT-", rownames(ref_spinal_cord)) #MT genes are removed?
+# grep("^RP[SL]", rownames(ref_spinal_cord), value=TRUE)
 # saveRDS(ref_spinal_cord, "resources/cell_refs/Yadav_2023/GSE190442_aggregated_postqc_seurat_obj.RDS")
+
+ref_spinal_cord <- readRDS("resources/cell_refs/Yadav_2023/GSE190442_aggregated_postqc_seurat_obj.RDS") %>% 
+  PercentageFeatureSet(
+                       assay="RNA",
+                       pattern = "^MT-",
+                       col.name = "percent.mt") %>% 
+  PercentageFeatureSet(
+                       assay="RNA",
+                       pattern = "^RP[SL]", 
+                       col.name = "percent.ribo") %>% 
+  SCTransform( 
+              vst.flavor = "v2", 
+              method = "glmGamPoi",
+              verbose = T) %>%
+    RunPCA(npcs = 50, verbose = T) %>%
+    RunUMAP(reduction = "pca", 
+            dims = 1:50,
+            n.components = 3, 
+            min.dist = 0.3,
+            verbose = T) %>%
+    FindNeighbors(reduction = "pca",
+                  dims = 1:50, verbose = T) %>%
+    FindClusters(resolution = 0.8, verbose = T)
+
+
+ref_spinal_cord <- AddMetaData(ref_spinal_cord, select(sc_meta, barcode:Visium_ID))
+table(ref_spinal_cord@meta.data$top_level_annotation)
+# saveRDS(ref_spinal_cord, "resources/cell_refs/Yadav_2023/GSE190442_aggregated_postqc_normalized_seurat_obj.RDS")
 ```
+
+```{r}
+ref_spinal_cord <- readRDS("resources/cell_refs/Yadav_2023/GSE190442_aggregated_postqc_normalized_seurat_obj.RDS")
+
+sc_new_meta <- sc_meta %>% 
+  left_join(., sc_pt_meta, by=c("sample"="donor")) %>% 
+  select(barcode, all_of(colnames(.)[colnames(.) %in% colnames(sc_pt_meta)])) %>% 
+  column_to_rownames("barcode")
+
+ref_spinal_cord <- AddMetaData(ref_spinal_cord, sc_new_meta)
+Idents(ref_spinal_cord) <- ref_spinal_cord$subtype_annotation
+```
+
+```{r}
+head(ref_spinal_cord@meta.data)
+
+sc_meta %>% 
+  group_by(subtype_annotation) %>% 
+  dplyr::count() %>% 
+  arrange(desc(n))
+
+table(sc_meta$top_level_annotation)
+# Motoneurons	- 1331 only
+
+table(sc_meta$Visium_ID)
+table(sc_meta$sample)
+table(ref_spinal_cord$sample, ref_spinal_cord$sex)
+```
+
+```{r fig.height=10, fig.width=10}
+# pdf("figures/cell_refs/yadav_GSE190442_ref_spinal_cord_subtype_annotation_UMAP.pdf", height = 20, width = 15)
+DimPlot(ref_spinal_cord,
+        repel = TRUE,
+        label.size = 4,
+        label=TRUE) +
+  theme(legend.position = 'bottom') +
+  scale_color_manual(values=colors_vector)
+# dev.off()
+```
+
+```{r fig.height=10, fig.width=10}
+# pdf("figures/cell_refs/yadav_GSE190442_ref_spinal_cord_top_level_annotation_UMAP.pdf", height = 20, width = 15)
+DimPlot(ref_spinal_cord,
+        group.by = "top_level_annotation",
+        repel = TRUE,
+        label.size = 4,
+        label=TRUE) +
+  theme(legend.position = 'bottom') +
+  scale_color_manual(values=colors_vector)
+# dev.off()
+```
+
+```{r fig.height=10, fig.width=10}
+# pdf("figures/cell_refs/yadav_GSE190442_ref_spinal_cord_sample_UMAP.pdf", height = 20, width = 15)
+DimPlot(ref_spinal_cord,
+        group.by = "sample",
+        repel = TRUE,
+        label.size = 4,
+        label=FALSE) +
+  theme(legend.position = 'bottom') +
+  scale_color_manual(values=colors_vector)
+# dev.off()
+```
+
+```{r fig.height=10, fig.width=10}
+# pdf("figures/cell_refs/yadav_GSE190442_ref_spinal_cord_sex_UMAP.pdf", height = 20, width = 15)
+DimPlot(ref_spinal_cord,
+        group.by = "sex",
+        repel = TRUE,
+        label.size = 4,
+        label=FALSE) +
+  theme(legend.position = 'bottom') +
+  scale_color_manual(values=colors_vector)
+# dev.off()
+```
+
+
+
+# Compare Gene Refs
 
 ```{r}
 head(ref_motor_cortex@assays$RNA)
 head(ref_spinal_cord@assays$RNA)
 
-genes_common <- intersect(rownames(ref_motor_cortex), rownames(ref_spinal_cord))
-length(genes_common) #20243 only in common :/
+genes_common <- base::intersect(rownames(ref_motor_cortex), rownames(ref_spinal_cord))
+length(genes_common) #15,830 only in common :/
 ```
 
 ```{r}
@@ -172,6 +523,80 @@ missing_genes <- data.frame(gene_name=rownames(ref_motor_cortex),
 missing_genes %>% 
   filter(is.na(data_set.x))
 ```
+
+# Integrate
+
+un-normalized counts (layer='counts'), 
+normalized data (layer='data'), 
+z-scored/variance-stabilized data (layer='scale.data')
+
+```{r eval=FALSE}
+ref_spinal_cord$donor <- paste0("sample.", ref_spinal_cord$sample)
+ref_motor_cortex$donor <- ref_motor_cortex$external_donor_name_label
+
+# top_level_annotation == subclass_label
+# subtype_annotation == cluster_label
+
+merged_meta <- ref_spinal_cord@meta.data %>% 
+  bind_rows(., 
+            select(ref_motor_cortex@meta.data, 
+                   barcode = sample_name,
+                   subtype_annotation = cluster_label ,
+                   top_level_annotation = subclass_label, 
+                   everything())) %>% 
+  select(barcode, orig.ident:subtype_annotation, donor, everything())
+
+# head(merged_meta)
+dim(merged_meta) #131,822
+table(merged_meta$donor)
+```
+
+https://github.com/satijalab/seurat/issues/7587
+if using merge() 
+> Error in DelayedArray::colAutoGrid(x = counts, ncol = length(x = layer.cells)) :
+> 'ncol' is too big. Blocks of length > .Machine$integer.max are not supported yet. Please specify a smaller 'ncol'.
+merged_obj <- merge(x = ref_spinal_cord, 
+                    y = ref_motor_cortex,
+                    merge.data = FALSE)
+
+```{r eval=FALSE}
+merged_obj <-  CreateSeuratObject(counts = list("ref_spinal_cord"=GetAssayData(ref_spinal_cord, layer = 'counts'),
+                                                "ref_motor_cortex"=GetAssayData(ref_motor_cortex, layer = 'counts')), 
+                                  meta.data = merged_meta)
+
+merged_obj <- JoinLayers(merged_obj)
+
+merged_obj
+rm(ref_spinal_cord, ref_motor_cortex)
+# table(merged_obj$donor)
+# saveRDS(merged_obj, "resources/cell_refs/integrated/spinal_cord_motor_cortex_merged_seurat_obj.RDS")
+```
+```{r}
+merged_obj <- readRDS("resources/cell_refs/integrated/spinal_cord_motor_cortex_merged_seurat_obj.RDS")
+merged_obj
+```
+
+```{r}
+merged_split_obj <-  split(merged_obj, f = merged_obj$donor) 
+
+merged_split_obj <- merged_split_obj %>% 
+  SCTransform(method = "glmGamPoi",
+              vst.flavor = "v2", 
+              verbose = TRUE) %>% 
+  RunPCA(npcs = 50,
+         verbose = TRUE)
+
+saveRDS(merged_split_obj,"resources/cell_refs/integrated/spinal_cord_motor_cortex_merged_split_normalized_seurat_obj.RDS")
+```
+
+```{r}
+integrated <- IntegrateLayers(merged_split_obj, 
+                              method = RPCAIntegration,
+                              orig.reduction = "pca",
+                              new.reduction = "integrated.rpca", 
+                              verbose = TRUE)
+```
+
 
 
 # Session Info

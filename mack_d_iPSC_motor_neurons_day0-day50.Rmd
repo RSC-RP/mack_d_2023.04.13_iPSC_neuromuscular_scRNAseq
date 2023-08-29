@@ -91,6 +91,9 @@ https://support.10xgenomics.com/single-cell-gene-expression/software/pipelines/l
 https://cdn.10xgenomics.com/image/upload/v1660261285/support-documents/CG000204_ChromiumNextGEMSingleCell3_v3.1_Rev_D.pdf
 
   
+**Mack Lab diff protocol derives stem cells into ventral horn of the spinal cord which not only have motor neurons but different subtypes of interneurons.**
+
+
 ## Human iPSCs
 
 https://www.nature.com/articles/ncomms7626
@@ -199,7 +202,8 @@ colors <- c("#E41A1C", "#377EB8", "#4DAF4A", "#F781BF",
             "brown3", "darkgoldenrod4", "deepskyblue1", "lightcoral") %>% 
   c(., ggpubr::get_palette("jco", 4),
     ggpubr::get_palette("npg", 4)) %>% 
-  c("darkorchid1","magenta", "peru")
+  c("darkorchid1","magenta", "peru") %>% 
+  c(ggsci::pal_igv()(51))
 
 length(colors) #35
 ```
@@ -302,6 +306,31 @@ marker_genes_mc <- read.csv("resources/cell_refs/allen_institute/allen_institute
   as.list() %>% 
   sapply(.,  function(x) str_split(gsub("\\.","-",x), pattern = ", "))
 ```
+
+
+```{r}
+changho_refs_file <- "references/changho_updated_marker_genes_MN_IN_annotation.xlsx"
+marker_genes_chun <- purrr::map_dfr(openxlsx::getSheetNames(changho_refs_file)[2:4], function(x){
+  openxlsx::read.xlsx(changho_refs_file, sheet = x)
+}) %>% 
+  janitor::clean_names() %>% 
+  distinct() %>% 
+  mutate(group=paste(author, tolower(neural_pop)) %>% 
+           gsub("\\s","_",.)) %>% 
+  mutate(specific_markers_for_each_type_of_neuron=gsub("\\s","", specific_markers_for_each_type_of_neuron))
+
+# marker_genes_chun
+marker_genes_chun_list <- purrr::map(unique(marker_genes_chun$group), function(x){
+  marker_genes_chun %>%
+    filter(group == x) %>%
+    pull(specific_markers_for_each_type_of_neuron)
+}) %>% 
+  set_names(unique(marker_genes_chun$group))
+marker_genes_chun_list[["pan_neuronal_markers"]] <- str_split(marker_genes_chun[1,"pan_neuronal_markers"],pattern = ", ", n=3)[[1]]
+
+# marker_genes_chun_list
+```
+
 
 ```{r}
 # https://github.com/regan-hamel/h-iPSCs-MNI/blob/master/R%20workflow_iMNs_LThiry_2020.Rmd
@@ -433,7 +462,6 @@ if(exists("merged_obj")) {
   }, import = c("merged_obj"))
 }
 ```
-
 
 ```{r}
 current_path <- file.path("results/day0_day50/seurat")
@@ -1189,73 +1217,65 @@ The FindClusters() function implements this procedure, and contains a resolution
 We find that setting this parameter between 0.4-1.2 typically returns good results for single-cell datasets of around 3K cells. Optimal resolution often increases for larger datasets. 
 
 ```{r eval=FALSE}
-VERSION="v3"
-options(Seurat.object.assay.version = VERSION)
+versions = c("v5","v3")
 
-# remove MT genes
-temp <- merged_filt_obj[grep("^MT-", rownames(merged_filt_obj), invert = TRUE), ]
+for(VERSION in versions){
+  options(Seurat.object.assay.version = VERSION)
 
-#regularized negative binomial regression to normalize UMI count data
-#Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures().
-merged_norm_obj <- SCTransform(temp,
-                         assay="RNA",
-                         new.assay.name = "SCT",
-                         vars.to.regress = "percent.mt",
-                         method = "glmGamPoi",
-                         return.only.var.genes = FALSE,
-                         verbose = TRUE)
+  # remove MT genes
+  temp <- merged_filt_obj[grep("^MT-", rownames(merged_filt_obj), invert = TRUE), ]
+  
+  #regularized negative binomial regression to normalize UMI count data
+  #Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures().
+  merged_norm_obj <- SCTransform(temp,
+                           assay="RNA",
+                           new.assay.name = "SCT",
+                           vars.to.regress = "percent.mt",
+                           method = "glmGamPoi",
+                           return.only.var.genes = FALSE,
+                           verbose = TRUE)
+  
+  merged_norm_obj <-   RunPCA(merged_norm_obj,
+                              assay = "SCT",
+                              npcs = 50,
+                              verbose = TRUE) %>% 
+        RunUMAP(reduction = "pca",
+                dims = 1:50,
+                n.components = 3,
+                n.neighbors = 30,# default 30
+                metric = "cosine",
+                min.dist = 0.2, # default 0.3
+                return.model = TRUE,
+                verbose = T)
+  
+    merged_norm_obj <- merged_norm_obj %>%
+        FindNeighbors(reduction = "pca",
+                      dims = 1:50,
+                      k.param = 20,
+                      nn.method = "annoy",
+                      annoy.metric = "cosine",
+                      n.trees = 100,
+                      verbose = T)
+  
+    merged_norm_obj <- merged_norm_obj %>%
+        FindClusters(resolution = 1.0,
+                     algorithm = 2,
+                     verbose = T)
+  
+    merged_norm_obj <- merged_norm_obj %>%
+        FindClusters(resolution = 1.5,
+                     algorithm = 2,
+                     verbose = T)
+  
+    merged_norm_obj <- AddMetaData(merged_norm_obj,
+                                   as.data.frame(merged_norm_obj@reductions$umap@cell.embeddings))
+    
+    saveRDS(merged_norm_obj, glue("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_{VERSION}.RDS"))
+  )
+}
 ```
 
 ```{r}
-merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v3.RDS")
-
-merged_norm_obj
-```
-
-```{r}
-merged_norm_obj <-   RunPCA(merged_norm_obj,
-                            assay = "SCT",
-                            npcs = 50,
-                            verbose = TRUE) 
-
-  #     RunUMAP(reduction = "pca",
-  #             dims = 1:50, 
-  #             n.components = 3,
-  #             n.neighbors = 30,# default 30
-  #             metric = "cosine",
-  #             min.dist = 0.2, # default 0.3
-  #             return.model = TRUE,
-  #             verbose = T) 
-  # 
-  # merged_norm_obj <- merged_norm_obj %>% 
-  #     FindNeighbors(reduction = "pca",
-  #                   dims = 1:50, 
-  #                   k.param = 20,
-  #                   nn.method = "annoy",
-  #                   annoy.metric = "cosine",
-  #                   n.trees = 100,
-  #                   verbose = T)
-  # 
-  # merged_norm_obj <- merged_norm_obj %>% 
-  #     FindClusters(resolution = 1.0, 
-  #                  algorithm = 2, 
-  #                  verbose = T) 
-  # 
-  # merged_norm_obj <- merged_norm_obj %>% 
-  #     FindClusters(resolution = 1.5, 
-  #                  algorithm = 2, 
-  #                  verbose = T)
-  # 
-  # merged_norm_obj <- AddMetaData(merged_norm_obj,
-  #                                as.data.frame(merged_norm_obj@reductions$umap@cell.embeddings))
-  # 
-  # 
-  # merged_norm_obj
-```
-
-```{r}
-merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
-
 # Add metadata and idents
 merged_norm_obj$id <- factor(merged_norm_obj$orig.ident, levels=unique(merged_norm_obj$orig.ident))
 merged_norm_obj$seurat_clusters <- merged_norm_obj$SCT_snn_res.1
@@ -1609,7 +1629,8 @@ VERSION = 'v5'
 if VERSION == 'v3'{
   merged_harmony_obj <- merged_filt_obj
 
-  merged_harmony_obj[["RNA"]] <- split(merged_harmony_obj[["RNA"]], f = merged_harmony_obj$sample)
+  merged_harmony_obj[["RNA"]] <- split(merged_harmony_obj[["RNA"]],
+                                       f = merged_harmony_obj$sample)
   merged_harmony_obj
 }
 ```
