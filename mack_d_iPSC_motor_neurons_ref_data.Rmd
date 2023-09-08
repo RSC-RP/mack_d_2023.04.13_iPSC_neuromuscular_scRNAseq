@@ -93,6 +93,21 @@ rclone copy --http-url https://idk-etl-prod-download-bucket.s3.amazonaws.com :ht
 ```
 
 
+```{bash eval=FALSE}
+# https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE171892
+cd resources/cell_refs/Rayon_2021
+rclone copy refseq:/geo/series/GSE171nnn/GSE171892/suppl . -P
+
+for file in $(ls -1 *.gz)
+do
+  tar -xzvf $file 
+done
+
+cd resources
+git clone https://github.com/briscoelab/human_single_cell
+```
+
+
 # Genome Refs
 
 ```{r eval=FALSE}
@@ -152,7 +167,6 @@ rownames(mc_meta) <- mc_meta$sample_name
 
 # head(mc_meta)
 ```
-
 
 ```{r}
 sample_mapping <- read.csv("resources/cell_refs/allen_institute/M1/sample-exp_component mapping_human_10x_apr2020.csv")
@@ -504,7 +518,105 @@ DimPlot(ref_spinal_cord,
 # dev.off()
 ```
 
+## Rayon:
 
+* 10x Genomics Single Cell 3′ Chip V3.1 
+* Cell Ranger (3.1.0) and the GRCh38-3.0.0
+
+```{r}
+embryonic_sc_meta <- read.csv("references/human_single_cell/metadata/human_metadata.csv") %>% 
+  mutate(
+        X = gsub("_","-",X),
+        barcode =  X,
+        dataset_id = str_split_fixed(X, "_",n=2)[,2]) %>% 
+  column_to_rownames("X")
+
+head(embryonic_sc_meta)
+# table(embryonic_sc_meta$dataset_id)
+```
+
+```{r}
+dataset_suffix <- embryonic_sc_meta %>% 
+  group_by(orig.ident, dataset_id) %>% 
+  dplyr::count() %>% 
+  mutate(dataset_order = gsub("CS12_brachial","CS12_spinalcord", orig.ident) %>% 
+           as.factor())
+
+head(dataset_suffix)
+```
+
+```{r}
+files <- dir("resources/cell_refs/Rayon_2021/GSE171892_RAW", pattern = "^human_.+", full.names = TRUE) 
+head(files)
+```
+
+```{r eval=FALSE}
+embryonic_sc_counts <- purrr::map(files, function(x){
+  print(x)
+
+  obj <- CreateSeuratObject(counts = Read10X(x),
+                            project = basename(x))
+  obj <- RenameCells(obj, new.names = gsub("-1","",colnames(obj)))
+
+  return(obj)
+})
+names(embryonic_sc_counts) <- basename(files)
+embryonic_sc_counts <- embryonic_sc_counts[dataset_suffix$dataset_order]
+# embryonic_sc_counts$human_CS12_spinalcord_rep1@meta.data
+# embryonic_sc_counts$human_CS19_thoracic_rep2@meta.data
+```
+
+```{r}
+idx <- grep("human_CS12_spinalcord_rep1",names(embryonic_sc_counts), invert = TRUE)
+embryonic_sc <- merge(x = embryonic_sc_counts$human_CS12_spinalcord_rep1, 
+                      y = embryonic_sc_counts[idx])
+embryonic_sc #33538 features across 120620 samples within 1 assay
+
+# dim(embryonic_sc)
+# embryonic_sc@meta.data
+```
+
+```{r}
+all_sc_meta <- embryonic_sc@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  mutate(dataset_id = str_split_fixed(barcode, "-",n=2)[,2]) %>% 
+  group_by(orig.ident, dataset_id) %>%
+  dplyr::count()
+
+    
+  
+all_sc_meta
+dataset_suffix
+```
+
+```{r}
+# embryonic_sc <- subset(embryonic_sc, cells = embryonic_sc_meta$barcode)
+# embryonic_sc <- AddMetaData(embryonic_sc, metadata = embryonic_sc_meta)
+# embryonic_sc
+# 
+# embryonic_sc <- embryonic_sc  %>% 
+#   PercentageFeatureSet(
+#                        assay="RNA",
+#                        pattern = "^MT-",
+#                        col.name = "percent.mt") %>% 
+#   PercentageFeatureSet(
+#                        assay="RNA",
+#                        pattern = "^RP[SL]", 
+#                        col.name = "percent.ribo") %>% 
+#   SCTransform( 
+#               vst.flavor = "v2", 
+#               method = "glmGamPoi",
+#               verbose = T) %>%
+#     RunPCA(npcs = 50, verbose = T) %>%
+#     RunUMAP(reduction = "pca", 
+#             dims = 1:50,
+#             n.components = 3, 
+#             min.dist = 0.3,
+#             verbose = T) %>%
+#     FindNeighbors(reduction = "pca",
+#                   dims = 1:50, verbose = T) %>%
+#     FindClusters(resolution = 0.8, verbose = T)
+```
 
 # Compare Gene Refs
 
