@@ -572,9 +572,7 @@ embryonic_sc_counts <- embryonic_sc_counts[dataset_suffix$dataset_order]
 # embryonic_sc_counts$human_CS19_thoracic_rep2@meta.data
 
 # saveRDS(embryonic_sc_counts,"resources/cell_refs/Rayon_2021/GSE171892_seurat_obj_list.RDS")
-```
 
-```{r eval=FALSE}
 if(!exists("embryonic_sc_counts")){
   embryonic_sc_counts <- readRDS("resources/cell_refs/Rayon_2021/GSE171892_seurat_obj_list.RDS")
 }
@@ -644,17 +642,15 @@ VlnPlot(embryonic_sc,
         pt.size = 0,
         features = c("nCount_RNA","nFeature_RNA","percent.mt", "percent.ribo"),
         ncol = 2)
-```
 
-
-```{r}
 embryonic_sc <- embryonic_sc %>% 
   SCTransform(
               vst.flavor = "v2",
               method = "glmGamPoi",
               verbose = T) %>% 
-
     RunPCA(npcs = 50, verbose = T)
+
+embryonic_sc <- embryonic_sc %>% 
     RunUMAP(reduction = "pca",
             dims = 1:50,
             n.components = 3,
@@ -664,7 +660,43 @@ embryonic_sc <- embryonic_sc %>%
                   dims = 1:50, verbose = T) %>%
     FindClusters(resolution = 0.8, verbose = T)
 
-saveRDS(embryonic_sc, "resources/cell_refs/Rayon_2021/GSE171892_merged_postqc_normalized_seurat_obj.RDS")
+# saveRDS(embryonic_sc, "resources/cell_refs/Rayon_2021/GSE171892_merged_postqc_normalized_seurat_obj.RDS")
+```
+
+```{r fig.height=10, fig.width=10}
+# pdf("figures/cell_refs/yadav_GSE190442_ref_spinal_cord_top_level_annotation_UMAP.pdf", height = 20, width = 15)
+DimPlot(ref_spinal_cord,
+        group.by = "top_level_annotation",
+        repel = TRUE,
+        label.size = 4,
+        label=TRUE) +
+  theme(legend.position = 'bottom') +
+  scale_color_manual(values=colors_vector)
+# dev.off()
+```
+
+```{r fig.height=10, fig.width=10}
+# pdf("figures/cell_refs/yadav_GSE190442_ref_spinal_cord_sample_UMAP.pdf", height = 20, width = 15)
+DimPlot(ref_spinal_cord,
+        group.by = "sample",
+        repel = TRUE,
+        label.size = 4,
+        label=FALSE) +
+  theme(legend.position = 'bottom') +
+  scale_color_manual(values=colors_vector)
+# dev.off()
+```
+
+```{r fig.height=10, fig.width=10}
+# pdf("figures/cell_refs/yadav_GSE190442_ref_spinal_cord_sex_UMAP.pdf", height = 20, width = 15)
+DimPlot(ref_spinal_cord,
+        group.by = "sex",
+        repel = TRUE,
+        label.size = 4,
+        label=FALSE) +
+  theme(legend.position = 'bottom') +
+  scale_color_manual(values=colors_vector)
+# dev.off()
 ```
 
 # Compare Gene Refs
@@ -694,9 +726,29 @@ un-normalized counts (layer='counts'),
 normalized data (layer='data'), 
 z-scored/variance-stabilized data (layer='scale.data')
 
+```{r}
+if(!exists("ref_spinal_cord")){
+  ref_spinal_cord <- readRDS("resources/cell_refs/allen_institute/M1/human_M1_normalized_seurat_object.RDS")
+}
+
+if(!exists("ref_motor_cortex")){
+  ref_motor_cortex <- readRDS("resources/cell_refs/Yadav_2023/GSE190442_aggregated_postqc_normalized_seurat_obj.RDS")
+}
+
+if(!exists("embryonic_sc")){
+  embryonic_sc <- readRDS("resources/cell_refs/Rayon_2021/GSE171892_merged_postqc_normalized_seurat_obj.RDS")
+}
+```
+
+```{r}
+table(embryonic_sc$Type_step1)
+table(embryonic_sc$Type_step2)
+```
+
 ```{r eval=FALSE}
 ref_spinal_cord$donor <- paste0("sample.", ref_spinal_cord$sample)
 ref_motor_cortex$donor <- ref_motor_cortex$external_donor_name_label
+embryonic_sc$donor <- embryonic_sc$orig.replicate
 
 # top_level_annotation == subclass_label
 # subtype_annotation == cluster_label
