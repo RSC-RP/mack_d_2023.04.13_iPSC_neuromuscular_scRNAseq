@@ -533,7 +533,6 @@ DimPlot(ref_spinal_cord,
 ```{r}
 embryonic_sc_meta <- read.csv("references/human_single_cell/metadata/human_metadata.csv") %>% 
   mutate(
-        X = gsub("_","-",X),
         barcode =  X,
         dataset_id = str_split_fixed(X, "_",n=2)[,2]) %>% 
   column_to_rownames("X")
@@ -557,6 +556,10 @@ files <- dir("resources/cell_refs/Rayon_2021/GSE171892_RAW", pattern = "^human_.
 head(files)
 ```
 
+53,967,784 Apr 12  2021 GSM5236521_human_CS14_thoracic_rep1.tar.gz
+53,967,784
+File	GSM5236521_human_CS14_thoracic_rep1.tar.gz	04/12/2021 09:33:42	53,967,784	TAR
+
 ```{r eval=FALSE}
 embryonic_sc_counts <- purrr::map(files, function(x){
   print(x)
@@ -571,58 +574,88 @@ names(embryonic_sc_counts) <- basename(files)
 embryonic_sc_counts <- embryonic_sc_counts[dataset_suffix$dataset_order]
 # embryonic_sc_counts$human_CS12_spinalcord_rep1@meta.data
 # embryonic_sc_counts$human_CS19_thoracic_rep2@meta.data
-```
 
-```{r}
 idx <- grep("human_CS12_spinalcord_rep1",names(embryonic_sc_counts), invert = TRUE)
 embryonic_sc <- merge(x = embryonic_sc_counts$human_CS12_spinalcord_rep1, 
                       y = embryonic_sc_counts[idx])
 embryonic_sc #33538 features across 120620 samples within 1 assay
+embryonic_sc$barcode <- rownames(embryonic_sc@meta.data)
 
-# dim(embryonic_sc)
-# embryonic_sc@meta.data
-```
+# head(embryonic_sc@meta.data)
+# table(embryonic_sc_meta$barcode %in% embryonic_sc$barcode) #TRUE
 
-```{r}
 all_sc_meta <- embryonic_sc@meta.data %>% 
-  rownames_to_column("barcode") %>% 
-  mutate(dataset_id = str_split_fixed(barcode, "-",n=2)[,2]) %>% 
+  mutate(dataset_id = str_split_fixed(barcode, "_",n=2)[,2]) %>% 
   group_by(orig.ident, dataset_id) %>%
   dplyr::count()
 
-    
+# all_sc_meta
+# dataset_suffix
+# head(rownames(embryonic_sc))
+# saveRDS(embryonic_sc_counts,"resources/cell_refs/Rayon_2021/GSE171892_aggregated_postqc_seurat_obj_list.RDS")
+```
+
+Using block 1 from human_CS14_thoracic_rep1 to learn model.
+Error in make_cell_attr(umi, cell_attr, latent_var, batch_var, latent_var_nonreg,  : 
+  cell attribute "log_umi" contains NA, NaN, or infinite value
   
-all_sc_meta
-dataset_suffix
+```{r}
+embryonic_sc <- subset(embryonic_sc, cells = embryonic_sc_meta$barcode)
+embryonic_sc <- AddMetaData(embryonic_sc, metadata = embryonic_sc_meta)
+# embryonic_sc #33538 features across 43485 samples within 1 assay
+
+embryonic_sc <- embryonic_sc  %>%
+  PercentageFeatureSet(
+                       assay="RNA",
+                       pattern = "^MT-",
+                       col.name = "percent.mt") %>%
+  PercentageFeatureSet(
+                       assay="RNA",
+                       pattern = "^RP[SL]",
+                       col.name = "percent.ribo")
 ```
 
 ```{r}
-# embryonic_sc <- subset(embryonic_sc, cells = embryonic_sc_meta$barcode)
-# embryonic_sc <- AddMetaData(embryonic_sc, metadata = embryonic_sc_meta)
-# embryonic_sc
-# 
-# embryonic_sc <- embryonic_sc  %>% 
-#   PercentageFeatureSet(
-#                        assay="RNA",
-#                        pattern = "^MT-",
-#                        col.name = "percent.mt") %>% 
-#   PercentageFeatureSet(
-#                        assay="RNA",
-#                        pattern = "^RP[SL]", 
-#                        col.name = "percent.ribo") %>% 
-#   SCTransform( 
-#               vst.flavor = "v2", 
-#               method = "glmGamPoi",
-#               verbose = T) %>%
-#     RunPCA(npcs = 50, verbose = T) %>%
-#     RunUMAP(reduction = "pca", 
-#             dims = 1:50,
-#             n.components = 3, 
-#             min.dist = 0.3,
-#             verbose = T) %>%
-#     FindNeighbors(reduction = "pca",
-#                   dims = 1:50, verbose = T) %>%
-#     FindClusters(resolution = 0.8, verbose = T)
+table(embryonic_sc$orig.ident)
+dim(embryonic_sc_counts$human_CS14_thoracic_rep1)
+
+CS14_thoracic_rep1_cts <- colSums(embryonic_sc_counts$human_CS14_thoracic_rep1[["RNA"]]@layers$counts)
+table(CS14_thoracic_rep1_cts[order(CS14_thoracic_rep1_cts)] > 0)
+```
+
+```{r}
+cell_counts <- purrr::map(Layers(embryonic_sc[["RNA"]]),function(x){
+  
+  cell_totals <- colSums(embryonic_sc[["RNA"]][[x]])
+  cell_totals <- cell_totals[order(cell_totals)]
+  
+})
+
+no_counts <- purrr::map(cell_counts, function(x) which(x == 0))
+names(no_counts) <- Layers(embryonic_sc[["RNA"]])
+
+
+length(no_counts$counts.human_CS14_thoracic_rep1)
+```
+
+```{r}
+embryonic_sc <- embryonic_sc %>% 
+  SCTransform(
+              vst.flavor = "v2",
+              method = "glmGamPoi",
+              verbose = T)
+
+    RunPCA(npcs = 50, verbose = T)
+    RunUMAP(reduction = "pca",
+            dims = 1:50,
+            n.components = 3,
+            min.dist = 0.3,
+            verbose = T) %>%
+    FindNeighbors(reduction = "pca",
+                  dims = 1:50, verbose = T) %>%
+    FindClusters(resolution = 0.8, verbose = T)
+
+saveRDS(embryonic_sc, "resources/cell_refs/Rayon_2021/GSE171892_aggregated_postqc_normalized_seurat_obj.RDS")
 ```
 
 # Compare Gene Refs
