@@ -535,9 +535,12 @@ embryonic_sc_meta <- read.csv("references/human_single_cell/metadata/human_metad
   mutate(
         barcode =  X,
         dataset_id = str_split_fixed(X, "_",n=2)[,2]) %>% 
-  column_to_rownames("X")
+  janitor::clean_names() %>% 
+  mutate_at(vars(type_step1, type_step2), ~gsub("\\s{1,}","_", .)) %>% 
+  mutate_at(vars(type_step2), ~ifelse(is.na(.), type_step1, .)) %>% 
+  column_to_rownames("x")
 
-# head(embryonic_sc_meta)
+head(embryonic_sc_meta)
 # table(embryonic_sc_meta$dataset_id)
 ```
 
@@ -660,13 +663,30 @@ embryonic_sc <- embryonic_sc %>%
                   dims = 1:50, verbose = T) %>%
     FindClusters(resolution = 0.8, verbose = T)
 
+embryonic_sc$type_step2 <- ifelse(embryonic_sc$type_step2=="", "unknown", embryonic_sc$type_step2)
 # saveRDS(embryonic_sc, "resources/cell_refs/Rayon_2021/GSE171892_merged_postqc_normalized_seurat_obj.RDS")
 ```
 
+```{r}
+embryonic_sc@meta.data %>% 
+  group_by(type_step2) %>% 
+  dplyr::count() %>% 
+  arrange(desc(n)) #%>% 
+  # write.csv(.,"resources/cell_refs/Rayon_2021/GSE171892_merged_postqc_normalized_seurat_cell_type_table.csv", row.names = FALSE)
+```
+
+
+```{r}
+embryonic_sc@meta.data %>% head()
+table(embryonic_sc@meta.data$orig_tissue)
+table(embryonic_sc@meta.data$orig.ident)
+table(embryonic_sc@meta.data$type_step2)
+```
+
 ```{r fig.height=10, fig.width=10}
-# pdf("figures/cell_refs/yadav_GSE190442_ref_spinal_cord_top_level_annotation_UMAP.pdf", height = 20, width = 15)
-DimPlot(ref_spinal_cord,
-        group.by = "top_level_annotation",
+# pdf("figures/cell_refs/rayon_GSE171892_embryonic_spinal_cord_type_step1_UMAP.pdf", height = 20, width = 15)
+DimPlot(embryonic_sc,
+        group.by = "type_step1",
         repel = TRUE,
         label.size = 4,
         label=TRUE) +
@@ -676,9 +696,33 @@ DimPlot(ref_spinal_cord,
 ```
 
 ```{r fig.height=10, fig.width=10}
-# pdf("figures/cell_refs/yadav_GSE190442_ref_spinal_cord_sample_UMAP.pdf", height = 20, width = 15)
-DimPlot(ref_spinal_cord,
-        group.by = "sample",
+# pdf("figures/cell_refs/rayon_GSE171892_embryonic_spinal_cord_type_step2_UMAP.pdf", height = 20, width = 15)
+DimPlot(embryonic_sc,
+        group.by = "type_step2",
+        repel = TRUE,
+        label.size = 4,
+        label=TRUE) +
+  theme(legend.position = 'bottom') +
+  scale_color_manual(values=colors_vector)
+# dev.off()
+```
+
+```{r fig.height=10, fig.width=10}
+# pdf("figures/cell_refs/rayon_GSE171892_embryonic_spinal_cord_orig.ident_UMAP.pdf", height = 20, width = 15)
+DimPlot(embryonic_sc,
+        group.by = "orig.ident",
+        repel = TRUE,
+        label.size = 4,
+        label=TRUE) +
+  theme(legend.position = 'bottom') +
+  scale_color_manual(values=colors_vector)
+# dev.off()
+```
+
+```{r fig.height=10, fig.width=10}
+# pdf("figures/cell_refs/rayon_GSE171892_embryonic_spinal_cord_sample_UMAP.pdf", height = 20, width = 15)
+DimPlot(embryonic_sc,
+        group.by = "orig_replicate",
         repel = TRUE,
         label.size = 4,
         label=FALSE) +
@@ -688,9 +732,9 @@ DimPlot(ref_spinal_cord,
 ```
 
 ```{r fig.height=10, fig.width=10}
-# pdf("figures/cell_refs/yadav_GSE190442_ref_spinal_cord_sex_UMAP.pdf", height = 20, width = 15)
-DimPlot(ref_spinal_cord,
-        group.by = "sex",
+# pdf("figures/cell_refs/rayon_GSE171892_embryonic_spinal_cord_orig_tissue_UMAP.pdf", height = 20, width = 15)
+DimPlot(embryonic_sc,
+        group.by = "orig_tissue",
         repel = TRUE,
         label.size = 4,
         label=FALSE) +
@@ -726,32 +770,33 @@ un-normalized counts (layer='counts'),
 normalized data (layer='data'), 
 z-scored/variance-stabilized data (layer='scale.data')
 
+https://github.com/satijalab/seurat/issues/7587
+if using merge() 
+> Error in DelayedArray::colAutoGrid(x = counts, ncol = length(x = layer.cells)) :
+> 'ncol' is too big. Blocks of length > .Machine$integer.max are not supported yet. Please specify a smaller 'ncol'.
+merged_obj <- merge(x = ref_spinal_cord, 
+                    y = ref_motor_cortex,
+                    merge.data = FALSE)
+                    
 ```{r}
-if(!exists("ref_spinal_cord")){
-  ref_spinal_cord <- readRDS("resources/cell_refs/allen_institute/M1/human_M1_normalized_seurat_object.RDS")
+if(!exists("ref_motor_cortex")){
+  ref_motor_cortex  <- readRDS("resources/cell_refs/allen_institute/M1/human_M1_normalized_seurat_object.RDS")
 }
 
-if(!exists("ref_motor_cortex")){
-  ref_motor_cortex <- readRDS("resources/cell_refs/Yadav_2023/GSE190442_aggregated_postqc_normalized_seurat_obj.RDS")
+if(!exists("ref_spinal_cord")){
+  ref_spinal_cord <- readRDS("resources/cell_refs/Yadav_2023/GSE190442_aggregated_postqc_normalized_seurat_obj.RDS")
 }
 
 if(!exists("embryonic_sc")){
   embryonic_sc <- readRDS("resources/cell_refs/Rayon_2021/GSE171892_merged_postqc_normalized_seurat_obj.RDS")
 }
-```
 
-```{r}
-table(embryonic_sc$Type_step1)
-table(embryonic_sc$Type_step2)
-```
-
-```{r eval=FALSE}
 ref_spinal_cord$donor <- paste0("sample.", ref_spinal_cord$sample)
 ref_motor_cortex$donor <- ref_motor_cortex$external_donor_name_label
-embryonic_sc$donor <- embryonic_sc$orig.replicate
+embryonic_sc$donor <- embryonic_sc$orig_replicate
 
-# top_level_annotation == subclass_label
-# subtype_annotation == cluster_label
+# top_level_annotation == subclass_label, type_step1
+# subtype_annotation == cluster_label, type_step2
 
 merged_meta <- ref_spinal_cord@meta.data %>% 
   bind_rows(., 
@@ -760,40 +805,49 @@ merged_meta <- ref_spinal_cord@meta.data %>%
                    subtype_annotation = cluster_label ,
                    top_level_annotation = subclass_label, 
                    everything())) %>% 
+  bind_rows(., select(embryonic_sc@meta.data,
+                      subtype_annotation = type_step2,
+                      top_level_annotation = type_step1,
+                      everything())) %>% 
   select(barcode, orig.ident:subtype_annotation, donor, everything())
 
 # head(merged_meta)
-dim(merged_meta) #131,822
+dim(merged_meta) # 175,307
 table(merged_meta$donor)
-```
+# write.csv(merged_meta, "results/integrated_ref/Allen_Rayon_Yadav_integrated_cell_ref_metadata.csv", row.names = F)
 
-https://github.com/satijalab/seurat/issues/7587
-if using merge() 
-> Error in DelayedArray::colAutoGrid(x = counts, ncol = length(x = layer.cells)) :
-> 'ncol' is too big. Blocks of length > .Machine$integer.max are not supported yet. Please specify a smaller 'ncol'.
-merged_obj <- merge(x = ref_spinal_cord, 
-                    y = ref_motor_cortex,
-                    merge.data = FALSE)
-
-```{r eval=FALSE}
-merged_obj <-  CreateSeuratObject(counts = list("ref_spinal_cord"=GetAssayData(ref_spinal_cord, layer = 'counts'),
-                                                "ref_motor_cortex"=GetAssayData(ref_motor_cortex, layer = 'counts')), 
+merged_obj <-  CreateSeuratObject(counts = list("ref_spinal_cord"=LayerData(ref_spinal_cord, layer = 'counts'),
+                                                "ref_motor_cortex"=LayerData(ref_motor_cortex, layer = 'counts'),
+                                                "ref_embryonic_sc"=LayerData(embryonic_sc, layer = 'counts')), 
                                   meta.data = merged_meta)
 
 merged_obj <- JoinLayers(merged_obj)
 
 merged_obj
-rm(ref_spinal_cord, ref_motor_cortex)
+rm(ref_spinal_cord, ref_motor_cortex, embryonic_sc)
 # table(merged_obj$donor)
-# saveRDS(merged_obj, "resources/cell_refs/integrated/spinal_cord_motor_cortex_merged_seurat_obj.RDS")
+saveRDS(merged_obj, "resources/cell_refs/integrated/embryonic_adult_spinal_cord_motor_cortex_merged_seurat_obj.RDS")
+```
+
+```{r}
+merged_obj@meta.data %>% 
+  group_by(subtype_annotation) %>% 
+  dplyr::count() %>% 
+  ungroup() %>% 
+  arrange(desc(n)) %>% 
+  filter(grepl("Moto|MN|pMN", subtype_annotation))
 ```
 
 SCT integration: 
 https://github.com/satijalab/seurat/issues/7542
 
+ https://github.com/satijalab/seurat/issues/7145 - You don't need to worry about those warnings. We will fix them in Seurat-object package.
+ Warning: Different cells and/or features from existing assay SCT
+
+--> Also, did not use plan(multisession) though unsure if that was actually causing the errors.
+
+
 ```{r eval=FALSE}
-merged_obj <- readRDS("resources/cell_refs/integrated/spinal_cord_motor_cortex_merged_seurat_obj.RDS")
-# merged_obj
 
 merged_split_obj <-  split(merged_obj, f = merged_obj$donor) 
 rm(merged_obj)
@@ -807,20 +861,11 @@ merged_split_obj <- merged_split_obj %>%
   RunPCA(npcs = 50,
          verbose = TRUE)
 
-# saveRDS(merged_split_obj,"resources/cell_refs/integrated/spinal_cord_motor_cortex_merged_split_normalized_seurat_obj.RDS")
-```
-
- https://github.com/satijalab/seurat/issues/7145 - You don't need to worry about those warnings. We will fix them in Seurat-object package.
- Warning: Different cells and/or features from existing assay SCT
-
---> Also, did not use plan(multisession) though unsure if that was actually causing the errors.
-
-
-```{r eval=FALSE}
-merged_split_obj <- readRDS("resources/cell_refs/integrated/spinal_cord_motor_cortex_merged_split_normalized_seurat_obj.RDS")
+saveRDS(merged_split_obj,"results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_merged_split_normalized_seurat_obj.RDS")
+# merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_merged_split_normalized_seurat_obj.RDS")
 
 # merged_split_obj
-merged_split_obj$motorneuron <- ifelse(merged_split_obj$subtype_annotation == "Motoneurons", "MN", "Other")
+merged_split_obj$motorneuron <- ifelse(grepl("Moto|MN|pMN",merged_split_obj$subtype_annotation), "MN", "Other")
 
 # Integration
 # k.anchor = 5 is default used here
@@ -857,7 +902,7 @@ merged_split_obj <- RunUMAP(merged_split_obj,
 Idents(merged_split_obj) <- merged_split_obj$orig.ident 
 
 # save object
-saveRDS(merged_split_obj,"resources/cell_refs/integrated/spinal_cord_motor_cortex_integrated_normalized_seurat_obj.RDS")
+saveRDS(merged_split_obj,"results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj.RDS")
 ```
 
 ```{r}
