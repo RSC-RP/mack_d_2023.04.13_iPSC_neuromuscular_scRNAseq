@@ -139,6 +139,35 @@ head(MTG_genes)
 ```
 
 ```{r}
+rayon_marker_genes <- openxlsx::read.xlsx(xlsxFile = "resources/cell_refs/Rayon_2021/TableS2.xlsx") %>% 
+  janitor::clean_names()
+
+head(rayon_marker_genes)
+```
+
+```{r}
+rayon_marker_genes_long <- rayon_marker_genes %>% 
+  separate(genes_map_step1, into = paste0("gene",1:5), sep=", ") %>% 
+  separate(genes_map_step2, into = paste0("gene",5:20), sep = ", ") %>% 
+  pivot_longer(cols = matches("^gene"),
+               names_to = "colname",
+               values_to = "genes") %>% 
+  filter(!is.na(genes)) %>% 
+  mutate(id = paste("rayon", type, neural_pop, sep="_") %>% 
+           gsub("\\s", "_", .))
+
+# rayon_marker_genes_long
+
+rayon_marker_gene_list <-  purrr::map(unique(rayon_marker_genes_long$id), function(x){
+  rayon_marker_genes_long %>% 
+    filter(id == x) %>% 
+    pull(genes)
+})
+names(rayon_marker_gene_list) <- unique(rayon_marker_genes_long$id)
+# rayon_marker_gene_list
+```
+
+```{r}
 colors_vector <- c("#E41A1C", "#377EB8", "#4DAF4A", "#F781BF", 
             "blue1", "darkslategray3", "burlywood3", "#984EA3", 
             "#FF7F00", "seagreen1", "maroon", "orchid", "darkblue", 
@@ -1146,53 +1175,93 @@ DimPlot(merged_split_obj,
 # dev.off()
 ```
 
+### Motor Neurons and subsets
+
 ```{r}
-table(subset_common_types$top_level_annotation, subset_common_types$dataset)
+types_across_ds <- unique(c(grep("OPC|Astr|Oligo|Endo", top_level_table_merged$top_level_annotation, value=TRUE, ignore.case = TRUE),
+                          grep("MN|pMN|Moto", top_level_table_merged$subtype_annotation, value=TRUE, ignore.case = TRUE)))
+
+cellids <- merged_split_obj@meta.data %>% 
+  filter(top_level_annotation %in% types_across_ds | subtype_annotation %in% types_across_ds) %>% 
+  pull(barcode)
+
+subset_common_types <- subset(merged_split_obj, cells = cellids)
+subset_common_types$celltypes <- subset_common_types@meta.data %>% 
+  mutate(celltypes = case_when(
+    grepl("MN|pMN|Moto", subtype_annotation, ignore.case = TRUE) ~ subtype_annotation,
+    TRUE ~ top_level_annotation
+  )) %>% 
+  pull(celltypes)
+
+Idents(subset_common_types) <- subset_common_types$celltypes
+Idents(merged_split_obj) <- merged_split_obj$top_level_annotation
 ```
 
-
 ```{r fig.height=10, fig.width=10}
-types_across_ds <- unique(grep("OPC|Astr|Oligo|Endo", top_level_table_merged$top_level_annotation, value=TRUE, ignore.case = TRUE))
-# subset_common_types <- subset(merged_split_obj, top_level_annotation %in% types_across_ds)
+# pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_integrated_harmony_subset_UMAP.pdf", height = 15, width = 11)
 DimPlot(subset_common_types, 
         label = TRUE,
         repel = TRUE,
-        group.by = 'top_level_annotation',
-        split.by = 'dataset',
+        group.by = 'celltypes',
+        # split.by = 'dataset',
         reduction = 'umap.harmony') +
   scale_color_manual(values = colors_vector) +
   theme(legend.position = 'bottom')
+# dev.off()
 
-DimPlot(subset_common_types, 
+# pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_integrated_rpca_subset_UMAP.pdf", height = 15, width = 11)
+DimPlot(subset_common_types,
         label = TRUE,
         repel = TRUE,
-        group.by = 'top_level_annotation',
-        # split.by = 'dataset',
+        group.by = 'celltypes',
         reduction = 'umap.rpca') +
   scale_color_manual(values = colors_vector) +
   theme(legend.position = 'bottom')
+# dev.off()
 ```
-
-
-```{r fig.height=15, fig.width=15}
-DimPlot(merged_split_obj,
-        label = TRUE,
-        repel = TRUE,
-        split.by = "dataset",
-        # label.size = 2.5,
-        group.by = 'top_level_annotation',
-        reduction = 'umap.rpca') +
-  scale_color_manual(values = colors_vector) +
-  theme(legend.position = 'bottom')
-```
-
-
-
-
 
 ```{r}
-length(unique(merged_split_obj$subtype_annotation))
+mn_feature_plots <- purrr::map(c("umap.rpca","umap.harmony"), function(red){
+  out1 <- glue("figures/cell_refs/allen_yadav_radon_integrated/embryonic_adult_spinal_cord_motor_cortex_integrated_{red}_MNgenes_UMAP.png")
+  fp1 <- FeaturePlot(merged_split_obj,
+                   label = TRUE, 
+                   repel = TRUE,
+                   label.size = 2,
+                   features = rayon_marker_gene_list$rayon_Neuron_MN,
+                   reduction = red) +
+  patchwork::plot_annotation(title = "rayon_Neuron_MN")
+
+  out2 <- glue("figures/cell_refs/allen_yadav_radon_integrated/embryonic_adult_spinal_cord_motor_cortex_integrated_{red}_MNgenes_subset_UMAP.png")
+  fp2 <- FeaturePlot(subset_common_types,
+            features = rayon_marker_gene_list$rayon_Neuron_MN,
+            label = TRUE,
+            repel = TRUE,
+            reduction = red) +
+  patchwork::plot_annotation(title = "rayon_Neuron_MN")
+  
+  
+  png(out1, units = "in", res = 100, height = 20, width = 20)
+  print(fp1)
+  dev.off()
+  
+  png(out2, units = "in", res = 100, height = 20, width = 20)
+  print(fp2)
+  dev.off()
+
+
+})
 ```
+
+```{r fig.height=15, fig.width=15}
+
+
+fp1
+fp2
+```
+
+
+
+
 
 
 

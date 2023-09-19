@@ -5,9 +5,11 @@
 .DS_Store
 *.RDS
 
-# this is OS specific for Cybertron
+
+# this is OS specific for Cybertron/Local
 .Renviron 
 *.gz
+rclone.sh
 
 # Project specific
 00_archive/
