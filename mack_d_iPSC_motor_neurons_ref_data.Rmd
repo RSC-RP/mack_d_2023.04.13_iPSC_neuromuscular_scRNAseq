@@ -167,21 +167,25 @@ cell type diversity in the primary motor cortex (M1C or M1).
 * https://github.com/satijalab/azimuth-references/tree/master/human_motorcortex 
 * https://portal.brain-map.org/atlases-and-data/rnaseq/human-m1-10x 
 * https://knowledge.brain-map.org/data/8GU8FPSNLBUBCJWQDZ5/summary
+* https://www.nature.com/articles/s41586-021-03465-8
+
+Ontologies
+* https://bioportal.bioontology.org/ontologies/PCL/?p=summary
+* https://academic.oup.com/bioinformatics/article/33/7/1104/2843897
+
+Code
+* https://github.com/AllenInstitute/BICCN_M1_Evo
 
 ```{r}
 mc_meta <- read.csv("resources/cell_refs/allen_institute/M1/metadata.csv")
 rownames(mc_meta) <- mc_meta$sample_name
 
 # head(mc_meta)
-```
 
-```{r}
 sample_mapping <- read.csv("resources/cell_refs/allen_institute/M1/sample-exp_component mapping_human_10x_apr2020.csv")
 
 # head(sample_mapping)
-```
 
-```{r}
 az_mc_meta <- read.csv("resources/cell_refs/allen_institute/allen_institute_azimuth_subclass_marker_gene_list.csv") %>% 
   janitor::clean_names()
 
@@ -199,14 +203,11 @@ mc_meta %>%
   dplyr::count() %>% 
   arrange(desc(n))
 
-
-
 mc_meta %>% 
   group_by(subclass_label) %>% 
   dplyr::count() %>% 
   arrange(desc(n)) %>% 
   write.csv(., "allen_celltypes.csv", row.names = FALSE)
-
 ```
 
 ```{r eval=FALSE}
@@ -385,12 +386,11 @@ sc_meta <- read.csv("resources/cell_refs/Yadav_2023/GSE190442_aggregated_metadat
 
 # head(sc_meta)
 dim(sc_meta) # 55289     7
-```
 
-```{r}
 sc_pt_meta <- openxlsx::read.xlsx("resources/cell_refs/Yadav_2023/1-s2.0-S0896627323000314-mmc2.xlsx") %>% 
   janitor::clean_names() %>% 
-  filter(use=="Sequencing")
+  filter(use=="Sequencing") %>% 
+  mutate(donor = as.character(donor))
 
 # head(sc_pt_meta)
 dim(sc_pt_meta)
@@ -541,7 +541,14 @@ embryonic_sc_meta <- read.csv("references/human_single_cell/metadata/human_metad
   column_to_rownames("x")
 
 head(embryonic_sc_meta)
-# table(embryonic_sc_meta$dataset_id)
+table(embryonic_sc_meta$orig_timepoint)
+```
+
+```{r}
+embryonic_sc_meta %>% 
+  select(type_step1, type_step2)  %>% 
+  distinct() %>% 
+  View()
 ```
 
 ```{r}
@@ -668,10 +675,10 @@ embryonic_sc$type_step2 <- ifelse(embryonic_sc$type_step2=="", "unknown", embryo
 ```
 
 ```{r}
-embryonic_sc@meta.data %>% 
-  group_by(type_step2) %>% 
+embryonic_sc_meta %>% 
+  group_by(type_step1) %>% 
   dplyr::count() %>% 
-  arrange(desc(n)) #%>% 
+  arrange(desc(n)) %>% 
   # write.csv(.,"resources/cell_refs/Rayon_2021/GSE171892_merged_postqc_normalized_seurat_cell_type_table.csv", row.names = FALSE)
 ```
 
@@ -793,11 +800,10 @@ if(!exists("embryonic_sc")){
 
 ref_spinal_cord$donor <- paste0("sample.", ref_spinal_cord$sample)
 ref_motor_cortex$donor <- ref_motor_cortex$external_donor_name_label
-embryonic_sc$donor <- embryonic_sc$orig_replicate
+embryonic_sc$donor <- embryonic_sc$orig_timepoint
 
 # top_level_annotation == subclass_label, type_step1
 # subtype_annotation == cluster_label, type_step2
-
 merged_meta <- ref_spinal_cord@meta.data %>% 
   bind_rows(., 
             select(ref_motor_cortex@meta.data, 
@@ -826,17 +832,9 @@ merged_obj <- JoinLayers(merged_obj)
 merged_obj
 rm(ref_spinal_cord, ref_motor_cortex, embryonic_sc)
 # table(merged_obj$donor)
-saveRDS(merged_obj, "resources/cell_refs/integrated/embryonic_adult_spinal_cord_motor_cortex_merged_seurat_obj.RDS")
+# saveRDS(merged_obj, "resources/cell_refs/integrated/embryonic_adult_spinal_cord_motor_cortex_merged_seurat_obj.RDS")
 ```
 
-```{r}
-merged_obj@meta.data %>% 
-  group_by(subtype_annotation) %>% 
-  dplyr::count() %>% 
-  ungroup() %>% 
-  arrange(desc(n)) %>% 
-  filter(grepl("Moto|MN|pMN", subtype_annotation))
-```
 
 SCT integration: 
 https://github.com/satijalab/seurat/issues/7542
@@ -846,8 +844,14 @@ https://github.com/satijalab/seurat/issues/7542
 
 --> Also, did not use plan(multisession) though unsure if that was actually causing the errors.
 
+it looks like they string split the original IDs and did NOT provide the actual donor IDs
+> table(embryonic_sc_meta$orig_ident, embryonic_sc_meta$orig_replicate)
+
 
 ```{r eval=FALSE}
+if(!exists("merged_obj")){
+  merged_obj <- read.csv("resources/cell_refs/integrated/embryonic_adult_spinal_cord_motor_cortex_merged_seurat_obj.RDS")
+}
 
 merged_split_obj <-  split(merged_obj, f = merged_obj$donor) 
 rm(merged_obj)
@@ -864,8 +868,36 @@ merged_split_obj <- merged_split_obj %>%
 saveRDS(merged_split_obj,"results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_merged_split_normalized_seurat_obj.RDS")
 # merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_merged_split_normalized_seurat_obj.RDS")
 
-# merged_split_obj
-merged_split_obj$motorneuron <- ifelse(grepl("Moto|MN|pMN",merged_split_obj$subtype_annotation), "MN", "Other")
+# Add Meta Data
+merged_split_obj$dataset <- gsub(".+_CS[0-9]{2}_.+","Rayon_2021",merged_split_obj$orig.ident)
+merged_split_obj$top_level_annotation <- gsub("\\s{1,}","_",merged_split_obj$top_level_annotation)
+merged_split_obj$subtype_annotation <- gsub("\\s{1,}","_",merged_split_obj$subtype_annotation)
+merged_split_obj$motorneuron <- ifelse(grepl("Moto|MN|pMN",merged_split_obj$subtype_annotation), merged_split_obj$subtype_annotation, "Other")
+#CS12 and CS17 indicating these samples were male, others female
+sc_meta_to_add <- merged_split_obj@meta.data %>% 
+  select(-barcode) %>% 
+  rownames_to_column("barcode") %>% 
+  mutate(sample = as.character(sample)) %>% 
+  left_join(., sc_pt_meta, by=c("sample"="donor")) %>% 
+
+  # https://www.ehd.org/virtual-human-embryo/ages.php?stage=1
+  mutate(age_clean = case_when(
+    dataset == "yadav_2023" ~ paste(age, "yrs", sep="_"),
+    grepl("CS12", orig.ident) ~ "29-31_days",
+    grepl("CS14", orig.ident) ~  "33-35_days",
+    grepl("CS17", orig.ident) ~ "39-42_days",
+    grepl("CS19", orig.ident) ~ "45-47_days",
+    TRUE ~ "unknown"), 
+    sex_clean = case_when(
+      dataset == "yadav_2023" ~ sex, 
+      dataset == "Allen_M1" ~ donor_sex_label,
+      grepl("CS12|CS17", orig.ident) ~ "M",
+      grepl("CS14|CS19", orig.ident) ~ "F",
+      TRUE ~ "unknown"
+    )) %>% 
+  select(barcode, age_clean, sex_clean, tissue, cause_of_death) %>% 
+  set_rownames(.$barcode)
+merged_split_obj <- AddMetaData(merged_split_obj, metadata = sc_meta_to_add)
 
 # Integration
 # k.anchor = 5 is default used here
@@ -902,72 +934,141 @@ merged_split_obj <- RunUMAP(merged_split_obj,
 Idents(merged_split_obj) <- merged_split_obj$orig.ident 
 
 # save object
-saveRDS(merged_split_obj,"results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj.RDS")
+# saveRDS(merged_split_obj,"results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj.RDS")
 ```
 
 ```{r}
-merged_split_obj$orig.ident %>% table()
-merged_split_obj$subtype_annotation %>% table()
-merged_split_obj$top_level_annotation %>% table()
-merged_split_obj$donor %>% table()
-merged_split_obj$motorneuron %>% table()
+merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj.RDS")
+
+
+tissue <- merged_split_obj@meta.data %>% 
+  mutate(tissue = case_when(
+  dataset == "Allen_M1" ~ "adult_motor_cortex",
+  dataset == "Rayon_2021" ~  paste0(gsub("human_|_rep[0-9]|spinalcord","", orig.ident), "_spinal_cord"),
+  dataset == "yadav_2023" ~ paste0("adult_",tissue, "_spinal_cord")
+)) %>% 
+  pull(tissue)
+
+merged_split_obj$tissue <- tissue
+Idents(merged_split_obj) <- merged_split_obj$dataset
 ```
 
+```{r}
+# merged_split_obj$dataset %>% table()
+# merged_split_obj$donor %>% table()
+# merged_split_obj$motorneuron %>% table() %>% write.csv("mn_table.csv", row.names = F)
+
+merged_split_obj@meta.data %>% 
+  group_by(top_level_annotation, subtype_annotation) %>% 
+  dplyr::count() %>% 
+  arrange(desc(n))
+
+merged_split_obj@meta.data %>% 
+  group_by(top_level_annotation) %>% 
+  dplyr::count() %>% 
+  arrange(desc(n))
+```
+
+```{r}
+top_level_table_merged <- merged_split_obj@meta.data %>% 
+  group_by(dataset,class_label, top_level_annotation, subtype_annotation) %>% 
+  dplyr::count() %>% 
+  arrange(top_level_annotation)
+
+top_level_table_merged
+# write.csv(top_level_table_merged, "results/integrated_ref/Allen_Rayon_Yadav_integrated_celltype_labels_table.csv", row.names = FALSE)
+```
 
 ```{r fig.height=10, fig.width=11}
-# pdf("figures/cell_refs/unintegrated_merged_bySource_UMAP.pdf", height = 10, width = 11)
+# pdf("figures/cell_refs/allen_yadav_radon_integrated/embryonic_adult_spinal_cord_motor_cortex_unintegrated_merged_bySource_UMAP.pdf", height = 10, width = 11)
 DimPlot(merged_split_obj, reduction = 'umap.unintegrated') 
 # dev.off()
 
-# pdf("figures/cell_refs/integrated_harmony_bySource_UMAP.pdf", height = 10, width = 11)
+# pdf("figures/cell_refs/allen_yadav_radon_integrated/embryonic_adult_spinal_cord_motor_cortex_integrated_harmony_bySource_UMAP.pdf", height = 10, width = 11)
 DimPlot(merged_split_obj, reduction = 'umap.harmony')
 # dev.off()
 
-# pdf("figures/cell_refs/integrated_rpca_bySource_UMAP.pdf", height = 10, width = 11)
+# pdf("figures/cell_refs/allen_yadav_radon_integrated/embryonic_adult_spinal_cord_motor_cortex_integrated_rpca_bySource_UMAP.pdf", height = 10, width = 11)
 DimPlot(merged_split_obj, reduction = 'umap.rpca')
 # dev.off()
 ```
 
 ```{r fig.height=10, fig.width=11}
-# pdf("figures/cell_refs/unintegrated_merged_motorneuron_UMAP.pdf", height = 10, width = 11)
+colors_mn <- c("Other"="grey80", "Motoneurons" = "#641A80FF", pMN = "#B63679FF" ,MN = "#FECE91FF")
+# pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_unintegrated_merged_motorneuron_UMAP.pdf", height = 10, width = 11)
 DimPlot(merged_split_obj,
         group.by = 'motorneuron',
         reduction = 'umap.unintegrated') +
-  scale_color_viridis_d(option="B", begin = 0.3, end = 0.95)
+  scale_color_manual(values = colors_mn)
+  # scale_color_viridis_d(option="B", begin = 0.3, end = 0.95)
 # dev.off()
 
-# pdf("figures/cell_refs/integrated_harmony_motorneuron_UMAP.pdf", height = 10, width = 11)
+# pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_integrated_harmony_motorneuron_UMAP.pdf", height = 10, width = 11)
 DimPlot(merged_split_obj, 
         group.by = 'motorneuron',
         reduction = 'umap.harmony') +
-  scale_color_viridis_d(option="B", begin = 0.3, end = 0.95)
+  scale_color_manual(values = colors_mn)
+  # scale_color_viridis_d(option="B", begin = 0.3, end = 0.95)
 # dev.off()
 
-# pdf("figures/cell_refs/integrated_rpca_motorneuron_UMAP.pdf", height = 10, width = 11)
+# pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_integrated_rpca_motorneuron_UMAP.pdf", height = 10, width = 11)
 DimPlot(merged_split_obj,
         group.by = 'motorneuron',
         reduction = 'umap.rpca') +
-  scale_color_viridis_d(option="B", begin = 0.3, end = 0.95)
+  scale_color_manual(values = colors_mn)
+  # scale_color_viridis_d(option="B", begin = 0.3, end = 0.95)
+# dev.off()
+
+
+# pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_integrated_rpca_motorneuron_byDataset_UMAP.pdf", height = 7, width = 11)
+DimPlot(merged_split_obj,
+        group.by = 'motorneuron',
+        split.by = "dataset",
+        reduction = 'umap.harmony') +
+  scale_color_manual(values = colors_mn)
+  # scale_color_viridis_d(option="B", begin = 0.3, end = 0.95)
 # dev.off()
 ```
 
+```{r fig.height=10, fig.width=11}
+# pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_unintegrated_merged_age_clean_UMAP.pdf", height = 10, width = 11)
+DimPlot(merged_split_obj,
+        group.by = 'age_clean',
+        reduction = 'umap.unintegrated') +
+  scale_color_manual(values = colors_vector)
+# dev.off()
+
+# pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_integrated_harmony_age_clean_UMAP.pdf", height = 10, width = 11)
+DimPlot(merged_split_obj, 
+        group.by = 'age_clean',
+        reduction = 'umap.harmony') +
+  scale_color_brewer(palette = "Paired")
+# dev.off()
+
+# pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_integrated_rpca_age_clean_UMAP.pdf", height = 10, width = 11)
+DimPlot(merged_split_obj,
+        group.by = 'age_clean',
+        reduction = 'umap.rpca') +
+  scale_color_brewer(palette = "Paired")
+# dev.off()
+```
 
 ```{r fig.height=10, fig.width=11}
-# pdf("figures/cell_refs/unintegrated_merged_byDonor_UMAP.pdf", height = 10, width = 11)
+# pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_unintegrated_merged_byDonor_UMAP.pdf", height = 10, width = 11)
 DimPlot(merged_split_obj, 
         group.by = 'donor',
         reduction = 'umap.unintegrated') +
   scale_color_manual(values = colors_vector) 
 # dev.off()
 
-# pdf("figures/cell_refs/integrated_harmony_byDonor_UMAP.pdf", height = 10, width = 11)
+# pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_integrated_harmony_byDonor_UMAP.pdf", height = 10, width = 11)
 DimPlot(merged_split_obj, 
         group.by = 'donor',
         reduction = 'umap.harmony') +
   scale_color_manual(values = colors_vector) 
 # dev.off()
 
-# pdf("figures/cell_refs/integrated_rpca_byDonor_UMAP.pdf", height = 10, width = 11)
+# pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_integrated_rpca_byDonor_UMAP.pdf", height = 10, width = 11)
 DimPlot(merged_split_obj, 
         group.by = 'donor',
         reduction = 'umap.rpca') +
@@ -975,37 +1076,122 @@ DimPlot(merged_split_obj,
 # dev.off()
 ```
 
-
 ```{r fig.height=10, fig.width=11}
-# pdf("figures/cell_refs/unintegrated_merged_top_level_annotation_UMAP.pdf", height = 10, width = 11)
+# pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_unintegrated_merged_tissue_UMAP.pdf", height = 15, width = 11)
+DimPlot(merged_split_obj, 
+        label = F,
+        repel = TRUE,
+        # label.size = 2.5,
+        group.by = 'tissue',
+        reduction = 'umap.unintegrated')  +
+  scale_color_manual(values = colors_vector) +
+  theme(legend.position = 'bottom')
+# dev.off()
+
+# pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_integrated_harmony_tissue_UMAP.pdf", height = 15, width = 11)
+DimPlot(merged_split_obj, 
+        label = F,
+        repel = TRUE,
+        # label.size = 2.5,
+        group.by = 'tissue',
+        reduction = 'umap.harmony') +
+  scale_color_manual(values = colors_vector) +
+  theme(legend.position = 'bottom')
+# dev.off()
+
+# pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_integrated_rpca_tissue_UMAP.pdf", height = 15, width = 11)
+DimPlot(merged_split_obj,
+        label = F,
+        repel = TRUE,
+        # label.size = 2.5,
+        group.by = 'tissue',
+        reduction = 'umap.rpca') +
+  scale_color_manual(values = colors_vector) +
+  theme(legend.position = 'bottom')
+# dev.off()
+```
+
+```{r  fig.height=15, fig.width=15}
+# pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_unintegrated_merged_top_level_annotation_UMAP.pdf", height = 15, width = 11)
 DimPlot(merged_split_obj, 
         label = TRUE,
         repel = TRUE,
+        # label.size = 2.5,
         group.by = 'top_level_annotation',
         reduction = 'umap.unintegrated')  +
   scale_color_manual(values = colors_vector) +
   theme(legend.position = 'bottom')
 # dev.off()
 
-# pdf("figures/cell_refs/integrated_harmony_top_level_annotation_UMAP.pdf", height = 10, width = 11)
+# pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_integrated_harmony_top_level_annotation_UMAP.pdf", height = 15, width = 11)
 DimPlot(merged_split_obj, 
         label = TRUE,
         repel = TRUE,
+        # label.size = 2.5,
         group.by = 'top_level_annotation',
         reduction = 'umap.harmony') +
   scale_color_manual(values = colors_vector) +
   theme(legend.position = 'bottom')
 # dev.off()
 
-# pdf("figures/cell_refs/integrated_rpca_top_level_annotation_UMAP.pdf", height = 10, width = 11)
+# pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_integrated_rpca_top_level_annotation_UMAP.pdf", height = 15, width = 11)
 DimPlot(merged_split_obj,
         label = TRUE,
         repel = TRUE,
+        # label.size = 2.5,
         group.by = 'top_level_annotation',
         reduction = 'umap.rpca') +
   scale_color_manual(values = colors_vector) +
   theme(legend.position = 'bottom')
 # dev.off()
+```
+
+```{r}
+table(subset_common_types$top_level_annotation, subset_common_types$dataset)
+```
+
+
+```{r fig.height=10, fig.width=10}
+types_across_ds <- unique(grep("OPC|Astr|Oligo|Endo", top_level_table_merged$top_level_annotation, value=TRUE, ignore.case = TRUE))
+# subset_common_types <- subset(merged_split_obj, top_level_annotation %in% types_across_ds)
+DimPlot(subset_common_types, 
+        label = TRUE,
+        repel = TRUE,
+        group.by = 'top_level_annotation',
+        split.by = 'dataset',
+        reduction = 'umap.harmony') +
+  scale_color_manual(values = colors_vector) +
+  theme(legend.position = 'bottom')
+
+DimPlot(subset_common_types, 
+        label = TRUE,
+        repel = TRUE,
+        group.by = 'top_level_annotation',
+        # split.by = 'dataset',
+        reduction = 'umap.rpca') +
+  scale_color_manual(values = colors_vector) +
+  theme(legend.position = 'bottom')
+```
+
+
+```{r fig.height=15, fig.width=15}
+DimPlot(merged_split_obj,
+        label = TRUE,
+        repel = TRUE,
+        split.by = "dataset",
+        # label.size = 2.5,
+        group.by = 'top_level_annotation',
+        reduction = 'umap.rpca') +
+  scale_color_manual(values = colors_vector) +
+  theme(legend.position = 'bottom')
+```
+
+
+
+
+
+```{r}
+length(unique(merged_split_obj$subtype_annotation))
 ```
 
 

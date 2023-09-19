@@ -307,7 +307,6 @@ marker_genes_mc <- read.csv("resources/cell_refs/allen_institute/allen_institute
   sapply(.,  function(x) str_split(gsub("\\.","-",x), pattern = ", "))
 ```
 
-
 ```{r}
 changho_refs_file <- "references/changho_updated_marker_genes_MN_IN_annotation.xlsx"
 marker_genes_chun <- purrr::map_dfr(openxlsx::getSheetNames(changho_refs_file)[2:4], function(x){
