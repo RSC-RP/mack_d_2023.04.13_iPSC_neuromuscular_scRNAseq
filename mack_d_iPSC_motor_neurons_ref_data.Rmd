@@ -208,7 +208,8 @@ rayon_marker_genes_long <- rayon_marker_genes %>%
 rayon_marker_gene_list <-  purrr::map(unique(rayon_marker_genes_long$id), function(x){
   rayon_marker_genes_long %>% 
     filter(id == x) %>% 
-    pull(genes)
+    pull(genes) %>% 
+    unique()
 })
 names(rayon_marker_gene_list) <- unique(rayon_marker_genes_long$id)
 # rayon_marker_gene_list
@@ -1013,6 +1014,14 @@ Idents(merged_split_obj) <- merged_split_obj$orig.ident
 # saveRDS(merged_split_obj,"results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj.RDS")
 ```
 
+
+https://satijalab.org/seurat/articles/seurat5_integration.html
+
+* You will need to do  rejoin the layers before performing any differential expression analysis.
+* However, you can always resplit the layers in case you would like to reperform integrative analysis.
+
+
+
 ```{r}
 merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj.RDS")
 
@@ -1027,6 +1036,16 @@ tissue <- merged_split_obj@meta.data %>%
 
 merged_split_obj$tissue <- tissue
 Idents(merged_split_obj) <- merged_split_obj$dataset
+```
+
+```{r}
+table(merged_split_obj$dataset)
+```
+
+
+```{r}
+DefaultAssay(merged_split_obj)
+merged_split_obj
 ```
 
 ```{r}
@@ -1267,44 +1286,46 @@ DimPlot(subset_common_types,
 # dev.off()
 ```
 
+## Marker Gene Expression 
+
+```{r}
+sel_markers <- names(rayon_marker_gene_list) %>%  grep("pMN|MN|rayon_Oligodendrocyte_NA", ., value = T)
+sel_markers
+```
+
 ```{r}
 mn_feature_plots <- purrr::map(c("umap.rpca","umap.harmony"), function(red){
-  out1 <- glue("figures/cell_refs/allen_yadav_radon_integrated/embryonic_adult_spinal_cord_motor_cortex_integrated_{red}_MNgenes_UMAP.png")
-  fp1 <- FeaturePlot(merged_split_obj,
-                   label = TRUE, 
-                   repel = TRUE,
-                   label.size = 2,
-                   features = rayon_marker_gene_list$rayon_Neuron_MN,
-                   reduction = red) +
-  patchwork::plot_annotation(title = "rayon_Neuron_MN")
-
-  out2 <- glue("figures/cell_refs/allen_yadav_radon_integrated/embryonic_adult_spinal_cord_motor_cortex_integrated_{red}_MNgenes_subset_UMAP.png")
-  fp2 <- FeaturePlot(subset_common_types,
-            features = rayon_marker_gene_list$rayon_Neuron_MN,
-            label = TRUE,
-            repel = TRUE,
-            reduction = red) +
-  patchwork::plot_annotation(title = "rayon_Neuron_MN")
-  
-  
-  png(out1, units = "in", res = 100, height = 20, width = 20)
-  print(fp1)
-  dev.off()
-  
-  png(out2, units = "in", res = 100, height = 20, width = 20)
-  print(fp2)
-  dev.off()
-
+  purrr::map(sel_markers, function(x){
+      out1 <- glue("figures/cell_refs/allen_yadav_radon_integrated/embryonic_adult_sc_mc_integrated_{red}_{x}_UMAP.png")
+      fp1 <- FeaturePlot(merged_split_obj,
+                       label = TRUE, 
+                       repel = TRUE,
+                       label.size = 2,
+                       features = rayon_marker_gene_list[[x]],
+                       reduction = red) +
+      patchwork::plot_annotation(title = x)
+    
+      out2 <- glue("figures/cell_refs/allen_yadav_radon_integrated/embryonic_adult_sc_mc_integrated_{red}_{x}_subset_UMAP.png")
+      fp2 <- FeaturePlot(subset_common_types,
+                features = rayon_marker_gene_list[[x]],
+                label = TRUE,
+                repel = TRUE,
+                reduction = red) +
+      patchwork::plot_annotation(title = x)
+      
+      
+      png(out1, units = "in", res = 100, height = 20, width = 20)
+      print(fp1)
+      dev.off()
+      
+      png(out2, units = "in", res = 100, height = 20, width = 20)
+      print(fp2)
+      dev.off()
+  })
 
 })
 ```
 
-```{r fig.height=15, fig.width=15}
-
-
-fp1
-fp2
-```
 
 
 
