@@ -139,6 +139,54 @@ head(MTG_genes)
 ```
 
 ```{r}
+marker_genes_mc <- read.csv("resources/cell_refs/allen_institute/allen_institute_azimuth_marker_gene_list.csv") %>% 
+  mutate(Label = gsub("\\s{1,}|\\/|-","_", Label)) %>% 
+  pull(Markers , name = Label) %>% 
+  as.list() %>% 
+  sapply(.,  function(x) str_split(gsub("\\.","-",x), pattern = ", "))
+```
+
+```{r}
+changho_refs_file <- "references/changho_updated_marker_genes_MN_IN_annotation.xlsx"
+marker_genes_chun <- purrr::map_dfr(openxlsx::getSheetNames(changho_refs_file)[2:4], function(x){
+  openxlsx::read.xlsx(changho_refs_file, sheet = x)
+}) %>% 
+  janitor::clean_names() %>% 
+  distinct() %>% 
+  mutate(group=paste(author, tolower(neural_pop)) %>% 
+           gsub("\\s","_",.)) %>% 
+  mutate(specific_markers_for_each_type_of_neuron=gsub("\\s","", specific_markers_for_each_type_of_neuron))
+
+# marker_genes_chun
+marker_genes_chun_list <- purrr::map(unique(marker_genes_chun$group), function(x){
+  marker_genes_chun %>%
+    filter(group == x) %>%
+    pull(specific_markers_for_each_type_of_neuron)
+}) %>% 
+  set_names(unique(marker_genes_chun$group))
+marker_genes_chun_list[["pan_neuronal_markers"]] <- str_split(marker_genes_chun[1,"pan_neuronal_markers"],pattern = ", ", n=3)[[1]]
+
+# marker_genes_chun_list
+```
+
+```{r}
+# https://github.com/regan-hamel/h-iPSCs-MNI/blob/master/R%20workflow_iMNs_LThiry_2020.Rmd
+marker_genes_iPSC <- list(MNPCs = c("CHAT", "ISL1", "ISL2", "MNX1", "OLIG2", "NEUROG2"),
+                INs = c("PAX3", "VSX2", "GATA3", "SOX14", "SIM1", "LBX1", "TLX3"),
+                NPCs = c("SOX1", "SOX2", "MKI67"),
+                Glial = c("SOX9", "S100B", "GFAP"),
+                Oligodendrocytes = c("PDGFRA", "GALC"),
+                iPSCs = c("NANOG", "POU5F1"))
+```
+
+```{r}
+marker_genes_endoderm <- c("CXCR4", "KRT12", "SOX17", "KLF8", "MYCT1", "DKK4", "GATA4", "GATA6","SOX7", "EOMES","KRT19","CLDN6","FOXA1","FOXA2")
+
+length(marker_genes_endoderm)
+```
+
+
+```{r}
 colors_vector <- c("#E41A1C", "#377EB8", "#4DAF4A", "#F781BF", 
             "blue1", "darkslategray3", "burlywood3", "#984EA3", 
             "#FF7F00", "seagreen1", "maroon", "orchid", "darkblue", 
