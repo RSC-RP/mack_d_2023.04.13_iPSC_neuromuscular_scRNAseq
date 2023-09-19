@@ -185,7 +185,6 @@ marker_genes_endoderm <- c("CXCR4", "KRT12", "SOX17", "KLF8", "MYCT1", "DKK4", "
 length(marker_genes_endoderm)
 ```
 
-
 ```{r}
 colors_vector <- c("#E41A1C", "#377EB8", "#4DAF4A", "#F781BF", 
             "blue1", "darkslategray3", "burlywood3", "#984EA3", 
