@@ -1020,8 +1020,6 @@ https://satijalab.org/seurat/articles/seurat5_integration.html
 * You will need to do  rejoin the layers before performing any differential expression analysis.
 * However, you can always resplit the layers in case you would like to reperform integrative analysis.
 
-
-
 ```{r}
 merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj.RDS")
 
@@ -1037,11 +1035,6 @@ tissue <- merged_split_obj@meta.data %>%
 merged_split_obj$tissue <- tissue
 Idents(merged_split_obj) <- merged_split_obj$dataset
 ```
-
-```{r}
-table(merged_split_obj$dataset)
-```
-
 
 ```{r}
 DefaultAssay(merged_split_obj)
