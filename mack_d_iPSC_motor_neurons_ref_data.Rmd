@@ -185,10 +185,32 @@ marker_genes_endoderm <- c("CXCR4", "KRT12", "SOX17", "KLF8", "MYCT1", "DKK4", "
 length(marker_genes_endoderm)
 ```
 
+https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4468382/
+Cellular identities in vertebrate spinal cord are specified during development along the three basic spatial axes of the embryonic body plan 
+  * rostral–caudal, dorsal–ventral, and medial–lateral.
+
 ```{r}
 rayon_marker_genes <- openxlsx::read.xlsx(xlsxFile = "resources/cell_refs/Rayon_2021/TableS2.xlsx") %>% 
-  janitor::clean_names()
+  janitor::clean_names() %>% 
+  mutate(id = paste("rayon", type, neural_pop, sep="_") %>% 
+           gsub("\\s", "_", .)) %>% 
+  mutate(description = case_when(
+    grepl("FP", id) ~ gsub("FP","floor plate", id),
+    grepl("RP", id) ~ gsub("RP","roof plate", id),
+    grepl("dp", id) ~ gsub("dp[0-9]", "dorsal interneuron progenitors", id),
+    grepl("p[0-2]", id) ~ gsub("p[0-2]", "intermediate interneuron progenitors", id),
+    grepl("p3", id) ~ gsub("p3","ventral interneuron progenitors p3", id), 
+    grepl("V[0-3]", id) ~ gsub("V[0-9].?", "ventral neurons", id),
+    grepl("MN", id) ~ gsub(".?MN","motor neuron", id),
+    grepl("dl[0-6]", id) ~ gsub("dl[0-9]", "dorsal Interneuron", id),
+    grepl("LTMR|LMTR", id) ~ gsub("C?-{0,1}(LTMR|LMTR).{0,}", "mechanoreceptor", id),
+    grepl("Proprioceptor|nociceptor", id) ~ gsub("Peripheral","PNS Peripheral",id),
+    grepl("Mesoderm|Eryt|Blood|Hema|Myoblast|Oligo", id) ~ paste("rayon",str_split_fixed(id, "_", n=3)[,2]),
+    TRUE ~ id
+  ) %>% gsub("_"," ", .) %>% gsub("rayon ","", .))
 
+
+# View(rayon_marker_genes)
 head(rayon_marker_genes)
 ```
 
@@ -199,9 +221,7 @@ rayon_marker_genes_long <- rayon_marker_genes %>%
   pivot_longer(cols = matches("^gene"),
                names_to = "colname",
                values_to = "genes") %>% 
-  filter(!is.na(genes)) %>% 
-  mutate(id = paste("rayon", type, neural_pop, sep="_") %>% 
-           gsub("\\s", "_", .))
+  filter(!is.na(genes)) 
 
 # rayon_marker_genes_long
 
@@ -248,16 +268,38 @@ cell type diversity in the primary motor cortex (M1C or M1).
 
 Ontologies
 * https://bioportal.bioontology.org/ontologies/PCL/?p=summary
+* https://data.bioontology.org/ontologies/PCL/submissions/21/download?apikey=8b5b7825-538d-40e0-9e9e-5ab9274a9aeb
 * https://academic.oup.com/bioinformatics/article/33/7/1104/2843897
+
+```bash
+# http://robot.obolibrary.org/convert
+robot convert --input pcl.owl --output pcl.obo --check false
+```
 
 Code
 * https://github.com/AllenInstitute/BICCN_M1_Evo
+
+
+```{r}
+allen_ontology <- get_ontology("resources/cell_refs/allen_institute/pcl.obo",
+                               extract_tags='everything')
+# allen_ontology
+
+human_entries <- data.frame(name = allen_ontology$name, 
+                   id = allen_ontology$id,
+                   def = allen_ontology$def) %>% 
+  filter(!grepl("CHEBI|BFO", id), 
+         !grepl("obsolete", name)) %>% 
+  filter(grepl("PCL", id), grepl("Hsap", name))
+
+```
+
 
 ```{r}
 mc_meta <- read.csv("resources/cell_refs/allen_institute/M1/metadata.csv")
 rownames(mc_meta) <- mc_meta$sample_name
 
-# head(mc_meta)
+head(mc_meta)
 
 sample_mapping <- read.csv("resources/cell_refs/allen_institute/M1/sample-exp_component mapping_human_10x_apr2020.csv")
 
@@ -267,6 +309,23 @@ az_mc_meta <- read.csv("resources/cell_refs/allen_institute/allen_institute_azim
   janitor::clean_names()
 
 # head(az_mc_meta)
+```
+
+```{r}
+celltype_labels <- unique(mc_meta$cluster_label)
+length(celltype_labels) #127
+
+defs <- purrr::map_dfr(celltype_labels, function(label){
+  human_entries %>% 
+    filter(grepl(glue("^{label} "), name), 
+           grepl("primary motor cortex", name)) %>% 
+    mutate(cluster_label = label)
+}) %>% 
+  select(cluster_label, everything())
+
+head(defs)
+dim(defs)
+# celltype_labels[!celltype_labels %in% defs$cluster_label] # missing 2 entries
 ```
 
 ```{r fig.width=10}
@@ -618,7 +677,7 @@ embryonic_sc_meta <- read.csv("references/human_single_cell/metadata/human_metad
   column_to_rownames("x")
 
 head(embryonic_sc_meta)
-table(embryonic_sc_meta$orig_timepoint)
+# table(embryonic_sc_meta$orig_timepoint)
 ```
 
 ```{r}
@@ -1067,6 +1126,17 @@ top_level_table_merged
 # write.csv(top_level_table_merged, "results/integrated_ref/Allen_Rayon_Yadav_integrated_celltype_labels_table.csv", row.names = FALSE)
 ```
 
+```{r}
+merged_split_obj@meta.data$
+```
+
+```{r}
+top_level_table_merged
+```
+
+
+## Figures
+
 ```{r fig.height=10, fig.width=11}
 # pdf("figures/cell_refs/allen_yadav_radon_integrated/embryonic_adult_spinal_cord_motor_cortex_unintegrated_merged_bySource_UMAP.pdf", height = 10, width = 11)
 DimPlot(merged_split_obj, reduction = 'umap.unintegrated') 
@@ -1234,7 +1304,7 @@ DimPlot(merged_split_obj,
 # dev.off()
 ```
 
-### Motor Neurons and subsets
+## Motor Neurons and subsets
 
 ```{r}
 types_across_ds <- unique(c(grep("OPC|Astr|Oligo|Endo", top_level_table_merged$top_level_annotation, value=TRUE, ignore.case = TRUE),
@@ -1282,8 +1352,8 @@ DimPlot(subset_common_types,
 ## Marker Gene Expression 
 
 ```{r}
-sel_markers <- names(rayon_marker_gene_list) %>%  grep("pMN|MN|rayon_Oligodendrocyte_NA", ., value = T)
-sel_markers
+# sel_markers <- names(rayon_marker_gene_list) %>%  grep("pMN|MN|rayon_Oligodendrocyte_NA", ., value = T)
+# sel_markers
 ```
 
 ```{r}
