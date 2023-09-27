@@ -33,6 +33,7 @@ library(plotly)
 library(RColorBrewer)
 
 library(Seurat)
+library(ontologyIndex)
 ```
 
 ```{r}
@@ -235,6 +236,22 @@ names(rayon_marker_gene_list) <- unique(rayon_marker_genes_long$id)
 # rayon_marker_gene_list
 ```
 
+
+```{r}
+allen_ontology <- get_ontology("resources/cell_refs/allen_institute/pcl.obo",
+                               extract_tags='everything')
+# allen_ontology
+
+human_entries <- data.frame(name = allen_ontology$name, 
+                   id = allen_ontology$id,
+                   def = allen_ontology$def) %>% 
+  filter(!grepl("CHEBI|BFO", id), 
+         !grepl("obsolete", name)) %>% 
+  filter(grepl("PCL", id), grepl("Hsap", name))
+
+```
+
+
 ```{r}
 colors_vector <- c("#E41A1C", "#377EB8", "#4DAF4A", "#F781BF", 
             "blue1", "darkslategray3", "burlywood3", "#984EA3", 
@@ -279,22 +296,6 @@ robot convert --input pcl.owl --output pcl.obo --check false
 Code
 * https://github.com/AllenInstitute/BICCN_M1_Evo
 
-
-```{r}
-allen_ontology <- get_ontology("resources/cell_refs/allen_institute/pcl.obo",
-                               extract_tags='everything')
-# allen_ontology
-
-human_entries <- data.frame(name = allen_ontology$name, 
-                   id = allen_ontology$id,
-                   def = allen_ontology$def) %>% 
-  filter(!grepl("CHEBI|BFO", id), 
-         !grepl("obsolete", name)) %>% 
-  filter(grepl("PCL", id), grepl("Hsap", name))
-
-```
-
-
 ```{r}
 mc_meta <- read.csv("resources/cell_refs/allen_institute/M1/metadata.csv")
 rownames(mc_meta) <- mc_meta$sample_name
@@ -315,7 +316,7 @@ az_mc_meta <- read.csv("resources/cell_refs/allen_institute/allen_institute_azim
 celltype_labels <- unique(mc_meta$cluster_label)
 length(celltype_labels) #127
 
-defs <- purrr::map_dfr(celltype_labels, function(label){
+allen_defs <- purrr::map_dfr(celltype_labels, function(label){
   human_entries %>% 
     filter(grepl(glue("^{label} "), name), 
            grepl("primary motor cortex", name)) %>% 
@@ -323,10 +324,11 @@ defs <- purrr::map_dfr(celltype_labels, function(label){
 }) %>% 
   select(cluster_label, everything())
 
-head(defs)
-dim(defs)
+head(allen_defs)
+dim(allen_defs)
 # celltype_labels[!celltype_labels %in% defs$cluster_label] # missing 2 entries
 ```
+
 
 ```{r fig.width=10}
 cell_tax <- readRDS("resources/cell_refs/allen_institute/M1/human_dendrogram.rds")
@@ -519,7 +521,7 @@ sc_meta <- read.csv("resources/cell_refs/Yadav_2023/GSE190442_aggregated_metadat
   left_join(., sc_pts, by=c("sample"="Patient_ID")) %>% 
   column_to_rownames("X") 
   
-
+# 
 # head(sc_meta)
 dim(sc_meta) # 55289     7
 
@@ -531,6 +533,59 @@ sc_pt_meta <- openxlsx::read.xlsx("resources/cell_refs/Yadav_2023/1-s2.0-S089662
 # head(sc_pt_meta)
 dim(sc_pt_meta)
 ```
+
+```{r}
+# Motoneurons	- 1331 only
+yada_defs <- sc_meta %>% 
+  group_by(top_level_annotation, subtype_annotation) %>% 
+  dplyr::count() %>% 
+  arrange(desc(n)) %>% 
+  ungroup() %>% 
+  mutate(description = case_when(
+    grepl("Schwann", subtype_annotation) ~ "schwann cells", 
+    grepl("OPC", subtype_annotation) ~ "oligodendrocyte precursor cells",
+    grepl("Oligo", subtype_annotation) ~ "oligodendrocytes",
+    grepl("Micro", subtype_annotation) ~ "microglia",
+    grepl("Endo", subtype_annotation) ~ "Venous/Capillary Endothelial and Arterial Endothelial",
+    grepl("IEG", subtype_annotation) ~ "neurons expressing immediate-early response genes",
+    grepl("Inh-Dorsal", subtype_annotation) ~ "inhibitory dorsal neuron",
+    grepl("Ex-Dorsal", subtype_annotation) ~ "excitatory dorsal neurons",
+    grepl("Ex-V", subtype_annotation) ~ "excitatory ventral neurons",
+    grepl("Ex-M", subtype_annotation) ~ "excitatory mid neurons",
+    grepl("Inh-M",subtype_annotation ) ~ "inhibitory mid neurons",
+    grepl("Inh-V", subtype_annotation) ~ "inhibitory ventral neurons",
+    grepl("Macrophages|Lymphocytes|Motoneurons", subtype_annotation) ~ subtype_annotation,
+    TRUE ~ top_level_annotation
+  )) %>% 
+  mutate_at(vars(description), ~tolower(.)) %>% 
+  select(subtype_annotation, description) %>% 
+  distinct()
+```
+
+Schwann cells (Schwann-1 and Schwann–2)
+oligodendrocyte precursor cells (OPCs) 
+progenitors (Oligo Progen)
+oligodendrocytes (Oligo-1 through Oligo-6)
+microglia (Micro-1 through Micro-4 and Perivascular Micro)
+macrophages
+
+Astrocytes (WM Astro, GM Astro-1, and GM Astro-2). 
+Meninges (Men-1 through Men-4). 
+
+Vascular cells are shown in teal and include two groups of endothelial cells (Venous/Capillary Endo and Arterial Endo) 
+pericytes/smooth muscle cells (Peri/SMC)
+Ependymal cells 
+
+Neurons  motoneurons (MN), 
+excitatory dorsal neurons (ExDorsal), 
+inhibitory dorsal neurons (InhDorsal), 
+excitatory mid neurons (ExM), 
+excitatory ventral neurons (EV), 
+inhibitory mid neurons (InhM), 
+inhibitory ventral neurons (InhV).
+
+
+
 
 ```{r eval=FALSE}
 ref_counts_sc <- data.table::fread("resources/cell_refs/Yadav_2023/GSE190442_aggregated_counts_postqc.csv")
@@ -594,24 +649,6 @@ sc_new_meta <- sc_meta %>%
 
 ref_spinal_cord <- AddMetaData(ref_spinal_cord, sc_new_meta)
 Idents(ref_spinal_cord) <- ref_spinal_cord$subtype_annotation
-```
-
-```{r}
-head(ref_spinal_cord@meta.data)
-
-# Motoneurons	- 1331 only
-sc_meta %>% 
-  group_by(top_level_annotation) %>% 
-  dplyr::count() %>% 
-  arrange(desc(n)) %>% 
-  write.csv(., "yadav_celltypes.csv", row.names = FALSE)
-
-table(sc_meta$top_level_annotation)
-
-
-table(sc_meta$Visium_ID)
-table(sc_meta$sample)
-table(ref_spinal_cord$sample, ref_spinal_cord$sex)
 ```
 
 ```{r fig.height=10, fig.width=10}
@@ -681,11 +718,19 @@ head(embryonic_sc_meta)
 ```
 
 ```{r}
-embryonic_sc_meta %>% 
-  select(type_step1, type_step2)  %>% 
+rayon_defs <- rayon_marker_genes %>% 
+  select(type, neural_pop, id, description) %>% 
   distinct() %>% 
-  View()
+  mutate_at(vars(type, neural_pop), ~gsub("\\s{1,}","_", .)) %>% 
+  mutate_at(vars(neural_pop), ~ifelse(is.na(.), type, .)) 
+
+# rayon_defs
+
+table(rayon_defs$type %in% unique(embryonic_sc_meta$type_step1))
+table(rayon_defs$neural_pop %in% unique(embryonic_sc_meta$type_step2))
+rayon_defs$neural_pop[!rayon_defs$neural_pop %in% unique(embryonic_sc_meta$type_step2)] #not in manuscript either?
 ```
+
 
 ```{r}
 dataset_suffix <- embryonic_sc_meta %>% 
@@ -1116,23 +1161,41 @@ merged_split_obj@meta.data %>%
   arrange(desc(n))
 ```
 
+merged_split_obj$top_level_annotation <- gsub("\\s{1,}","_",merged_split_obj$top_level_annotation)
+merged_split_obj$subtype_annotation <- gsub("\\s{1,}","_",merged_split_obj$subtype_annotation)
+
+```{r}
+all_defs <- allen_defs %>% 
+  select(subtype_annotation=cluster_label, 
+         description = def) %>% 
+  bind_rows(., yada_defs) %>% 
+  bind_rows(., select(rayon_defs, 
+                      subtype_annotation = neural_pop, 
+                      description)) %>% 
+  mutate(subtype_annotation = gsub("\\s{1,}","_",subtype_annotation))
+
+# allen_defs
+# yada_defs
+# rayon_defs
+all_defs
+```
+
 ```{r}
 top_level_table_merged <- merged_split_obj@meta.data %>% 
   group_by(dataset,class_label, top_level_annotation, subtype_annotation) %>% 
-  dplyr::count() %>% 
-  arrange(top_level_annotation)
+  dplyr::count(name = "number_of_cells") %>% 
+  arrange(top_level_annotation) %>% 
+  left_join(.,all_defs, by="subtype_annotation") %>% 
+  mutate_at(vars(description), ~gsub('\\"', "", .))
 
 top_level_table_merged
 # write.csv(top_level_table_merged, "results/integrated_ref/Allen_Rayon_Yadav_integrated_celltype_labels_table.csv", row.names = FALSE)
 ```
 
 ```{r}
-merged_split_obj@meta.data$
+table(top_level_table_merged$class_label)
 ```
 
-```{r}
-top_level_table_merged
-```
 
 
 ## Figures
