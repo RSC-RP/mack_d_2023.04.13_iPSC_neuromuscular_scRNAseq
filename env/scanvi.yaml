@@ -1,0 +1,5 @@
+name: scanvi
+channels:
+  - conda-forge
+dependencies:
+  - scvi-tools

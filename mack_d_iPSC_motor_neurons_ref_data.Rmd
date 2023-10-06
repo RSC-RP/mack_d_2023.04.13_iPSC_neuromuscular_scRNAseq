@@ -34,6 +34,7 @@ library(RColorBrewer)
 
 library(Seurat)
 library(ontologyIndex)
+library(reticulate)
 ```
 
 ```{r}
@@ -734,9 +735,9 @@ rayon_defs$neural_pop[!rayon_defs$neural_pop %in% unique(embryonic_sc_meta$type_
 
 ```{r}
 dataset_suffix <- embryonic_sc_meta %>% 
-  group_by(orig.ident, dataset_id) %>% 
+  group_by(orig_ident, dataset_id) %>% 
   dplyr::count() %>% 
-  mutate(dataset_order = gsub("CS12_brachial","CS12_spinalcord", orig.ident) %>% 
+  mutate(dataset_order = gsub("CS12_brachial","CS12_spinalcord", orig_ident) %>% 
            as.factor())
 
 # head(dataset_suffix)
@@ -863,18 +864,34 @@ embryonic_sc_meta %>%
   # write.csv(.,"resources/cell_refs/Rayon_2021/GSE171892_merged_postqc_normalized_seurat_cell_type_table.csv", row.names = FALSE)
 ```
 
-
 ```{r}
-embryonic_sc@meta.data %>% head()
-table(embryonic_sc@meta.data$orig_tissue)
-table(embryonic_sc@meta.data$orig.ident)
-table(embryonic_sc@meta.data$type_step2)
+embryonic_sc <- readRDS("resources/cell_refs/Rayon_2021/GSE171892_merged_postqc_normalized_seurat_obj.RDS")
+
+embryonic_sc <- embryonic_sc %>% 
+    RunUMAP(reduction = "pca",
+            dims = 1:30,
+            n.components = 3,
+            min.dist = 0.1,
+            verbose = T) %>%
+    FindNeighbors(reduction = "pca",
+                  dims = 1:50, verbose = T) %>%
+    FindClusters(resolution = 0.8, verbose = T)
+
+type_simplified <- embryonic_sc@meta.data %>% 
+  mutate(type_simple = case_when(
+  grepl("Erythr|Bloo|Hema", type_step1) ~ "Erythrocytes",
+  grepl("Mesoderm", embryonic_sc$type_step1) ~ "Mesoderm",
+  TRUE ~ type_step1
+)) %>% 
+  pull(type_simple)
+
+embryonic_sc$type_simple <- type_simplified
 ```
 
 ```{r fig.height=10, fig.width=10}
-# pdf("figures/cell_refs/rayon_GSE171892_embryonic_spinal_cord_type_step1_UMAP.pdf", height = 20, width = 15)
+# pdf("figures/cell_refs/rayon_GSE171892_embryonic_spinal_cord_type_simple_UMAP.pdf", height = 20, width = 15)
 DimPlot(embryonic_sc,
-        group.by = "type_step1",
+        group.by = "type_simple",
         repel = TRUE,
         label.size = 4,
         label=TRUE) +
@@ -883,13 +900,19 @@ DimPlot(embryonic_sc,
 # dev.off()
 ```
 
+```{r}
+any(is.na(embryonic_sc$type_step2))
+```
+
+
 ```{r fig.height=10, fig.width=10}
 # pdf("figures/cell_refs/rayon_GSE171892_embryonic_spinal_cord_type_step2_UMAP.pdf", height = 20, width = 15)
+Idents(embryonic_sc) <- embryonic_sc$type_step2
 DimPlot(embryonic_sc,
-        group.by = "type_step2",
+        # # group.by = "type_step2",
         repel = TRUE,
         label.size = 4,
-        label=TRUE) +
+        label=FALSE) +
   theme(legend.position = 'bottom') +
   scale_color_manual(values=colors_vector)
 # dev.off()
@@ -902,18 +925,6 @@ DimPlot(embryonic_sc,
         repel = TRUE,
         label.size = 4,
         label=TRUE) +
-  theme(legend.position = 'bottom') +
-  scale_color_manual(values=colors_vector)
-# dev.off()
-```
-
-```{r fig.height=10, fig.width=10}
-# pdf("figures/cell_refs/rayon_GSE171892_embryonic_spinal_cord_sample_UMAP.pdf", height = 20, width = 15)
-DimPlot(embryonic_sc,
-        group.by = "orig_replicate",
-        repel = TRUE,
-        label.size = 4,
-        label=FALSE) +
   theme(legend.position = 'bottom') +
   scale_color_manual(values=colors_vector)
 # dev.off()
@@ -966,7 +977,7 @@ merged_obj <- merge(x = ref_spinal_cord,
                     y = ref_motor_cortex,
                     merge.data = FALSE)
                     
-```{r}
+```{r eval=FALSE}
 if(!exists("ref_motor_cortex")){
   ref_motor_cortex  <- readRDS("resources/cell_refs/allen_institute/M1/human_M1_normalized_seurat_object.RDS")
 }
@@ -1118,7 +1129,6 @@ Idents(merged_split_obj) <- merged_split_obj$orig.ident
 # saveRDS(merged_split_obj,"results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj.RDS")
 ```
 
-
 https://satijalab.org/seurat/articles/seurat5_integration.html
 
 * You will need to do  rejoin the layers before performing any differential expression analysis.
@@ -1138,6 +1148,12 @@ tissue <- merged_split_obj@meta.data %>%
 
 merged_split_obj$tissue <- tissue
 Idents(merged_split_obj) <- merged_split_obj$dataset
+
+merged_split_obj
+```
+
+```{r}
+Layers(merged_split_obj[["RNA"]])
 ```
 
 ```{r}
@@ -1164,36 +1180,42 @@ merged_split_obj@meta.data %>%
 merged_split_obj$top_level_annotation <- gsub("\\s{1,}","_",merged_split_obj$top_level_annotation)
 merged_split_obj$subtype_annotation <- gsub("\\s{1,}","_",merged_split_obj$subtype_annotation)
 
-```{r}
-all_defs <- allen_defs %>% 
-  select(subtype_annotation=cluster_label, 
-         description = def) %>% 
-  bind_rows(., yada_defs) %>% 
-  bind_rows(., select(rayon_defs, 
-                      subtype_annotation = neural_pop, 
-                      description)) %>% 
-  mutate(subtype_annotation = gsub("\\s{1,}","_",subtype_annotation))
-
-# allen_defs
-# yada_defs
-# rayon_defs
-all_defs
-```
+Microglia are brain‐resident macrophages forming the first active immune barrier in the central nervous system.
 
 ```{r}
-top_level_table_merged <- merged_split_obj@meta.data %>% 
-  group_by(dataset,class_label, top_level_annotation, subtype_annotation) %>% 
-  dplyr::count(name = "number_of_cells") %>% 
-  arrange(top_level_annotation) %>% 
-  left_join(.,all_defs, by="subtype_annotation") %>% 
-  mutate_at(vars(description), ~gsub('\\"', "", .))
+top_level_table_merged <- read.csv("results/integrated_ref/Allen_Rayon_Yadav_integrated_celltype_labels_table.csv")
+
+ 
+# all_defs <- allen_defs %>% 
+#   select(subtype_annotation=cluster_label, 
+#          description = def) %>% 
+#   bind_rows(., yada_defs) %>% 
+#   bind_rows(., select(rayon_defs, 
+#                       subtype_annotation = neural_pop, 
+#                       description)) %>% 
+#   mutate(subtype_annotation = gsub("\\s{1,}","_",subtype_annotation))
+
+# top_level_table_merged <- merged_split_obj@meta.data %>% 
+#   group_by(dataset,class_label, top_level_annotation, subtype_annotation) %>% 
+#   dplyr::count(name = "number_of_cells") %>% 
+#   arrange(top_level_annotation) %>% 
+#   left_join(.,all_defs, by="subtype_annotation") %>% 
+#   mutate_at(vars(description), ~gsub('\\"', "", .))
 
 top_level_table_merged
 # write.csv(top_level_table_merged, "results/integrated_ref/Allen_Rayon_Yadav_integrated_celltype_labels_table.csv", row.names = FALSE)
 ```
 
 ```{r}
-table(top_level_table_merged$class_label)
+annots_table_clean <- top_level_table_merged %>% 
+  mutate(class_label_standardized = case_when(
+    number_of_cells < 50 | grepl("NULL", top_level_annotation)  ~ "remove",
+    grepl("Astr|Endo|Blood|Epe|Ery|Hema|Lymph|Meso|Menin|Micro|Schwann|VLMC|OPC|Oligo|Pericytes", top_level_annotation) ~ "non-neuronal",
+    grepl("GABAergic|Glutamatergic", class_label) ~ tolower(class_label),
+    TRUE ~ ""
+  ))
+
+View(annots_table_clean)
 ```
 
 
