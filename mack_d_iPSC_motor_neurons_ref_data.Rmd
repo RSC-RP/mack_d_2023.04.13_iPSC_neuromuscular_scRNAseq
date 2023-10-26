@@ -1082,11 +1082,6 @@ merged_split_obj <- merged_split_obj %>%
 saveRDS(merged_split_obj,"results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_merged_split_normalized_seurat_obj.RDS")
 ```
 
-Note on theta from Harmony:
-
-https://www.nature.com/articles/s41592-019-0619-0
-As θ increases, the objective function favors more independence between batch f and cluster assignment. As θ approaches infinity, it will yield a degenerate solution. In this case, each cluster has an equivalent distribution across batch f.
-
 ```{r eval=FALSE}
 if(!exists("merged_split_obj")){
   merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_merged_split_normalized_seurat_obj.RDS")
@@ -1121,48 +1116,131 @@ sc_meta_to_add <- merged_split_obj@meta.data %>%
     )) %>% 
   select(barcode, age_clean, sex_clean, tissue, cause_of_death) %>% 
   set_rownames(.$barcode)
+
+#Add metadata to object
 merged_split_obj <- AddMetaData(merged_split_obj, metadata = sc_meta_to_add)
+```
+
+Note on theta from Harmony:
+
+https://www.nature.com/articles/s41592-019-0619-0
+As θ increases, the objective function favors more independence between batch f and cluster assignment. As θ approaches infinity, it will yield a degenerate solution. In this case, each cluster has an equivalent distribution across batch f.
+
+theta	
+Diversity clustering penalty parameter. Specify for each variable in group.by.vars. Default theta=2. theta=0 does not encourage any diversity. Larger values of theta result in more diverse clusters.
+
+lambda	
+Ridge regression penalty parameter. Specify for each variable in group.by.vars. Default lambda=1. Lambda must be strictly positive. Smaller values result in more aggressive correction.
+
+```{r}
+celltype_annots <- read.csv("references/Allen_Rayon_Yadav_integrated_celltype_labels_table_CCedit.csv") %>% 
+  select(dataset, matches("standard"), everything()) %>% 
+  mutate(standardized_top_level_annotation = gsub("\\s{1,}", "_", standardized_top_level_annotation)) %>% 
+  mutate_at(vars(standardized_top_level_annotation), ~case_when(
+    dataset == "yadav_2023" & top_level_annotation == "Neurons" ~ top_level_annotation,
+    TRUE ~ .))
+
+celltypes_to_retain <- celltype_annots %>% 
+  filter(standardized_top_level_annotation != "Remove", !grepl("Ery", top_level_annotation), !grepl("Null", subtype_annotation)) %>% 
+  mutate_at(vars(standardized_subtype_annotation), ~gsub("\\s{1,}","_", .) %>%
+              # gsub("(Neuron)s","\\1",.) %>% 
+              ifelse(grepl("Not|Rem", .), standardized_top_level_annotation, .))
+
+# head(celltypes_to_retain)
+dim(celltypes_to_retain)
+# table(celltypes_to_retain$standardized_top_level_annotation)
+# table(celltypes_to_retain$standardized_subtype_annotation)
+# sum(celltypes_to_retain$number_of_cells) #87,836
+# any(is.na(celltypes_to_retain$top_level_annotation)) #FALSE
+
+# table(celltypes_to_retain$top_level_annotation)
+table(celltypes_to_retain$standardized_top_level_annotation)
+```
+
+```{r}
+table(merged_split_obj$top_level_annotation %in% celltypes_to_retain$top_level_annotation)
+```
+
+```{r}
+# subset_celltypes_obj@meta.data %>% 
+#   group_by(top_level_annotation) %>% 
+#   dplyr::count() %>% 
+#   View()
+
+subset_meta_data %>% 
+  group_by(dataset,top_level_annotation, subtype_annotation) %>% 
+  dplyr::count() %>% 
+  View()
+```
+
+```{r eval=FALSE}
+params <- list("v1"=list(k_anchor = 5, theta = NULL, lambda = NULL, subset = FALSE),
+               "v2"=list(k_anchor = 50, theta = 4, lambda = NULL, subset = FALSE),
+               "v3"=list(k_anchor = 20, theta = 0.5, lambda = NULL, subset = FALSE),
+               "v4"=list(k_anchor = 20, theta = NULL, lambda = NULL, subset = TRUE))
 
 # Integration
-job::job({
-  Idents(merged_split_obj) <- merged_split_obj$donor
-  # k.anchor = 5 is default used here
-  merged_split_obj <- IntegrateLayers(merged_split_obj, 
-                                method = RPCAIntegration,
-                                orig.reduction = "pca",
-                                new.reduction = "integrated.rpca", 
-                                normalization.method = 'SCT', #why is this required?
-                                assay = "SCT",
-                                k.anchor = 20,
-                                verbose = TRUE)
-  # harmony groups are the 13 SCT models (1 per donor)
-  merged_split_obj <- IntegrateLayers(merged_split_obj, 
-                                method = HarmonyIntegration,
-                                orig.reduction = "pca",
-                                new.reduction = "harmony", 
-                                assay = "SCT",
-                                theta = 0.5,
-                                verbose = TRUE)
-  
-  # Run UMAP
-  merged_split_obj <- merged_split_obj %>% 
-    RunUMAP(
-                 reduction = "pca",
-                 dims = 1:50,
-                 reduction.name = "umap.unintegrated") %>% 
-    RunUMAP(
-                 reduction = "harmony",
-                 dims = 1:50,
-                 reduction.name = "umap.harmony") %>% 
-    RunUMAP(
-                reduction = "integrated.rpca",
-                 dims = 1:50,
-                 reduction.name = "umap.rpca")
-  
-  # save object
-  saveRDS(merged_split_obj,"results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj_v3.RDS")
-}, import = c("merged_split_obj"))
+integration_jobs <-  purrr::map(names(params)[4], function(param_set) {
+  input_params <- params[[param_set]]
+  print(c("Using params: ", input_params))
 
+  if(input_params[["subset"]]){
+    print("Subsetting the seurat object")
+    idx <- which(merged_split_obj$subtype_annotation %in% celltypes_to_retain$subtype_annotation)
+    subset_meta_data <- merged_split_obj@meta.data[idx,]
+    DefaultAssay(merged_split_obj) <- "RNA"
+    merged_split_obj <- subset(merged_split_obj, cells = rownames(subset_meta_data)) %>% 
+        # re-normalize the RNA assay on the subset of cells
+        SCTransform(method = "glmGamPoi",
+              vst.flavor = "v2", 
+              verbose = TRUE) %>% 
+        RunPCA(npcs = 50, verbose = TRUE)
+    print(dim(merged_split_obj))
+  }
+
+  # Background the processes
+  job::job({
+    Idents(merged_split_obj) <- merged_split_obj$donor
+    # k.anchor = 5 is default used here
+    merged_split_obj <- IntegrateLayers(merged_split_obj,
+                                  method = RPCAIntegration,
+                                  orig.reduction = "pca",
+                                  new.reduction = "integrated.rpca",
+                                  normalization.method = 'SCT', #why is this required?
+                                  assay = "SCT",
+                                  k.anchor = input_params[["k_anchor"]],
+                                  verbose = TRUE)
+    # harmony groups are the 13 SCT models (1 per donor)
+    # default theta = NULL
+    merged_split_obj <- IntegrateLayers(merged_split_obj,
+                                  method = HarmonyIntegration,
+                                  orig.reduction = "pca",
+                                  new.reduction = "harmony",
+                                  assay = "SCT",
+                                  theta = input_params[["theta"]],
+                                  lambda = input_params[["lambda"]],
+                                  verbose = TRUE)
+
+    # Run UMAP
+    merged_split_obj <- merged_split_obj %>%
+      RunUMAP(
+                   reduction = "pca",
+                   dims = 1:50,
+                   reduction.name = "umap.unintegrated") %>%
+      RunUMAP(
+                   reduction = "harmony",
+                   dims = 1:50,
+                   reduction.name = "umap.harmony") %>%
+      RunUMAP(
+                  reduction = "integrated.rpca",
+                   dims = 1:50,
+                   reduction.name = "umap.rpca")
+
+    # save object
+    saveRDS(merged_split_obj,
+            glue("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj_{param_set}.RDS"))
+  }, import = c("merged_split_obj", "input_params", "param_set"))
+})
 ```
 
 https://satijalab.org/seurat/articles/seurat5_integration.html
@@ -1456,7 +1534,19 @@ purrr::map(1:nrow(to_plot), function(x){
 })
 ```
 
-## Figures
+## SCANVI 
+
+When our dataset is fully labelled (perhaps in independent studies, or independent analysis pipelines), we can obtain an integration that better preserves biology using scANVI, which incorporates cell type annotation information.
+https://docs.scvi-tools.org/en/stable/tutorials/notebooks/scrna/harmonization.html
+
+all of our data is annotated. 
+This can lead to a more accurate integration result when using scANVI
+scANVI requires:
+  * the sample identifier for each cell (as in scVI)
+  * the cell type/state for each cell
+
+
+# Figures
 
 ### Integrated Layers
 

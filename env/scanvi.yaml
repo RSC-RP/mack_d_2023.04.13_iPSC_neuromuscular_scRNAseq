@@ -3,3 +3,5 @@ channels:
   - conda-forge
 dependencies:
   - scvi-tools
+  - pip:
+    - scvi-colab
