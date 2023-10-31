@@ -61,6 +61,76 @@ plan()
 # plan()
 options(future.globals.maxSize = 10000 * 1024^2)
 ```
+# Define Functions
+
+```{r}
+clean_standardize_annots <- function(seurat_obj){
+  
+  age_tissue_clean <- seurat_obj@meta.data %>% 
+    mutate(tissue_clean = case_when(
+    dataset == "Allen_M1" ~ "adult_motor_cortex",
+    dataset == "Rayon_2021" ~  paste0(gsub("human_|_rep[0-9]|spinalcord","", orig.ident), "_spinal_cord"),
+    dataset == "yadav_2023" ~ gsub("adult_Lumbar_spinal_cord_", "adult", tolower(tissue))), 
+    
+  age_clean = case_when(
+      donor == "H18.30.002" ~ "50_yrs",
+      donor == "H18.30.001" ~ "60_yrs",
+      TRUE ~ gsub("\\~", "", age_clean))) %>% 
+    select(age_clean, tissue, tissue_clean)
+  
+  seurat_obj$tissue <- age_tissue_clean$tissue_clean
+  seurat_obj$age_clean <- age_tissue_clean$age_clean
+
+
+  annots_table_clean <- seurat_obj@meta.data %>% 
+    mutate(class_label_standardized = case_when(
+      grepl("Astr|Oligo|Micro", top_level_annotation) ~ "glia",
+      grepl("OPC", top_level_annotation) ~ "glial_progenitor",
+      grepl("Endo|Blood|Epe|Ery|Hema|Lymph|Meso|Menin|Schwann|VLMC|Pericytes", top_level_annotation) ~ "non-neuronal",
+      grepl("GABAergic|Glutamatergic", class_label) ~ tolower(class_label),
+      grepl("Neuro|neuro", top_level_annotation) ~ "neuronal",
+      grepl("[Pp]rogenitor", top_level_annotation) ~ "neuronal_progenitor",
+      TRUE ~ ""), 
+      
+      top_level_standardized = case_when(
+        grepl("Blood|Ery|Hema", top_level_annotation) ~ "blood",
+        grepl("^Mesoderm", top_level_annotation) ~ "mesoderm",
+        
+        grepl("^Astr", top_level_annotation) ~ "astrocyte",
+        grepl("^Endo", top_level_annotation) ~ "endothelial",
+        grepl("Ependymal", top_level_annotation) ~ "epidymal",
+        grepl("Micro", top_level_annotation) ~ "microglia",
+  
+        grepl("Oligo", top_level_annotation) ~ "oligodendrocytes",
+        # grepl("N[Uu][Ll]", subtype_annotation) ~ "esc_neuron",
+        grepl("Neuro", top_level_annotation) & !grepl("Moto|^MN", subtype_annotation) ~ "neuron", 
+        # grepl("Neuro", top_level_annotation) & grepl("IEG", subtype_annotation) ~ "IEG_neuron",
+        # grepl("Neuro", top_level_annotation) & !grepl("Moto|^MN", subtype_annotation) ~ paste0("sc_",gsub("^.+(dorsal|ventral|mid).+", "\\1", description),"_neuron"),
+        grepl("Neuro", top_level_annotation) & grepl("Moto|^MN", subtype_annotation) ~ "motorneurons",
+        grepl("DRG_Progenitor", top_level_annotation) ~ "progenitor",
+        TRUE ~ tolower(top_level_annotation)
+      ), 
+      
+      subtype_standardized = case_when(
+        grepl("pMN", subtype_annotation) ~ "pMN",
+        grepl("Neuro", top_level_annotation) & !grepl("Moto|^MN", subtype_annotation) ~ gsub("-[0-9]{1,2}$","", subtype_annotation) %>% 
+                                                                                                  gsub(".+\\s(.+)$", "\\1", .) %>% gsub("\\/|-","_", .),
+        TRUE ~ top_level_standardized)) %>% 
+    select(matches("standardized"))
+  
+  # head(annots_table_clean)
+  dim(annots_table_clean)
+  
+  
+  # Update the metadata
+  if(!all(colnames(annots_table_clean) %in% colnames(seurat_obj@meta.data))){
+    seurat_obj <- AddMetaData(seurat_obj, annots_table_clean)
+  }
+  
+  return(seurat_obj)
+}
+```
+
 
 # Reference Data Set(s)
 
@@ -874,13 +944,14 @@ embryonic_sc$type_step2 <- ifelse(embryonic_sc$type_step2=="", "unknown", embryo
 embryonic_sc_meta %>% 
   group_by(type_step1) %>% 
   dplyr::count() %>% 
-  arrange(desc(n)) %>% 
+  arrange(desc(n)) 
   # write.csv(.,"resources/cell_refs/Rayon_2021/GSE171892_merged_postqc_normalized_seurat_cell_type_table.csv", row.names = FALSE)
 ```
 
 ```{r}
 embryonic_sc <- readRDS("resources/cell_refs/Rayon_2021/GSE171892_merged_postqc_normalized_seurat_obj.RDS")
 
+# update the umap params
 embryonic_sc <- embryonic_sc %>% 
     RunUMAP(reduction = "pca",
             dims = 1:30,
@@ -899,7 +970,18 @@ type_simplified <- embryonic_sc@meta.data %>%
 )) %>% 
   pull(type_simple)
 
+type_step2_simple <- embryonic_sc@meta.data  %>% 
+  mutate(type_step2_clean = case_when(
+    grepl("^$|Ery|Hema|Meso|Blood",type_step2) ~ type_simple, 
+    grepl("Peri",type_simple) ~ type_simple,
+    TRUE ~ type_step2)) %>% 
+  mutate(type_step2_clean = factor(type_step2_clean, levels = unique(sort(type_step2_clean)))) %>% 
+  pull(type_step2_clean) 
+
+
+# Add Metadata 
 embryonic_sc$type_simple <- type_simplified
+embryonic_sc$type_step2_simple <- type_step2_simple
 ```
 
 ```{r fig.height=10, fig.width=10}
@@ -917,12 +999,11 @@ DimPlot(embryonic_sc,
 
 ```{r fig.height=10, fig.width=10}
 # pdf("figures/cell_refs/rayon_GSE171892_embryonic_spinal_cord_type_step2_UMAP.pdf", height = 20, width = 15)
-Idents(embryonic_sc) <- embryonic_sc$type_step2
+Idents(embryonic_sc) <- embryonic_sc$type_step2_simple
 DimPlot(embryonic_sc,
-        # # group.by = "type_step2",
         repel = TRUE,
         label.size = 4,
-        label=FALSE) +
+        label=TRUE) +
   theme(legend.position = 'bottom') +
   scale_color_manual(values=colors_vector)
 # dev.off()
@@ -934,7 +1015,7 @@ DimPlot(embryonic_sc,
         group.by = "orig.ident",
         repel = TRUE,
         label.size = 4,
-        label=TRUE) +
+        label=FALSE) +
   theme(legend.position = 'bottom') +
   scale_color_manual(values=colors_vector)
 # dev.off()
@@ -1160,7 +1241,6 @@ dim(celltypes_to_retain)
 
 sum(celltypes_to_retain$number_of_cells) # 87,603
 table(celltypes_to_retain$standardized_top_level_annotation)
-table(merged_split_obj$top_level_annotation %in% celltypes_to_retain$top_level_annotation)
 ```
 
 ```{r eval=FALSE}
@@ -1251,130 +1331,15 @@ DefaultAssay(merged_split_obj)
 merged_split_obj
 ```
 
-### Merge and Clean Cell Annotations
-
-For AGE! <https://celltypes.brain-map.org/donors>
-- Donors not on there :/ 
-
-They were reported here:
-https://www.biorxiv.org/content/10.1101/2022.10.12.511898v1.supplementary-material
-Donor	Age	Sex	Dissection	Dissection abbreviation
-H18.30.001	60y	F	Cerebral cortex (Cx) - Precentral gyrus (PrCG) - Primary motor cortex - M1C	M1C
-H18.30.002	50y	M	Cerebral cortex (Cx) - Precentral gyrus (PrCG) - Primary motor cortex - M1C	M1C
-
-```{r}
-age_tissue_clean <- merged_split_obj@meta.data %>% 
-  mutate(tissue_clean = case_when(
-  dataset == "Allen_M1" ~ "adult_motor_cortex",
-  dataset == "Rayon_2021" ~  paste0(gsub("human_|_rep[0-9]|spinalcord","", orig.ident), "_spinal_cord"),
-  dataset == "yadav_2023" ~ gsub("adult_Lumbar_spinal_cord_", "adult", tolower(tissue))), 
-  
-  age_clean = case_when(
-    donor == "H18.30.002" ~ "50_yrs",
-    donor == "H18.30.001" ~ "60_yrs",
-    TRUE ~ gsub("\\~", "", age_clean))) %>% 
-  select(age_clean, tissue, tissue_clean)
-
-merged_split_obj$tissue <- age_tissue_clean$tissue_clean
-merged_split_obj$age_clean <- age_tissue_clean$age_clean
-
-table(merged_split_obj$age_clean)
-table(merged_split_obj$tissue)
-```
-```{r eval=FALSE}
-all_defs <- allen_defs %>%
-  select(subtype_annotation=cluster_label,
-         description = def) %>%
-  bind_rows(., yada_defs) %>%
-  bind_rows(., select(rayon_defs,
-                      subtype_annotation = neural_pop,
-                      description)) %>%
-  mutate(subtype_annotation = gsub("\\s{1,}","_",subtype_annotation))
-
-top_level_table_merged <- merged_split_obj@meta.data %>%
-  group_by(dataset,class_label, top_level_annotation, subtype_annotation) %>%
-  dplyr::count(name = "number_of_cells") %>%
-  arrange(top_level_annotation) %>%
-  left_join(.,all_defs, by="subtype_annotation") %>%
-  mutate_at(vars(description), ~gsub('\\"', "", .))
-
-# top_level_table_merged
-# write.csv(top_level_table_merged, "results/integrated_ref/Allen_Rayon_Yadav_integrated_celltype_labels_table.csv", row.names = FALSE)
-```
-
-We next assigned putative neurotransmitter status to each population,
-identifying 19 glutamatergic populations (defined by the expression of
-SLC17A6) and 14 GABA/glycinergic populations (defined by expression of
-GAD1, GAD2, PAX2, and SLC6A5).
-
-```{r}
-annots_table_clean <- merged_split_obj@meta.data %>% 
-  mutate(class_label_standardized = case_when(
-    grepl("Astr|Oligo|Micro", top_level_annotation) ~ "glia",
-    grepl("OPC", top_level_annotation) ~ "glial_progenitor",
-    grepl("Endo|Blood|Epe|Ery|Hema|Lymph|Meso|Menin|Schwann|VLMC|Pericytes", top_level_annotation) ~ "non-neuronal",
-    grepl("GABAergic|Glutamatergic", class_label) ~ tolower(class_label),
-    grepl("Neuro|neuro", top_level_annotation) ~ "neuronal",
-    grepl("[Pp]rogenitor", top_level_annotation) ~ "neuronal_progenitor",
-    TRUE ~ ""), 
-    
-    top_level_standardized = case_when(
-      grepl("Blood|Ery|Hema", top_level_annotation) ~ "blood",
-      grepl("^Mesoderm", top_level_annotation) ~ "mesoderm",
-      
-      grepl("^Astr", top_level_annotation) ~ "astrocyte",
-      grepl("^Endo", top_level_annotation) ~ "endothelial",
-      grepl("Ependymal", top_level_annotation) ~ "epidymal",
-      grepl("Micro", top_level_annotation) ~ "microglia",
-
-      grepl("Oligo", top_level_annotation) ~ "oligodendrocytes",
-      # grepl("N[Uu][Ll]", subtype_annotation) ~ "esc_neuron",
-      grepl("Neuro", top_level_annotation) & !grepl("Moto|^MN", subtype_annotation) ~ "neuron", 
-      # grepl("Neuro", top_level_annotation) & grepl("IEG", subtype_annotation) ~ "IEG_neuron",
-      # grepl("Neuro", top_level_annotation) & !grepl("Moto|^MN", subtype_annotation) ~ paste0("sc_",gsub("^.+(dorsal|ventral|mid).+", "\\1", description),"_neuron"),
-      grepl("Neuro", top_level_annotation) & grepl("Moto|^MN", subtype_annotation) ~ "motorneurons",
-      grepl("DRG_Progenitor", top_level_annotation) ~ "progenitor",
-      TRUE ~ tolower(top_level_annotation)
-    ), 
-    
-    subtype_standardized = case_when(
-      grepl("pMN", subtype_annotation) ~ "pMN",
-      grepl("Neuro", top_level_annotation) & !grepl("Moto|^MN", subtype_annotation) ~ gsub("-[0-9]{1,2}$","", subtype_annotation) %>% 
-                                                                                                gsub(".+\\s(.+)$", "\\1", .) %>% gsub("\\/|-","_", .),
-      TRUE ~ top_level_standardized)) %>% 
-  select(matches("standardized"))
-
-# head(annots_table_clean)
-dim(annots_table_clean)
-
-
-# Update the metadata
-if(!all(colnames(annots_table_clean) %in% colnames(merged_split_obj@meta.data))){
-  merged_split_obj <- AddMetaData(merged_split_obj, annots_table_clean)
-}
-```
-
-```{r}
-annots_table_clean %>% 
-  group_by(top_level_standardized) %>% 
-  dplyr::count() %>% 
-  View()
-
-annots_table_clean %>% 
-  group_by(subtype_standardized) %>% 
-  dplyr::count() %>% 
-  View()
-```
-
-
 ### Sketch Integration
 
-mportantly, the estimation of leverage scores only **requires data
-normalization**, can be computed efficiently for sparse datasets, and
-does not require any intensive computation or dimensional reduction
-steps.
+importantly, the estimation of leverage scores only **requires data normalization**, can be computed efficiently for sparse datasets, and does not require any intensive computation or dimensional reduction steps.
 
-```{r}
+```{r eval=FALSE}
+if(!exists("merged_split_obj")){
+  merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_merged_split_normalized_seurat_obj.RDS")
+}
+
 DefaultAssay(merged_split_obj) <- "RNA"
 merged_sketch_obj <- DietSeurat(merged_split_obj, assays = "RNA")
 merged_sketch_obj <- NormalizeData(merged_sketch_obj) #log-normalize for this proceedure. Does not appear to support SCT. 
@@ -1393,7 +1358,7 @@ Diversity clustering penalty parameter. Specify for each variable in
 vars_use Default theta=2. theta=0 does not encourage any diversity.
 Larger values of theta result in more diverse clusters.
 
-```{r}
+```{r eval=FALSE}
 DefaultAssay(merged_sketch_obj) <- "sketch"
 
 merged_sketch_obj <- merged_sketch_obj %>% 
@@ -1507,6 +1472,61 @@ purrr::map(1:nrow(to_plot), function(x){
 })
 ```
 
+### Merge and Clean Cell Annotations
+
+For AGE! <https://celltypes.brain-map.org/donors>
+- Donors not on there :/ 
+
+They were reported here:
+https://www.biorxiv.org/content/10.1101/2022.10.12.511898v1.supplementary-material
+Donor	Age	Sex	Dissection	Dissection abbreviation
+H18.30.001	60y	F	Cerebral cortex (Cx) - Precentral gyrus (PrCG) - Primary motor cortex - M1C	M1C
+H18.30.002	50y	M	Cerebral cortex (Cx) - Precentral gyrus (PrCG) - Primary motor cortex - M1C	M1C
+
+```{r eval=FALSE}
+all_defs <- allen_defs %>%
+  select(subtype_annotation=cluster_label,
+         description = def) %>%
+  bind_rows(., yada_defs) %>%
+  bind_rows(., select(rayon_defs,
+                      subtype_annotation = neural_pop,
+                      description)) %>%
+  mutate(subtype_annotation = gsub("\\s{1,}","_",subtype_annotation))
+
+top_level_table_merged <- merged_split_obj@meta.data %>%
+  group_by(dataset,class_label, top_level_annotation, subtype_annotation) %>%
+  dplyr::count(name = "number_of_cells") %>%
+  arrange(top_level_annotation) %>%
+  left_join(.,all_defs, by="subtype_annotation") %>%
+  mutate_at(vars(description), ~gsub('\\"', "", .))
+
+# top_level_table_merged
+# write.csv(top_level_table_merged, "results/integrated_ref/Allen_Rayon_Yadav_integrated_celltype_labels_table.csv", row.names = FALSE)
+```
+
+We next assigned putative neurotransmitter status to each population,
+identifying 19 glutamatergic populations (defined by the expression of
+SLC17A6) and 14 GABA/glycinergic populations (defined by expression of
+GAD1, GAD2, PAX2, and SLC6A5).
+
+```{r}
+merged_split_obj <- clean_standardize_annots(merged_split_obj)
+
+merged_split_obj
+```
+
+```{r}
+merged_split_obj@meta.data %>% 
+  group_by(top_level_standardized) %>% 
+  dplyr::count() %>% 
+  View()
+
+merged_split_obj@meta.data %>% 
+  group_by(subtype_standardized) %>% 
+  dplyr::count() %>% 
+  View()
+```
+
 ## SCANVI 
 
 When our dataset is fully labelled (perhaps in independent studies, or independent analysis pipelines), we can obtain an integration that better preserves biology using scANVI, which incorporates cell type annotation information.
@@ -1518,6 +1538,139 @@ scANVI requires:
   * the sample identifier for each cell (as in scVI)
   * the cell type/state for each cell
 
+```{bash eval=FALSE}
+mamba env create -f env/scanvi.yaml
+```
+
+```{r}
+library(sceasy)
+library(anndata)
+reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "opt/mambaforge/envs/scanvi"))
+py_config()
+
+sc <- import("scanpy", convert = FALSE)
+scvi <- import("scvi", convert = FALSE)
+```
+
+https://docs.scvi-tools.org/en/stable/tutorials/notebooks/quick_start/api_overview.html
+
+* Unless otherwise specified, scvi-tools models require the raw counts (not log library size normalized)
+* perform feature selection, to reduce the number of features (genes in this case) used as input to the scvi-tools model
+* we recommend anywhere from 1,000 to 10,000 HVGs, but it will be context-dependent.
+
+```{r}
+if(!exists("merged_split_obj")){
+  # start with the subset dataset
+  merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj_v4.RDS")
+}
+
+# Note: scvi-tools requires raw gene expression
+DefaultAssay(merged_split_obj) <- "RNA"
+merged_scanvi_obj <- DietSeurat(merged_split_obj, assays = "RNA")
+merged_scanvi_obj <- clean_standardize_annots(merged_scanvi_obj)
+
+# re-join layers since convertFormat expects a Seurat v3 object, not v5
+merged_scanvi_obj <- JoinLayers(merged_scanvi_obj)
+merged_scanvi_obj[["RNA"]] <- as(object = merged_scanvi_obj[["RNA"]], Class = "Assay")
+
+merged_scanvi_obj <- NormalizeData(merged_scanvi_obj) #log-normalize for this proceedure. Does not appear to support SCT. 
+merged_scanvi_obj <- FindVariableFeatures(merged_scanvi_obj)
+
+#Subset for highly variable genes only
+# merged_scanvi_obj <- merged_scanvi_obj[merged_scanvi_obj@assays$RNA@var.features,]
+
+merged_scanvi_obj
+table(merged_scanvi_obj$subtype_standardized)
+```
+
+AnnData format usually contains the following slots:
+
+- X contains the expression matrix.
+- obsm contains the embeddings data.
+- obs contains the cell metadata.
+- var contains the gene metadata.
+
+```{r}
+# convert to anndata object
+adata <- convertFormat(merged_scanvi_obj, 
+                       from="seurat", 
+                       to="anndata",
+                       main_layer="counts", 
+                       drop_single_values=FALSE)
+print(adata)
+
+# preserve counts
+adata$X$shape  #87603, 34972
+adata$layers["counts"] = adata$X$copy()
+print(adata)
+
+adata$var #34,972 rows x 6 columns
+class(adata$var)
+adata$var["vst.variable"]$value_counts()
+
+sc$pp$highly_variable_genes(
+    adata,
+    n_top_genes=2000,
+    subset=TRUE,
+    layer="counts",
+    flavor="seurat_v3",
+    batch_key="donor",
+)
+
+#ValueError: cannot specify integer `bins` when input data contains infinity
+# adata_subset <- sc$pp$highly_variable_genes(adata = adata, layer = "counts", subset = TRUE)
+# adata_subset
+```
+
+```{r}
+class(adata)
+class(py_to_r(adata))
+class(r_to_py(adata))
+
+adata$layers # no layers
+adata$obs$head()
+```
+
+```{r}
+scvi$settings$seed <- 20231030
+
+# run setup_anndata, use column stim for batch
+scvi$model$SCVI$setup_anndata(adata, layer="counts", batch_key = 'donor')
+
+# create the model
+model = scvi$model$SCVI(adata,  n_layers=2, n_latent=30, gene_likelihood="nb")
+
+# train the model
+model$train()
+
+# to specify the number of epochs when training:
+# model$train(max_epochs = as.integer(400))
+```
+
+```{r}
+# scvi$model$SCANVI$
+```
+
+```{r}
+# get the latent represenation
+latent = model$get_latent_representation()
+
+# put it back in our original Seurat object
+latent <- as.matrix(latent)
+rownames(latent) = colnames(ifnb)
+ifnb[["scvi"]] <- CreateDimReducObject(embeddings = latent, key = "scvi_", assay = DefaultAssay(ifnb))
+```
+
+```{r}
+library(cowplot)
+# for jupyter notebook
+options(repr.plot.width=10, repr.plot.height=8)
+
+ifnb <- RunUMAP(ifnb, dims = 1:10, reduction = "scvi", n.components = 2)
+p1 <- DimPlot(ifnb, reduction = "umap", group.by = "stim", pt.size=2)
+plot_grid(p1)
+```
+
 
 # Figures
 
@@ -1527,7 +1680,7 @@ TO DO: - plot expression of the genes in the Yadav dorsal and ventral
 clusters - plot SST cell-type expression - Add Allen institute donor age
 
 ```{r}
-table(merged_split_obj$donor, merged_split_obj$age_clean)
+merged_split_obj
 ```
 
 ```{r}
@@ -1568,7 +1721,6 @@ bc <- merged_split_obj@meta.data %>%
   pull(barcode)
 
 neuron_subtypes <-  subset(merged_split_obj, cells = bc) 
-# neuron_subtypes$subtype_annotation <- ifelse( grepl("Sst",neuron_subtypes$top_level_annotation), neuron_subtypes$top_level_annotation, gsub("\\-[0-9]{1,2}$", "", neuron_subtypes$subtype_annotation))
 
 DimPlot(neuron_subtypes,
         group.by = "top_level_standardized",
@@ -1591,8 +1743,26 @@ DimPlot(neuron_subtypes,
     theme(legend.position = "bottom")
 ```
 
-```{r}
-table(neuron_subtypes$subtype_standardized, neuron_subtypes$top_level_standardized)
+```{r fig.height=10, fig.width=10}
+DimPlot(neuron_subtypes,
+        group.by = "subtype_standardized",
+        reduction = "umap.harmony",
+        # split.by = "dataset",
+        label.size = 2,
+        label = TRUE,
+        repel = TRUE) +
+    scale_color_manual(values = colors_vector) +
+    theme(legend.position = "bottom")
+
+DimPlot(neuron_subtypes,
+        group.by = "subtype_standardized",
+        reduction = "umap.harmony",
+        split.by = "dataset",
+        label.size = 2,
+        label = TRUE,
+        repel = TRUE) +
+    scale_color_manual(values = colors_vector) +
+    theme(legend.position = "bottom")
 ```
 
 ```{r fig.height=7, fig.width=20}

@@ -2,6 +2,9 @@ name: scanvi
 channels:
   - conda-forge
 dependencies:
-  - scvi-tools
+  - python>=3.9
+  - scvi-tools==1.0.4
+  - scanpy==1.9.5
+  - pip
   - pip:
-    - scvi-colab
+    - scikit-misc==0.3.0
