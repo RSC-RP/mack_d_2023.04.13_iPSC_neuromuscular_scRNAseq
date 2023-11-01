@@ -63,6 +63,7 @@ options(future.globals.maxSize = 10000 * 1024^2)
 ```
 # Define Functions
 
+
 ```{r}
 clean_standardize_annots <- function(seurat_obj){
   
@@ -131,6 +132,49 @@ clean_standardize_annots <- function(seurat_obj){
 }
 ```
 
+```{r}
+library(plotly)
+make_3D_umap <- function(sobj_3d, dims = 1:30, idents_column, selected_colors=NULL){
+    "
+    idents_column is for labeling. ex) 'RNA_snn_res.0.7'
+    "
+    # 3D UMAP
+    plot.data <- FetchData(object = sobj_3d, vars = c("umap_1", "umap_2", "umap_3", idents_column))
+    plot.data$label <- paste(rownames(plot.data))
+    
+    if(is.null(selected_colors)){
+      selected_colors <- c("lightseagreen", "gray50",  "darkgreen", "red4", "red", "turquoise4","black","yellow4","royalblue1","lightcyan3",
+                 "peachpuff3","lightskyblue","gray20","orange2","royalblue4","yellow3","gray80","darkorchid1","lawngreen","plum2", 
+                 "darkorange4","darkmagenta","mediumorchid1","lightslateblue","midnightblue", "tan2") #26
+    }
+
+    
+    fig <- plot_ly(data = plot.data, 
+        x = ~umap_1, y = ~umap_2, z = ~umap_3, 
+        color = ~get(idents_column), 
+        colors = selected_colors, 
+        type = "scatter3d", 
+        mode = "markers", 
+        marker = list(size = 3, width=2), # controls size of points
+        text=~label, # This is that extra column we made earlier for which we will use for cell ID
+        hoverinfo="text") #When you visualize your plotly object, hovering your mouse pointer over a point shows cell names
+    
+    
+    # xaxis
+    axx <- list( nticks = 4, range = c(-10,10)) #select range of xaxis
+ 
+    # yaxis
+    axy <- list(nticks = 4,  range = c(-10,10)) 
+    
+    #zaxis
+    axz <- list(nticks = 4, range = c(-10,10)) 
+    
+    fig <- fig %>% layout(scene = list(xaxis=axx,yaxis=axy,zaxis=axz))
+    fig_cube <- fig %>% layout(scene = list(xaxis=axx,yaxis=axy,zaxis=axz, aspectmode='cube')) # To maintain cubic aspect
+    return(fig)
+}
+```
+
 
 # Reference Data Set(s)
 
@@ -186,6 +230,15 @@ done
 cd resources
 git clone https://github.com/briscoelab/human_single_cell
 ```
+
+# Background 
+
+The pMN cell domain gives rise to:
+(1) 100s of genetically distinct groups of cholinergic alpha motor neurons clustered into motor pools that innervate specific skeletal muscles; 
+(2) gamma motor neurons that innervate intrafusal fibers of specific skeletal muscles for proprioception; 
+(3) the predominantly thoracic (T1–12, and to L1 and L2 in some species) cholinergic preganglionic sympathetic neurons;
+(4) the cholinergic parasympathetic motor neurons in the sacral (S2–4) cord; and
+(5) oligodendrocytes found throughout the spinal cord
 
 # Genome Refs
 
@@ -342,6 +395,21 @@ human_entries <- data.frame(name = allen_ontology$name,
 ```
 
 ```{r}
+blum_gamma_mn_degs <- openxlsx::read.xlsx("references/blum_mouse_spinal_cord/41593_2020_795_MOESM3_ESM.xlsx",sheet = "e", startRow = 2) %>% 
+  arrange(desc(avg_logFC)) %>% 
+  mutate(p_val_adj = as.numeric(p_val_adj)) %>% 
+  filter(p_val_adj < 0.001)
+
+
+blum_alpha_mn_degs <- openxlsx::read.xlsx("references/blum_mouse_spinal_cord/41593_2020_795_MOESM3_ESM.xlsx",sheet = "f", startRow = 2) %>% 
+  arrange(desc(avg_logFC)) %>% 
+  filter(p_val_adj < 0.001)
+
+blum_gamma_mn_degs #213
+blum_alpha_mn_degs #229
+```
+
+```{r}
 colors_vector <- c(RColorBrewer::brewer.pal(12, "Paired"), 
             "blue1", "darkslategray3", "burlywood3", "#984EA3",
             "seagreen1", "yellow2", "orchid", "darkblue", 
@@ -390,6 +458,12 @@ robot convert --input pcl.owl --output pcl.obo --check false
 ```
 
 Code \* <https://github.com/AllenInstitute/BICCN_M1_Evo>
+
+Ages for Allen M1 were reported here:
+https://www.biorxiv.org/content/10.1101/2022.10.12.511898v1.supplementary-material
+Donor	Age	Sex	Dissection	Dissection abbreviation
+H18.30.001	60y	F	Cerebral cortex (Cx) - Precentral gyrus (PrCG) - Primary motor cortex - M1C	M1C
+H18.30.002	50y	M	Cerebral cortex (Cx) - Precentral gyrus (PrCG) - Primary motor cortex - M1C	M1C
 
 ```{r}
 mc_meta <- read.csv("resources/cell_refs/allen_institute/M1/metadata.csv")
@@ -1250,7 +1324,7 @@ params <- list("v1"=list(k_anchor = 5, theta = NULL, lambda = NULL, subset = FAL
                "v4"=list(k_anchor = 20, theta = NULL, lambda = NULL, subset = TRUE))
 
 # Integration
-integration_jobs <-  purrr::map(names(params)[c(1,4)], function(param_set) {
+integration_jobs <-  purrr::map(names(params)[c(4)], function(param_set) {
   input_params <- params[[param_set]]
   print(c("Using params: ", input_params))
 
@@ -1269,8 +1343,8 @@ integration_jobs <-  purrr::map(names(params)[c(1,4)], function(param_set) {
   }
 
   # Background the processes
-  # job::job({
-  #   Idents(merged_split_obj) <- merged_split_obj$donor
+  job::job({
+    Idents(merged_split_obj) <- merged_split_obj$donor
     # k.anchor = 5 is default used here
     merged_split_obj <- IntegrateLayers(merged_split_obj,
                                   method = RPCAIntegration,
@@ -1293,15 +1367,15 @@ integration_jobs <-  purrr::map(names(params)[c(1,4)], function(param_set) {
 
     # Run UMAP
     merged_split_obj <- merged_split_obj %>%
-      RunUMAP(
+      RunUMAP(n.components = 3L,
                    reduction = "pca",
                    dims = 1:50,
                    reduction.name = "umap.unintegrated") %>%
-      RunUMAP(
+      RunUMAP(n.components = 3L,
                    reduction = "harmony",
                    dims = 1:50,
                    reduction.name = "umap.harmony") %>%
-      RunUMAP(
+      RunUMAP(n.components = 3L,
                   reduction = "integrated.rpca",
                    dims = 1:50,
                    reduction.name = "umap.rpca")
@@ -1310,11 +1384,12 @@ integration_jobs <-  purrr::map(names(params)[c(1,4)], function(param_set) {
     saveRDS(merged_split_obj,
             glue("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj_{param_set}.RDS"))
     rm(merged_split_obj)
+    gc()
     input_params
     
-  # }, import = c("merged_split_obj", "input_params", "param_set"))
+  }, import = c("merged_split_obj", "input_params", "param_set"))
 })
-rm(merged_split_obj)
+# rm(merged_split_obj)
 ```
 
 https://satijalab.org/seurat/articles/seurat5_integration.html
@@ -1322,14 +1397,6 @@ https://satijalab.org/seurat/articles/seurat5_integration.html
     differential expression analysis.
 -   However, you can always resplit the layers in case you would like to
     reperform integrative analysis.
-
-```{r}
-merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj_v4.RDS")
-
-Idents(merged_split_obj) <- merged_split_obj$dataset
-DefaultAssay(merged_split_obj)
-merged_split_obj
-```
 
 ### Sketch Integration
 
@@ -1472,61 +1539,6 @@ purrr::map(1:nrow(to_plot), function(x){
 })
 ```
 
-### Merge and Clean Cell Annotations
-
-For AGE! <https://celltypes.brain-map.org/donors>
-- Donors not on there :/ 
-
-They were reported here:
-https://www.biorxiv.org/content/10.1101/2022.10.12.511898v1.supplementary-material
-Donor	Age	Sex	Dissection	Dissection abbreviation
-H18.30.001	60y	F	Cerebral cortex (Cx) - Precentral gyrus (PrCG) - Primary motor cortex - M1C	M1C
-H18.30.002	50y	M	Cerebral cortex (Cx) - Precentral gyrus (PrCG) - Primary motor cortex - M1C	M1C
-
-```{r eval=FALSE}
-all_defs <- allen_defs %>%
-  select(subtype_annotation=cluster_label,
-         description = def) %>%
-  bind_rows(., yada_defs) %>%
-  bind_rows(., select(rayon_defs,
-                      subtype_annotation = neural_pop,
-                      description)) %>%
-  mutate(subtype_annotation = gsub("\\s{1,}","_",subtype_annotation))
-
-top_level_table_merged <- merged_split_obj@meta.data %>%
-  group_by(dataset,class_label, top_level_annotation, subtype_annotation) %>%
-  dplyr::count(name = "number_of_cells") %>%
-  arrange(top_level_annotation) %>%
-  left_join(.,all_defs, by="subtype_annotation") %>%
-  mutate_at(vars(description), ~gsub('\\"', "", .))
-
-# top_level_table_merged
-# write.csv(top_level_table_merged, "results/integrated_ref/Allen_Rayon_Yadav_integrated_celltype_labels_table.csv", row.names = FALSE)
-```
-
-We next assigned putative neurotransmitter status to each population,
-identifying 19 glutamatergic populations (defined by the expression of
-SLC17A6) and 14 GABA/glycinergic populations (defined by expression of
-GAD1, GAD2, PAX2, and SLC6A5).
-
-```{r}
-merged_split_obj <- clean_standardize_annots(merged_split_obj)
-
-merged_split_obj
-```
-
-```{r}
-merged_split_obj@meta.data %>% 
-  group_by(top_level_standardized) %>% 
-  dplyr::count() %>% 
-  View()
-
-merged_split_obj@meta.data %>% 
-  group_by(subtype_standardized) %>% 
-  dplyr::count() %>% 
-  View()
-```
-
 ## SCANVI 
 
 When our dataset is fully labelled (perhaps in independent studies, or independent analysis pipelines), we can obtain an integration that better preserves biology using scANVI, which incorporates cell type annotation information.
@@ -1558,6 +1570,7 @@ https://docs.scvi-tools.org/en/stable/tutorials/notebooks/quick_start/api_overvi
 * perform feature selection, to reduce the number of features (genes in this case) used as input to the scvi-tools model
 * we recommend anywhere from 1,000 to 10,000 HVGs, but it will be context-dependent.
 
+
 ```{r}
 if(!exists("merged_split_obj")){
   # start with the subset dataset
@@ -1572,8 +1585,8 @@ merged_scanvi_obj <- clean_standardize_annots(merged_scanvi_obj)
 # re-join layers since convertFormat expects a Seurat v3 object, not v5
 merged_scanvi_obj <- JoinLayers(merged_scanvi_obj)
 merged_scanvi_obj[["RNA"]] <- as(object = merged_scanvi_obj[["RNA"]], Class = "Assay")
-
-merged_scanvi_obj <- NormalizeData(merged_scanvi_obj) #log-normalize for this proceedure. Does not appear to support SCT. 
+# log-normalize for finding variable genes 
+merged_scanvi_obj <- NormalizeData(merged_scanvi_obj)  
 merged_scanvi_obj <- FindVariableFeatures(merged_scanvi_obj)
 
 #Subset for highly variable genes only
@@ -1581,6 +1594,15 @@ merged_scanvi_obj <- FindVariableFeatures(merged_scanvi_obj)
 
 merged_scanvi_obj
 table(merged_scanvi_obj$subtype_standardized)
+```
+```{r}
+cell_type_table <- merged_scanvi_obj@meta.data %>% 
+  group_by(dataset, top_level_standardized) %>% 
+  dplyr::count() %>% 
+  pivot_wider(names_from = dataset, values_from = n) %>% 
+  mutate(across(Allen_M1:yadav_2023, ~ifelse(is.na(.), 0,.)))
+
+# write.csv(cell_type_table, "results/integrated_ref/Allen_Rayon_Yadav_integrated_standardized_celltype_labels_table.csv", row.names = FALSE)
 ```
 
 AnnData format usually contains the following slots:
@@ -1671,16 +1693,95 @@ p1 <- DimPlot(ifnb, reduction = "umap", group.by = "stim", pt.size=2)
 plot_grid(p1)
 ```
 
+# Merge and Clean Cell Annotations
+
+```{r}
+merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj_v4.RDS")
+
+Idents(merged_split_obj) <- merged_split_obj$dataset
+DefaultAssay(merged_split_obj)
+merged_split_obj
+```
+
+```{r eval=FALSE}
+all_defs <- allen_defs %>%
+  select(subtype_annotation=cluster_label,
+         description = def) %>%
+  bind_rows(., yada_defs) %>%
+  bind_rows(., select(rayon_defs,
+                      subtype_annotation = neural_pop,
+                      description)) %>%
+  mutate(subtype_annotation = gsub("\\s{1,}","_",subtype_annotation))
+
+top_level_table_merged <- merged_split_obj@meta.data %>%
+  group_by(dataset,class_label, top_level_annotation, subtype_annotation) %>%
+  dplyr::count(name = "number_of_cells") %>%
+  arrange(top_level_annotation) %>%
+  left_join(.,all_defs, by="subtype_annotation") %>%
+  mutate_at(vars(description), ~gsub('\\"', "", .))
+
+# top_level_table_merged
+# write.csv(top_level_table_merged, "results/integrated_ref/Allen_Rayon_Yadav_integrated_celltype_labels_table.csv", row.names = FALSE)
+```
+
+We next assigned putative neurotransmitter status to each population,
+identifying 19 glutamatergic populations (defined by the expression of
+SLC17A6) and 14 GABA/glycinergic populations (defined by expression of
+GAD1, GAD2, PAX2, and SLC6A5).
+
+```{r}
+merged_split_obj <- clean_standardize_annots(merged_split_obj)
+
+merged_split_obj
+```
+
+```{r}
+merged_split_obj@meta.data %>% 
+  group_by(dataset, top_level_standardized) %>% 
+  dplyr::count()
+
+merged_split_obj@meta.data %>% 
+  group_by(subtype_standardized) %>% 
+  dplyr::count() %>% 
+  View()
+```
+
+# Differential Expression
+
+```{r}
+# Found 13 SCT models. Recorrecting SCT counts using minimum median counts: 2842
+merged_split_obj <- PrepSCTFindMarkers(merged_split_obj)
+```
+
+```{r}
+Idents(merged_split_obj) <- merged_split_obj$subtype_standardized
+marker_genes <- FindAllMarkers(merged_split_obj,
+                               test.use = "negbinom", 
+                               min.pct = 0.2,
+                               return.thresh = 0.001,
+                               min.cells.feature = 40)
+```
 
 # Figures
 
 ### Integrated Layers
+
+```{r}
+cell_type_table <- merged_split_obj@meta.data %>% 
+  group_by(dataset, subtype_standardized) %>% 
+  dplyr::count() %>% 
+  pivot_wider(names_from = dataset, values_from = n) %>% 
+  mutate(across(Allen_M1:yadav_2023, ~ifelse(is.na(.), 0,.)))
+
+View(cell_type_table)
+```
 
 TO DO: - plot expression of the genes in the Yadav dorsal and ventral
 clusters - plot SST cell-type expression - Add Allen institute donor age
 
 ```{r}
 merged_split_obj
+Idents(merged_split_obj) %>% head()
 ```
 
 ```{r}
@@ -1712,6 +1813,55 @@ purrr::map(1:nrow(to_plot), function(x){
   dev.off()
 })
 ```
+
+
+```{r}
+table(toupper(blum_alpha_mn_degs$X1) %in% rownames(merged_split_obj))
+table(toupper(blum_gamma_mn_degs$X1) %in% rownames(merged_split_obj))
+```
+
+```{r}
+Idents(merged_split_obj) <- merged_split_obj$top_level_standardized
+alpha <- intersect(toupper(blum_alpha_mn_degs$X1), rownames(merged_split_obj))
+gamma <-  intersect(toupper(blum_gamma_mn_degs$X1), rownames(merged_split_obj))
+
+merged_split_obj <- ScaleData(merged_split_obj, features = gamma)
+# Single cell heatmap of feature expression
+pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/gamma_motorneurons_marker_degs.pdf", height = 25, width = 15)
+DoHeatmap(subset(merged_split_obj, downsample = 1000),
+          assay = "SCT",
+          features = gamma,
+          size = 3)
+dev.off()
+
+pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/alpha_motorneurons_marker_degs.pdf", height = 25, width = 15)
+merged_split_obj <- ScaleData(merged_split_obj, features = alpha)
+DoHeatmap(subset(merged_split_obj, downsample = 1000), 
+          assay = "SCT",
+          features = alpha,
+          size = 3)
+dev.off()
+```
+
+```{r fig.height=15, fig.width=15,message=FALSE, warning=FALSE}
+Idents(merged_split_obj) <- merged_split_obj$subtype_standardized
+
+purrr::map(names(marker_genes_chun_list), function(x){
+    FeaturePlot(merged_split_obj,
+            features = marker_genes_chun_list[[x]],
+            reduction = "umap.harmony",
+            label.size = 2,
+            label = TRUE,
+            repel = TRUE) +
+    theme(legend.position = "bottom") +
+    patchwork::plot_annotation(title = x)
+})
+```
+
+
+
+
+
 
 ## Neuronal Subtypes
 
@@ -1789,25 +1939,19 @@ FeaturePlot(neuron_subtypes,
 
 ## Motor Neurons and subsets
 
+
 ```{r}
-types_across_ds <- unique(c(grep("OPC|Astr|Oligo|Endo", top_level_table_merged$top_level_annotation, value=TRUE, ignore.case = TRUE),
-                          grep("MN|pMN|Moto", top_level_table_merged$subtype_annotation, value=TRUE, ignore.case = TRUE)))
+Idents(merged_split_obj) <- merged_split_obj$subtype_standardized
 
-cellids <- merged_split_obj@meta.data %>% 
-  filter(top_level_annotation %in% types_across_ds | subtype_annotation %in% types_across_ds) %>% 
-  pull(barcode)
+bc <- merged_split_obj@meta.data %>% 
+  filter(grepl("motor|pMN|astro|oligo|opc", subtype_standardized)) %>% 
+  rownames(.)
 
-subset_common_types <- subset(merged_split_obj, cells = cellids)
-subset_common_types$celltypes <- subset_common_types@meta.data %>% 
-  mutate(celltypes = case_when(
-    grepl("MN|pMN|Moto", subtype_annotation, ignore.case = TRUE) ~ subtype_annotation,
-    TRUE ~ top_level_annotation
-  )) %>% 
-  pull(celltypes)
-
-Idents(subset_common_types) <- subset_common_types$celltypes
-Idents(merged_split_obj) <- merged_split_obj$top_level_annotation
+subset_common_types <- subset(merged_split_obj, cells = bc)
+Idents(subset_common_types) <- subset_common_types$subtype_standardized
+table(Idents(subset_common_types))
 ```
+
 
 ```{r fig.height=10, fig.width=10}
 # pdf("figures/cell_refs/embryonic_adult_spinal_cord_motor_cortex_integrated_harmony_subset_UMAP.pdf", height = 15, width = 11)
@@ -1832,17 +1976,78 @@ DimPlot(subset_common_types,
 # dev.off()
 ```
 
+```{r}
+alpha <- blum_alpha_mn_degs %>% 
+  arrange(cluster) %>% 
+  mutate(gene_name = toupper(X1)) %>% 
+  filter(gene_name %in% rownames(merged_split_obj@assays$SCT))
+
+
+gamma <-  blum_gamma_mn_degs %>% 
+  arrange(cluster) %>% 
+  mutate(gene_name = toupper(X1)) %>% 
+  filter(gene_name %in% rownames(merged_split_obj@assays$SCT))
+```
+
+```{r fig.height=15, fig.width=15, message=FALSE, warning =FALSE}
+purrr::map(unique(alpha$cluster), function(clust){
+  
+  genes <- alpha %>% 
+    filter(cluster == clust) %>% 
+    pull(gene_name)
+  n <- length(genes)
+  genes <- genes[1:(min(n,10))]
+  
+  png(glue("figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_umap.harmony_blum_alpha_{clust}_UMAP.png"),
+      height = 12, width = 12, res = 100, units = "in")
+  print(FeaturePlot(subset_common_types,
+            features = genes,
+            reduction = "umap.harmony",
+            label.size = 2,
+            label = TRUE,
+            repel = TRUE) +
+    theme(legend.position = "bottom") +
+    patchwork::plot_annotation(title = paste0("Cluster", clust, " alpha MN")))
+  dev.off()
+})
+
+
+purrr::map(unique(gamma$cluster), function(clust){
+  
+  genes <- gamma %>% 
+    filter(cluster == clust) %>% 
+    pull(gene_name) 
+  n <- length(genes)
+  genes <- genes[1:(min(n,10))]
+  
+  png(glue("figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_umap.harmony_blum_gamma_{clust}_UMAP.png"),
+      height = 12, width = 12, res = 100, units = "in")
+  print(FeaturePlot(subset_common_types,
+            features = genes,
+            reduction = "umap.harmony",
+            label.size = 2,
+            label = TRUE,
+            repel = TRUE) +
+    theme(legend.position = "bottom") +
+    patchwork::plot_annotation(title = paste0("Cluster", clust, " gamma MN")))
+  dev.off()
+})
+```
+
 ## Marker Gene Expression
 
 ```{r}
-# sel_markers <- names(rayon_marker_gene_list) %>%  grep("pMN|MN|rayon_Oligodendrocyte_NA", ., value = T)
-# sel_markers
+sel_markers <- names(rayon_marker_gene_list) %>%  grep("pMN|MN|_V[0-9]|rayon_Oligodendrocyte_NA", ., value = T)
+sel_markers
 ```
 
 ```{r}
+Idents(merged_split_obj) <- merged_split_obj$subtype_standardized
+Idents(subset_common_types) <- subset_common_types$subtype_standardized
+
 mn_feature_plots <- purrr::map(c("umap.rpca","umap.harmony"), function(red){
   purrr::map(sel_markers, function(x){
-      out1 <- glue("figures/cell_refs/allen_yadav_radon_integrated/embryonic_adult_sc_mc_integrated_{red}_{x}_UMAP.png")
+      out1 <- glue("figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_{red}_{x}_UMAP.png")
       fp1 <- FeaturePlot(merged_split_obj,
                        label = TRUE, 
                        repel = TRUE,
@@ -1851,7 +2056,7 @@ mn_feature_plots <- purrr::map(c("umap.rpca","umap.harmony"), function(red){
                        reduction = red) +
       patchwork::plot_annotation(title = x)
     
-      out2 <- glue("figures/cell_refs/allen_yadav_radon_integrated/embryonic_adult_sc_mc_integrated_{red}_{x}_subset_UMAP.png")
+      out2 <- glue("figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_{red}_{x}_subset_UMAP.png")
       fp2 <- FeaturePlot(subset_common_types,
                 features = rayon_marker_gene_list[[x]],
                 label = TRUE,
