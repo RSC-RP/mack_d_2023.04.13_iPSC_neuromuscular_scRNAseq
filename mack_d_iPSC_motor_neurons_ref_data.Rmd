@@ -36,6 +36,7 @@ library(plotly)
 library(RColorBrewer)
 
 library(Seurat)
+library(SeuratDisk)
 library(ontologyIndex)
 library(reticulate)
 ```
@@ -1558,7 +1559,14 @@ mamba env create -f env/scanvi.yaml
 library(sceasy)
 library(anndata)
 reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "opt/mambaforge/envs/scanvi"))
+
 py_config()
+# python:         /Users/jsmi26/opt/mambaforge/envs/scanvi/bin/python
+# libpython:      /Users/jsmi26/opt/mambaforge/envs/scanvi/lib/libpython3.10.dylib
+# pythonhome:     /Users/jsmi26/opt/mambaforge/envs/scanvi:/Users/jsmi26/opt/mambaforge/envs/scanvi
+# version:        3.10.13 | packaged by conda-forge | (main, Oct 26 2023, 18:09:17) [Clang 16.0.6 ]
+# numpy:          /Users/jsmi26/opt/mambaforge/envs/scanvi/lib/python3.10/site-packages/numpy
+# numpy_version:  1.24.4
 
 sc <- import("scanpy", convert = FALSE)
 scvi <- import("scvi", convert = FALSE)
@@ -1570,10 +1578,9 @@ https://docs.scvi-tools.org/en/stable/tutorials/notebooks/quick_start/api_overvi
 * perform feature selection, to reduce the number of features (genes in this case) used as input to the scvi-tools model
 * we recommend anywhere from 1,000 to 10,000 HVGs, but it will be context-dependent.
 
-
 ```{r}
 if(!exists("merged_split_obj")){
-  # start with the subset dataset
+  # start with the subsetted dataset
   merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj_v4.RDS")
 }
 
@@ -1589,15 +1596,19 @@ merged_scanvi_obj[["RNA"]] <- as(object = merged_scanvi_obj[["RNA"]], Class = "A
 merged_scanvi_obj <- NormalizeData(merged_scanvi_obj)  
 merged_scanvi_obj <- FindVariableFeatures(merged_scanvi_obj)
 
-#Subset for highly variable genes only
-# merged_scanvi_obj <- merged_scanvi_obj[merged_scanvi_obj@assays$RNA@var.features,]
 
-merged_scanvi_obj
-table(merged_scanvi_obj$subtype_standardized)
+# merged_scanvi_obj
+# table(merged_scanvi_obj$subtype_standardized)
+# table(merged_scanvi_obj$donor)
+# table(merged_scanvi_obj$dataset)
+
+# remove large objs from memory
+rm(merged_split_obj)
 ```
+
 ```{r}
 cell_type_table <- merged_scanvi_obj@meta.data %>% 
-  group_by(dataset, top_level_standardized) %>% 
+  group_by(dataset, subtype_standardized) %>% 
   dplyr::count() %>% 
   pivot_wider(names_from = dataset, values_from = n) %>% 
   mutate(across(Allen_M1:yadav_2023, ~ifelse(is.na(.), 0,.)))
@@ -1605,68 +1616,156 @@ cell_type_table <- merged_scanvi_obj@meta.data %>%
 # write.csv(cell_type_table, "results/integrated_ref/Allen_Rayon_Yadav_integrated_standardized_celltype_labels_table.csv", row.names = FALSE)
 ```
 
-AnnData format usually contains the following slots:
+https://anndata.readthedocs.io/en/latest/generated/anndata.AnnData.html
 
+AnnData format usually contains the following slots:
 - X contains the expression matrix.
 - obsm contains the embeddings data.
 - obs contains the cell metadata.
 - var contains the gene metadata.
+- varm: Multi-dimensional annotation of variables/features (mutable structured ndarray).
+- uns Key-indexed unstructured annotation.
 
+
+Data structure example:
+--> n_obs == cells as rows
+--> n_vars == genes as columns
+AnnData object with n_obs × n_vars = 32472 × 15148
+    obs: 'dataset', 'location', 'nGene', 'nUMI', 'patientGroup', 'percent.mito', 'protocol', 'sanger_type', 'size_factors', 'sampling_method', 'batch', 'cell_type', 'donor'
+    layers: 'counts'
+    
 ```{r}
+# 34972 genes features across 87,603 cells
+# transpose the raw counts matrix
+# note: MT genes have already been removed from the counts matrix
+tr_counts_mat <- t(as.matrix(GetAssayData(merged_scanvi_obj, layer = "counts")))
+
 # convert to anndata object
-adata <- convertFormat(merged_scanvi_obj, 
-                       from="seurat", 
+adata <- AnnData(
+  X = tr_counts_mat, # not standard to put raw counts in X, but I want to ensure only raw counts are used in all steps. 
+  obs = as.data.frame(merged_scanvi_obj@meta.data),
+  var = as.data.frame(merged_scanvi_obj@assays$RNA@meta.features),
+  layers = list(counts = tr_counts_mat)
+)
+
+# save another copy of the raw dataset in the object 
+adata$raw = adata
+adata
+class(adata) #"AnnDataR6" "R6"
+rm(tr_counts_mat)
+rm(merged_scanvi_obj)
+```
+
+--> missing layers in the output with convertFormat
+adata <- convertFormat(merged_scanvi_obj,
+                       from="seurat",
                        to="anndata",
-                       main_layer="counts", 
+                       main_layer="counts",
                        drop_single_values=FALSE)
 print(adata)
+--> adata is transposed here as well
+AnnData object with n_obs × n_vars = 87603 × 34972
 
-# preserve counts
-adata$X$shape  #87603, 34972
-adata$layers["counts"] = adata$X$copy()
-print(adata)
+batch_key
+  - If specified, highly-variable genes are selected within each batch separately and merged. This simple process avoids the selection of batch-specific genes and acts as a lightweight batch correction method.
+  
+```{r}
+# verbosity to max
+sc$settings$verbosity = 4L
 
-adata$var #34,972 rows x 6 columns
-class(adata$var)
-adata$var["vst.variable"]$value_counts()
+# retain genes expressed in at least 10 cells
+sc$pp$filter_genes(adata, min_cells = 10)
+# filtered out 9727 genes that are detected in less than 10.0 cells
+dim(adata) # 87603 by 25245 genes
 
 sc$pp$highly_variable_genes(
     adata,
-    n_top_genes=2000,
+    n_top_genes=5000,
     subset=TRUE,
     layer="counts",
     flavor="seurat_v3",
-    batch_key="donor",
+    batch_key="dataset",
 )
 
-#ValueError: cannot specify integer `bins` when input data contains infinity
-# adata_subset <- sc$pp$highly_variable_genes(adata = adata, layer = "counts", subset = TRUE)
-# adata_subset
+dim(adata) # 87603 by  5000 genes
+adata
 ```
 
-```{r}
-class(adata)
-class(py_to_r(adata))
-class(r_to_py(adata))
+FutureWarning: SparseDataset is deprecated and will be removed in late 2024. It has been replaced by the public classes CSRDataset and CSCDataset.
 
-adata$layers # no layers
-adata$obs$head()
+```{r}
+# set seed for randomization 
+scvi$settings$seed <- as.integer(20231030)
+
+# verbosity < 20 is INFO and verbosity < 10 is DEBUG
+# scvi$settings$verbosity 
+# run setup_anndata, use column  dataset for batch and donor 
+# https://scanpy.readthedocs.io/en/stable/generated/scanpy.pp.highly_variable_genes.html
+scvi$model$SCVI$setup_anndata(adata,
+                              layer="counts", 
+                              categorical_covariate_keys = c('dataset','donor'))
+
+adata
 ```
 
-```{r}
-scvi$settings$seed <- 20231030
+Variational Inference:
+https://www.nature.com/articles/s41592-018-0229-2
+https://docs.scvi-tools.org/en/stable/api/reference/scvi.model.SCVI.html#scvi.model.SCVI
 
-# run setup_anndata, use column stim for batch
-scvi$model$SCVI$setup_anndata(adata, layer="counts", batch_key = 'donor')
+Params for benchmarking study
+https://github.com/chenlingantelope/HarmonizationSCANVI/blob/master/notebooks/harmonization-CitePure-SCANVI.ipynb
+https://github.com/theislab/scib-reproducibility/blob/main/notebooks/integration/scanvi.ipynb
+
+Dispersion:
+
+'gene' - dispersion parameter of NB is constant per gene across cells
+
+'gene-batch' - dispersion can differ between different batches
+
+'gene-label' - dispersion can differ between different labels
+
+'gene-cell' - dispersion can differ for every gene in every cell
+
+```{r}
+# min(round((20000 / adata$shape[1]) * 400), 400) # 91 max_epochs by default for training
 
 # create the model
-model = scvi$model$SCVI(adata,  n_layers=2, n_latent=30, gene_likelihood="nb")
+# single-cell Variational Inference params recommended by authors
+# n_layers=2, # Number of hidden layers used for encoder and decoder NNs
+# n_latent=30, # Dimensionality of the latent space
+# gene_likelihood="nb" #Negative binomial distribution
+model = scvi$model$SCVI(adata,  
+                        n_layers=2L, 
+                        n_latent=30L, 
+                        dispersion = 'gene', 
+                        gene_likelihood="nb")
+model
+# adata
+```
+
+```{r eval=FALSE}
+# Add multiple threads
+scvi$settings$dl_num_workers = 2L
+scvi$settings$num_threads = 50L
+scvi$settings$batch_size = 1024L
+
 
 # train the model
-model$train()
+# https://docs.scvi-tools.org/en/stable/api/reference/scvi.model.SCVI.html#scvi.model.SCVI.train
+# 0.9 train_size is default
+# increase to 400 epochs for increased accuracy
+# it take 6hrs 45min to complete training! 
+model$train(accelerator = 'cpu', 
+            devices = 'auto',
+            max_epochs = 400L,
+            train_size = 0.9)
 
-# to specify the number of epochs when training:
-# model$train(max_epochs = as.integer(400))
+
+# Saving consists of saving the model neural network weights, as well as parameters used to initialize the model.
+model_dir <- "results/integrated_ref/scanvi"
+model$save(dir_path = model_dir, prefix = 'embryonic_adult_spinal_cord_motor_cortex', save_anndata = TRUE, overwrite=TRUE)
+
+
 ```
 
 ```{r}
@@ -2080,5 +2179,5 @@ mn_feature_plots <- purrr::map(c("umap.rpca","umap.harmony"), function(red){
 # Session Info
 
 ```{r}
-session_info()
+devtools::session_info()
 ```

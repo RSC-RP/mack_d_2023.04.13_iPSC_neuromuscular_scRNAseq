@@ -3,7 +3,10 @@ channels:
   - conda-forge
 dependencies:
   - python==3.10
-  - scvi-tools==1.0.4
+  - pandas==2.1.0
   - scanpy==1.9.5
+  - leidenalg==0.10.1
+  - pymde==0.1.18
+  - scvi-tools==1.0.4
   - pip:
-    - scikit-misc
+    - scikit-misc==0.3.0
