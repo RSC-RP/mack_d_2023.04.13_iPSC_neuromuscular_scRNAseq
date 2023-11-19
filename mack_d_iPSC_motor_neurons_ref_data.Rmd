@@ -259,9 +259,9 @@ head(idmap)
 ```
 
 ```{r eval=FALSE}
-MTG_genes <- read.csv("resources/cell_refs/allen_institute/MTG/human_MTG_2018-06-14_genes-rows.csv")
+allen_genes <- read.csv("resources/cell_refs/allen_institute/human_MTG_2018-06-14_genes-rows.csv")
 
-head(MTG_genes)
+head(allen_genes)
 ```
 
 ```{r}
@@ -1141,6 +1141,7 @@ if(!exists("embryonic_sc")){
 ```
 
 ```{r eval=FALSE}
+# https://www.biostars.org/p/388416/
 rnames <- sapply(list(ref_motor_cortex, ref_spinal_cord, embryonic_sc), rownames)
 lapply(rnames, head, n=30)
 sapply(rnames, length)
@@ -1150,7 +1151,7 @@ purrr::reduce(rnames, intersect) %>% length() # 20,243 gene names in common in R
 ```{r eval=FALSE}
 # There is a LARGE difference in mean counts per cell in Allen Institute dataset. 
 # https://github.com/satijalab/seurat/issues/5340
-
+# https://github.com/satijalab/seurat/issues/5009
 cell_read_depth <- list(cell_read_depth_mc = colSums(ref_motor_cortex[["RNA"]]$counts), 
                         cell_read_depth_sc = colSums(ref_spinal_cord[["RNA"]]$counts), 
                         cell_read_depth_esc = colSums(JoinLayers(embryonic_sc[["RNA"]])$counts))
@@ -1197,33 +1198,20 @@ rm(ref_spinal_cord, ref_motor_cortex, embryonic_sc)
 # saveRDS(merged_obj, "resources/cell_refs/integrated/embryonic_adult_spinal_cord_motor_cortex_merged_seurat_obj.RDS")
 ```
 
-SCT integration: <https://github.com/satijalab/seurat/issues/7542>
-
-<https://github.com/satijalab/seurat/issues/7145> - You don't need to
-worry about those warnings. We will fix them in Seurat-object package.
-Warning: Different cells and/or features from existing assay SCT
-
---\> Also, did not use plan(multisession) though unsure if that was
-actually causing the errors.
-
-it looks like they string split the original IDs and did NOT provide the
-actual donor IDs \>
-table(embryonic_sc_meta$orig_ident, embryonic_sc_meta$orig_replicate)
-
-### Integrate Layers
+## Merge and Clean Cell Annotations
 
 ```{r eval=FALSE}
 if(!exists("merged_obj")){
   merged_obj <- readRDS("resources/cell_refs/integrated/embryonic_adult_spinal_cord_motor_cortex_merged_seurat_obj.RDS")
 }
 
-#Split by sample donor
+# Split by sample donor
 DefaultAssay(merged_obj) <- "RNA"
 merged_split_obj <-  split(merged_obj, f = merged_obj$donor) 
 rm(merged_obj)
 gc()
 
-#remove MT genes for consistency
+# remove MT genes for consistency across datasets as some retained these, others removed them
 merged_split_obj <- merged_split_obj[-grep("^MT-", rownames(merged_split_obj)),]
 
 # SCT normalization
@@ -1282,7 +1270,64 @@ sc_meta_to_add <- merged_split_obj@meta.data %>%
 
 # Add metadata to object
 merged_split_obj <- AddMetaData(merged_split_obj, metadata = sc_meta_to_add)
+merged_split_obj <- clean_standardize_annots(merged_split_obj)
+
+DefaultAssay(merged_split_obj)
+merged_split_obj
 ```
+
+```{r eval=FALSE}
+all_defs <- allen_defs %>%
+  select(subtype_annotation=cluster_label,
+         description = def) %>%
+  bind_rows(., yada_defs) %>%
+  bind_rows(., select(rayon_defs,
+                      subtype_annotation = neural_pop,
+                      description)) %>%
+  mutate(subtype_annotation = gsub("\\s{1,}","_",subtype_annotation))
+
+top_level_table_merged <- merged_split_obj@meta.data %>%
+  group_by(dataset,class_label, top_level_annotation, subtype_annotation) %>%
+  dplyr::count(name = "number_of_cells") %>%
+  arrange(top_level_annotation) %>%
+  left_join(.,all_defs, by="subtype_annotation") %>%
+  mutate_at(vars(description), ~gsub('\\"', "", .))
+
+# top_level_table_merged
+# write.csv(top_level_table_merged, "results/integrated_ref/Allen_Rayon_Yadav_integrated_celltype_labels_table.csv", row.names = FALSE)
+```
+
+We next assigned putative neurotransmitter status to each population,
+identifying 19 glutamatergic populations (defined by the expression of
+SLC17A6) and 14 GABA/glycinergic populations (defined by expression of
+GAD1, GAD2, PAX2, and SLC6A5).
+
+```{r}
+merged_split_obj@meta.data %>% 
+  group_by(dataset, top_level_standardized) %>% 
+  dplyr::count()
+
+merged_split_obj@meta.data %>% 
+  group_by(subtype_standardized) %>% 
+  dplyr::count() %>% 
+  View()
+```
+
+
+### Integrate Layers
+
+
+SCT integration:
+
+- <https://github.com/satijalab/seurat/issues/7542>
+
+- <https://github.com/satijalab/seurat/issues/7145> 
+- You don't need to worry about those warnings. We will fix them in Seurat-object package.
+- Warning: Different cells and/or features from existing assay SCT
+
+--\> Also, did not use plan(multisession) though unsure if that was
+actually causing the errors.
+
 
 Note on theta from Harmony:
 
@@ -1296,6 +1341,7 @@ lambda
 Ridge regression penalty parameter. Specify for each variable in group.by.vars. Default lambda=1. Lambda must be strictly positive. Smaller values result in more aggressive correction.
 
 ```{r}
+# clean and standardized celltypes to include in the reference
 celltype_annots <- read.csv("references/Allen_Rayon_Yadav_integrated_celltype_labels_table_CCedit.csv") %>% 
   select(dataset, matches("standard"), everything()) %>% 
   mutate(standardized_top_level_annotation = gsub("\\s{1,}", "_", standardized_top_level_annotation)) %>% 
@@ -1555,10 +1601,11 @@ scANVI requires:
 mamba env create -f env/scanvi.yaml
 ```
 
-```{r}
+```{r message = FALSE, warning=FALSE}
 library(sceasy)
 library(anndata)
-reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "opt/mambaforge/envs/scanvi"))
+# FutureWarnings
+reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "opt/mambaforge/envs/scanvi_scib"))
 
 py_config()
 # python:         /Users/jsmi26/opt/mambaforge/envs/scanvi/bin/python
@@ -1688,7 +1735,7 @@ sc$pp$highly_variable_genes(
 )
 
 dim(adata) # 87603 by  5000 genes
-adata
+# adata
 ```
 
 FutureWarning: SparseDataset is deprecated and will be removed in late 2024. It has been replaced by the public classes CSRDataset and CSCDataset.
@@ -1705,7 +1752,7 @@ scvi$model$SCVI$setup_anndata(adata,
                               layer="counts", 
                               categorical_covariate_keys = c('dataset','donor'))
 
-adata
+# adata
 ```
 
 Variational Inference:
@@ -1726,7 +1773,7 @@ Dispersion:
 
 'gene-cell' - dispersion can differ for every gene in every cell
 
-```{r}
+```{r, eval=FALSE}
 # min(round((20000 / adata$shape[1]) * 400), 400) # 91 max_epochs by default for training
 
 # create the model
@@ -1741,14 +1788,11 @@ model = scvi$model$SCVI(adata,
                         gene_likelihood="nb")
 model
 # adata
-```
 
-```{r eval=FALSE}
 # Add multiple threads
 scvi$settings$dl_num_workers = 2L
 scvi$settings$num_threads = 50L
 scvi$settings$batch_size = 1024L
-
 
 # train the model
 # https://docs.scvi-tools.org/en/stable/api/reference/scvi.model.SCVI.html#scvi.model.SCVI.train
@@ -1760,89 +1804,171 @@ model$train(accelerator = 'cpu',
             max_epochs = 400L,
             train_size = 0.9)
 
-
 # Saving consists of saving the model neural network weights, as well as parameters used to initialize the model.
 model_dir <- "results/integrated_ref/scanvi"
 model$save(dir_path = model_dir, prefix = 'embryonic_adult_spinal_cord_motor_cortex', save_anndata = TRUE, overwrite=TRUE)
+model
+```
 
+```{r warning=FALSE, message=FALSE}
+# reading in the adata obj using reticulate changes the data structure/class. 
+#sc$read_h5ad(path) #"anndata._core.anndata.AnnData" "python.builtin.object"
+adata <- anndata::read_h5ad("results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortexadata.h5ad")
+# class(adata)
 
+SCVI_NORMALIZED_KEY <- "scvi_normalized"
+SCVI_LATENT_KEY <- "X_scVI"
+norm_cts <- model$get_normalized_expression(library_size=10e4)
+latent <- model$get_latent_representation()
+
+# unable to assign obsm in reticulate/anndataR in the same way as adata$layers. Limitation of the package currently. 
+# https://github.com/theislab/zellkonverter/issues/75
+adata_update <- AnnData(
+  X = adata$X,
+  obs = adata$obs, 
+  var = adata$var, 
+  uns = adata$uns,
+  obsm = list("_scvi_extra_categorical_covs" = adata$obsm$`_scvi_extra_categorical_covs`,
+              "X_scVI" = latent), 
+  layers = list("counts" = adata$layers['counts'],
+                "scvi_normalized" = norm_cts)
+)
+
+adata_update
+
+# run PCA then generate UMAP plots
+sc$tl$pca(adata_update)
+sc$pp$neighbors(adata_update, n_pcs=30L, n_neighbors=20L)
+sc$tl$umap(adata_update, min_dist=0.3)
+```
+
+```{r fig.height=10, fig.width=10}
+# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_subtype_standardized_unintegrated_UMAP.pdf", height = 15, width = 20)
+sc$pl$umap(
+    adata_update,
+    color=c("subtype_standardized"),
+    frameon=TRUE,
+)
+# dev.off()
+
+# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_dataset_donor_unintegrated_UMAP.pdf", height = 10, width = 20)
+sc$pl$umap(
+    adata_update,
+    color= c('dataset','donor'),
+    ncols=2L,
+    frameon=TRUE,
+)
+# dev.off()
 ```
 
 ```{r}
-# scvi$model$SCANVI$
+# use scVI latent space for UMAP generation
+#  We see that this dataset is quite complex, where only some batches contain certain cell types.
+sc$pp$neighbors(adata_update, use_rep=SCVI_LATENT_KEY)
+sc$tl$umap(adata_update, min_dist=0.3)
+
+# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_subtype_standardized_scvi_UMAP.pdf", height = 15, width = 20)
+sc$pl$umap(
+    adata_update,
+    color=c("subtype_standardized"),
+    frameon=TRUE,
+)
+# dev.off()
+
+# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_dataset_donor_scvi_UMAP.pdf", height = 10, width = 20)
+sc$pl$umap(
+    adata_update,
+    color=c('dataset','donor'),
+    ncols=2L,
+    frameon=TRUE,
+)
+# dev.off()
+
+# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_motorneuron_scvi_UMAP.pdf", height = 10, width = 12)
+sc$pl$umap(
+    adata_update,
+    color=c('motorneuron'),
+    frameon=TRUE,
+)
+# dev.off()
 ```
 
-```{r}
-# get the latent represenation
-latent = model$get_latent_representation()
-
-# put it back in our original Seurat object
-latent <- as.matrix(latent)
-rownames(latent) = colnames(ifnb)
-ifnb[["scvi"]] <- CreateDimReducObject(embeddings = latent, key = "scvi_", assay = DefaultAssay(ifnb))
-```
-
-```{r}
-library(cowplot)
-# for jupyter notebook
-options(repr.plot.width=10, repr.plot.height=8)
-
-ifnb <- RunUMAP(ifnb, dims = 1:10, reduction = "scvi", n.components = 2)
-p1 <- DimPlot(ifnb, reduction = "umap", group.by = "stim", pt.size=2)
-plot_grid(p1)
-```
-
-# Merge and Clean Cell Annotations
-
-```{r}
-merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj_v4.RDS")
-
-Idents(merged_split_obj) <- merged_split_obj$dataset
-DefaultAssay(merged_split_obj)
-merged_split_obj
-```
+n_samples_per_label (Optional[float] (default: None)) – Number of subsamples for each label class to sample per epoch. By default, there is no label subsampling.
 
 ```{r eval=FALSE}
-all_defs <- allen_defs %>%
-  select(subtype_annotation=cluster_label,
-         description = def) %>%
-  bind_rows(., yada_defs) %>%
-  bind_rows(., select(rayon_defs,
-                      subtype_annotation = neural_pop,
-                      description)) %>%
-  mutate(subtype_annotation = gsub("\\s{1,}","_",subtype_annotation))
+scanvi_model <- scvi$model$SCANVI$from_scvi_model(
+    model,
+    adata=adata_update,
+    labels_key="subtype_standardized",
+    unlabeled_category="Unknown",
+)
+scanvi_model
 
-top_level_table_merged <- merged_split_obj@meta.data %>%
-  group_by(dataset,class_label, top_level_annotation, subtype_annotation) %>%
-  dplyr::count(name = "number_of_cells") %>%
-  arrange(top_level_annotation) %>%
-  left_join(.,all_defs, by="subtype_annotation") %>%
-  mutate_at(vars(description), ~gsub('\\"', "", .))
+scanvi_model$train(accelerator = 'cpu', 
+            devices = 'auto',
+            max_epochs = 50L,
+            train_size = 0.9)
 
-# top_level_table_merged
-# write.csv(top_level_table_merged, "results/integrated_ref/Allen_Rayon_Yadav_integrated_celltype_labels_table.csv", row.names = FALSE)
-```
-
-We next assigned putative neurotransmitter status to each population,
-identifying 19 glutamatergic populations (defined by the expression of
-SLC17A6) and 14 GABA/glycinergic populations (defined by expression of
-GAD1, GAD2, PAX2, and SLC6A5).
-
-```{r}
-merged_split_obj <- clean_standardize_annots(merged_split_obj)
-
-merged_split_obj
+# Saving consists of saving the model neural network weights, as well as parameters used to initialize the model.
+model_dir <- "results/integrated_ref/scanvi"
+scanvi_model$save(dir_path = model_dir, prefix = 'embryonic_adult_spinal_cord_motor_cortex_scanvi_', save_anndata = TRUE, overwrite=TRUE)
+scanvi_model
 ```
 
 ```{r}
-merged_split_obj@meta.data %>% 
-  group_by(dataset, top_level_standardized) %>% 
-  dplyr::count()
+scanvi_dir <- "results/integrated_ref/scanvi/"
+scanvi_model <- scvi$model$SCANVI$load(dir_path = scanvi_dir, 
+                                       prefix = "embryonic_adult_spinal_cord_motor_cortex_scanvi_")
 
-merged_split_obj@meta.data %>% 
-  group_by(subtype_standardized) %>% 
-  dplyr::count() %>% 
-  View()
+adata_update <- anndata::read_h5ad(file.path(scanvi_dir,"embryonic_adult_spinal_cord_motor_cortex_scanvi_umap_adata.h5ad"))
+
+# Add the scanvi latent data to the adata object 
+scanvi_latent <- scanvi_model$get_latent_representation(adata_update)
+scanvi_mde <- scvi$model$utils$mde(data = scanvi_latent)
+adata_update <- AnnData(
+  X = adata_update$X,
+  obs = adata_update$obs, 
+  var = adata_update$var, 
+  uns = adata_update$uns,
+  obsm = list("_scvi_extra_categorical_covs" = adata_update$obsm$`_scvi_extra_categorical_covs`,
+              "X_scVI" = adata_update$obsm[['X_scVI']], 
+              "X_scANVI" = scanvi_latent, 
+              "X_scANVI_MDE" = scanvi_mde), 
+  layers = list("counts" = adata_update$layers['counts'],
+                "scvi_normalized" = adata_update$layers['scvi_normalized'])
+)
+```
+
+```{r}
+sc$pp$neighbors(adata_update, use_rep='X_scANVI')
+sc$tl$umap(adata_update, min_dist=0.3)
+
+# anndata::write_h5ad(adata_update, filename = "results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_scanvi_umap_adata.h5ad")
+
+# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_subtype_standardized_scanvi_UMAP.pdf", height = 15, width = 20)
+sc$pl$umap(
+    adata_update,
+    color=c("subtype_standardized"),
+    frameon=TRUE,
+)
+# dev.off()
+
+# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_dataset_donor_scanvi_UMAP.pdf", height = 10, width = 20)
+sc$pl$umap(
+    adata_update,
+    color=c('dataset','donor'),
+    ncols=2L,
+    frameon=TRUE,
+)
+# dev.off()
+
+# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_motorneuron_scanvi_UMAP.pdf", height = 10, width = 12)
+sc$pl$umap(
+    adata_update,
+    color=c('motorneuron'),
+    frameon=TRUE,
+)
+# dev.off()
 ```
 
 # Differential Expression

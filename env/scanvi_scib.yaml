@@ -1,4 +1,4 @@
-name: scanvi
+name: scanvi_scib
 channels:
   - conda-forge
 dependencies:
@@ -11,3 +11,6 @@ dependencies:
   - pip==23.3.1
   - pip:
     - scikit-misc==0.3.0
+    - scib-metrics==0.4.0
+    - jax==0.4.14
+    - jaxlib==0.4.14
