@@ -1617,6 +1617,7 @@ py_config()
 
 sc <- import("scanpy", convert = FALSE)
 scvi <- import("scvi", convert = FALSE)
+scib <- import("scib_metrics.benchmark", convert = FALSE)
 ```
 
 https://docs.scvi-tools.org/en/stable/tutorials/notebooks/quick_start/api_overview.html
@@ -1648,9 +1649,6 @@ merged_scanvi_obj <- FindVariableFeatures(merged_scanvi_obj)
 # table(merged_scanvi_obj$subtype_standardized)
 # table(merged_scanvi_obj$donor)
 # table(merged_scanvi_obj$dataset)
-
-# remove large objs from memory
-rm(merged_split_obj)
 ```
 
 ```{r}
@@ -1672,24 +1670,17 @@ AnnData format usually contains the following slots:
 - var contains the gene metadata.
 - varm: Multi-dimensional annotation of variables/features (mutable structured ndarray).
 - uns Key-indexed unstructured annotation.
-
-
-Data structure example:
---> n_obs == cells as rows
---> n_vars == genes as columns
-AnnData object with n_obs × n_vars = 32472 × 15148
-    obs: 'dataset', 'location', 'nGene', 'nUMI', 'patientGroup', 'percent.mito', 'protocol', 'sanger_type', 'size_factors', 'sampling_method', 'batch', 'cell_type', 'donor'
-    layers: 'counts'
     
 ```{r}
 # 34972 genes features across 87,603 cells
 # transpose the raw counts matrix
 # note: MT genes have already been removed from the counts matrix
 tr_counts_mat <- t(as.matrix(GetAssayData(merged_scanvi_obj, layer = "counts")))
+tr_norm_mat <- t(as.matrix(GetAssayData(merged_scanvi_obj, layer = "data")))
 
 # convert to anndata object
 adata <- AnnData(
-  X = tr_counts_mat, # not standard to put raw counts in X, but I want to ensure only raw counts are used in all steps. 
+  X = tr_norm_mat, 
   obs = as.data.frame(merged_scanvi_obj@meta.data),
   var = as.data.frame(merged_scanvi_obj@assays$RNA@meta.features),
   layers = list(counts = tr_counts_mat)
@@ -1699,8 +1690,6 @@ adata <- AnnData(
 adata$raw = adata
 adata
 class(adata) #"AnnDataR6" "R6"
-rm(tr_counts_mat)
-rm(merged_scanvi_obj)
 ```
 
 --> missing layers in the output with convertFormat
@@ -1774,6 +1763,11 @@ Dispersion:
 'gene-cell' - dispersion can differ for every gene in every cell
 
 ```{r, eval=FALSE}
+# remove large objects from memory
+rm(merged_split_obj)
+rm(tr_counts_mat)
+rm(merged_scanvi_obj)
+
 # min(round((20000 / adata$shape[1]) * 400), 400) # 91 max_epochs by default for training
 
 # create the model
@@ -1811,6 +1805,10 @@ model
 ```
 
 ```{r warning=FALSE, message=FALSE}
+# load the trained model
+model <- scvi$model$SCVI$load(dir_path = "results/integrated_ref/scanvi", 
+                              prefix = 'embryonic_adult_spinal_cord_motor_cortex')
+
 # reading in the adata obj using reticulate changes the data structure/class. 
 #sc$read_h5ad(path) #"anndata._core.anndata.AnnData" "python.builtin.object"
 adata <- anndata::read_h5ad("results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortexadata.h5ad")
@@ -1818,13 +1816,13 @@ adata <- anndata::read_h5ad("results/integrated_ref/scanvi/embryonic_adult_spina
 
 SCVI_NORMALIZED_KEY <- "scvi_normalized"
 SCVI_LATENT_KEY <- "X_scVI"
-norm_cts <- model$get_normalized_expression(library_size=10e4)
+norm_cts <- model$get_normalized_expression(library_size=10e4) #should this be 1e4?
 latent <- model$get_latent_representation()
 
-# unable to assign obsm in reticulate/anndataR in the same way as adata$layers. Limitation of the package currently. 
+# unable to assign obsm in reticulate/anndataR in the same way as `adata$layers <- matrix()`. Limitation of the package currently. 
 # https://github.com/theislab/zellkonverter/issues/75
 adata_update <- AnnData(
-  X = adata$X,
+  X = tr_norm_mat[,adata$var_names], #use log-norm counts for benchmarking
   obs = adata$obs, 
   var = adata$var, 
   uns = adata$uns,
@@ -1834,10 +1832,13 @@ adata_update <- AnnData(
                 "scvi_normalized" = norm_cts)
 )
 
-adata_update
+# adata_update
+# adata_update$X %>% quantile()
+# adata_update$layers[['counts']] %>% quantile()
+# adata_update$layers[['scvi_normalized']] %>% quantile()
 
 # run PCA then generate UMAP plots
-sc$tl$pca(adata_update)
+sc$tl$pca(adata_update, n_comps=30L, use_highly_variable=TRUE)
 sc$pp$neighbors(adata_update, n_pcs=30L, n_neighbors=20L)
 sc$tl$umap(adata_update, min_dist=0.3)
 ```
@@ -1915,37 +1916,46 @@ scanvi_model$save(dir_path = model_dir, prefix = 'embryonic_adult_spinal_cord_mo
 scanvi_model
 ```
 
-```{r}
+```{r eval=FALSE}
 scanvi_dir <- "results/integrated_ref/scanvi/"
-scanvi_model <- scvi$model$SCANVI$load(dir_path = scanvi_dir, 
+if(!exists("scanvi_model")){
+  scanvi_model <- scvi$model$SCANVI$load(dir_path = scanvi_dir, 
                                        prefix = "embryonic_adult_spinal_cord_motor_cortex_scanvi_")
-
-adata_update <- anndata::read_h5ad(file.path(scanvi_dir,"embryonic_adult_spinal_cord_motor_cortex_scanvi_umap_adata.h5ad"))
+  scanvi_latent <- scanvi_model$get_latent_representation(adata_update)
+}
 
 # Add the scanvi latent data to the adata object 
-scanvi_latent <- scanvi_model$get_latent_representation(adata_update)
-scanvi_mde <- scvi$model$utils$mde(data = scanvi_latent)
+
+# scanvi_mde <- scvi$model$utils$mde(data = scanvi_latent) #an alternative to UMAP/TSNE 
+
+# Update the anndata object with all integration methods for benchmarking 
 adata_update <- AnnData(
-  X = adata_update$X,
+  X = adata_update$X, #lognorm counts
   obs = adata_update$obs, 
   var = adata_update$var, 
   uns = adata_update$uns,
   obsm = list("_scvi_extra_categorical_covs" = adata_update$obsm$`_scvi_extra_categorical_covs`,
+              "X_pca" =  adata_update$obsm[['X_pca']],
               "X_scVI" = adata_update$obsm[['X_scVI']], 
               "X_scANVI" = scanvi_latent, 
-              "X_scANVI_MDE" = scanvi_mde), 
+              "X_rpca" = merged_split_obj@reductions$integrated.rpca@cell.embeddings,
+              "X_harmony" = merged_split_obj@reductions$harmony@cell.embeddings,
+              "X_sct_pca" = merged_split_obj@reductions$pca@cell.embeddings
+              # "X_scANVI_MDE" = scanvi_mde
+              ), 
   layers = list("counts" = adata_update$layers['counts'],
                 "scvi_normalized" = adata_update$layers['scvi_normalized'])
 )
+adata_update
+# anndata::write_h5ad(adata_update, filename = file.path(scanvi_dir, "embryonic_adult_spinal_cord_motor_cortex_scanvi_benchmarking_adata.h5ad"))
 ```
 
 ```{r}
+adata_update <- anndata::read_h5ad(filename = "results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_scanvi_benchmarking_adata.h5ad")
 sc$pp$neighbors(adata_update, use_rep='X_scANVI')
 sc$tl$umap(adata_update, min_dist=0.3)
 
-# anndata::write_h5ad(adata_update, filename = "results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_scanvi_umap_adata.h5ad")
-
-# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_subtype_standardized_scanvi_UMAP.pdf", height = 15, width = 20)
+# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_subtype_standardized_scanvi_UMAP.pdf", height = 10, width = 15)
 sc$pl$umap(
     adata_update,
     color=c("subtype_standardized"),
@@ -1969,7 +1979,108 @@ sc$pl$umap(
     frameon=TRUE,
 )
 # dev.off()
+
+adata_subset <- adata_update[grepl("motorneurons|pMN|astrocyte", adata_update$obs$subtype_standardized)]
+# sc$pp$neighbors(adata_subset, use_rep='X_scANVI')
+# sc$tl$umap(adata_subset, min_dist=0.3)
+
+# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_donor_subset_motorneuron_scanvi_UMAP.pdf", height = 10, width = 12)
+sc$pl$umap(
+    adata_subset,
+    color=c('donor'),
+    frameon=TRUE,
+)
+# dev.off()
 ```
+
+```{r fig.height=10}
+adata_update$obs %>%
+  group_by(subtype_standardized, donor, dataset) %>%
+  dplyr::count() %>%
+  filter(grepl("motor|pMN|astro", subtype_standardized)) %>%
+  View()
+```
+
+## Benchmarking 
+
+```{r}
+#adata.X should contain a form of the data that is not integrated, but is normalized.
+bm1 <-  scib$Benchmarker(
+    adata_update,
+    batch_key="donor",
+    label_key="subtype_standardized",
+    embedding_obsm_keys=c("X_pca","X_sct_pca","X_scVI","X_scANVI", "X_rpca","X_harmony"),
+    n_jobs = 2L,
+)
+bm1$benchmark()
+```
+
+```{r}
+bm2 <-  scib$Benchmarker(
+    adata_update,
+    batch_key="dataset",
+    label_key="subtype_standardized",
+    embedding_obsm_keys=c("X_pca","X_sct_pca","X_scVI","X_scANVI", "X_rpca","X_harmony"),
+    n_jobs = 2L,
+)
+bm2$benchmark()
+```
+
+```{r}
+benchmarking_df <-  bm1$get_results(min_max_scale=FALSE) %>% 
+  py_to_r() %>% 
+  as.data.frame()
+
+# benchmarking_df$Total
+```
+
+```{r fig.width=20}
+bm1$plot_results_table(min_max_scale=FALSE)
+```
+
+### Update Seurat Object
+
+```{r}
+if(!exists("merged_split_obj")){
+  # start with the subsetted dataset
+  merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj_v4.RDS")
+}
+adata_update <- anndata::read_h5ad(file.path(scanvi_dir, "embryonic_adult_spinal_cord_motor_cortex_scanvi_umap_mde_adata.h5ad"))
+sc$tl$pca(adata_update, n_comps=30L, use_highly_variable=TRUE)
+
+# get the latent represenations
+# scvi_latent = adata_update$obsm[['X_scVI']]
+# rownames(scvi_latent) <- adata_update$obs_names
+# scanvi_latent = adata_update$obsm[['X_scANVI']]
+# rownames(scanvi_latent) <- adata_update$obs_names
+# 
+# # put it back in Seurat object
+# merged_split_obj[["scvi"]] <- CreateDimReducObject(embeddings = scvi_latent,
+#                                                    key = "scvi_", 
+#                                                    assay = 'RNA')
+# merged_split_obj[['scanvi']] <- CreateDimReducObject(embeddings = scanvi_latent, 
+#                                                      key = "scanvi_", 
+#                                                      assay = 'RNA')
+```
+
+```{r}
+merged_split_obj <- RunUMAP(merged_split_obj, 
+                            dims = 1:10, 
+                            reduction.name = "umap.scvi",
+                            reduction = "scvi", 
+                            n.components = 3) %>% 
+                  RunUMAP(., 
+                            dims = 1:10, 
+                            reduction.name = "umap.scanvi",
+                            reduction = "scanvi", 
+                            n.components = 3) 
+DimPlot(merged_split_obj, 
+        reduction = "umap.scvi",
+        group.by = "subtype_standardized", 
+        pt.size=2)
+
+```
+
 
 # Differential Expression
 
