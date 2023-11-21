@@ -64,6 +64,21 @@ options(future.globals.maxSize = 10000 * 1024^2)
 ```
 # Define Functions
 
+```{r}
+colors_vector <- c(RColorBrewer::brewer.pal(12, "Paired"), 
+            "blue1", "darkslategray3", "burlywood3", "#984EA3",
+            "seagreen1", "yellow2", "orchid", "darkblue", 
+            "lightsalmon2","slateblue1","lightskyblue4",
+            "azure2", "chartreuse1",  "lemonchiffon2",
+            "deeppink", "darkslategray1", "green4", "navajowhite", 
+            "brown4", "darkgoldenrod2", "deepskyblue1", "lightpink") %>% 
+  c(., ggpubr::get_palette("jco", 5)) %>% 
+  c("mediumpurple4","magenta", "peru") %>% 
+  c(ggsci::pal_igv()(51))
+
+length(colors_vector) 
+```
+
 
 ```{r}
 clean_standardize_annots <- function(seurat_obj){
@@ -252,16 +267,37 @@ gids <- ensembldb::keys(edb, keytype = "GENEID")
 
 idmap <- AnnotationDbi::select(edb, keytype="GENEID", 
                       keys = gids, 
-                      columns = c("GENEID","GENEBIOTYPE","GENENAME","SYMBOL")) %>% 
+                      columns = c("GENEID","GENENAME","SYMBOL")) %>% 
   janitor::clean_names()
 
 head(idmap)
+# write.csv(idmap, "resources/Homo_sapiens.GRCh38.98_gene_ids.csv", row.names = FALSE)
+```
+
+```{r}
+idmap <- read.csv("resources/Homo_sapiens.GRCh38.98_gene_ids_alias.csv") %>% 
+  janitor::clean_names() %>% 
+  select(geneid = gene_stable_id, everything())
+
+head(idmap)
+dim(idmap)
+```
+
+```{r}
+ens_entrez <- read.delim("resources/cell_refs/allen_institute/gene2ensembl")
+head(ens_entrez)
+
+human_ens_entrez <-  ens_entrez %>% 
+  filter(X.tax_id == "9606") %>% 
+  janitor::clean_names()
 ```
 
 ```{r eval=FALSE}
-allen_genes <- read.csv("resources/cell_refs/allen_institute/human_MTG_2018-06-14_genes-rows.csv")
+allen_genes <- read.csv("resources/cell_refs/allen_institute/human_MTG_2018-06-14_genes-rows.csv") %>% 
+  select(-chromosome, -gene_name)
 
 head(allen_genes)
+dim(allen_genes) #50281
 ```
 
 ```{r}
@@ -410,20 +446,6 @@ blum_gamma_mn_degs #213
 blum_alpha_mn_degs #229
 ```
 
-```{r}
-colors_vector <- c(RColorBrewer::brewer.pal(12, "Paired"), 
-            "blue1", "darkslategray3", "burlywood3", "#984EA3",
-            "seagreen1", "yellow2", "orchid", "darkblue", 
-            "lightsalmon2","slateblue1","lightskyblue4",
-            "azure2", "chartreuse1",  "lemonchiffon2",
-            "deeppink", "darkslategray1", "green4", "navajowhite", 
-            "brown4", "darkgoldenrod2", "deepskyblue1", "lightpink") %>% 
-  c(., ggpubr::get_palette("jco", 5)) %>% 
-  c("mediumpurple4","magenta", "peru") %>% 
-  c(ggsci::pal_igv()(51))
-
-length(colors_vector) 
-```
 
 # Preprocessing
 
@@ -1143,9 +1165,62 @@ if(!exists("embryonic_sc")){
 ```{r eval=FALSE}
 # https://www.biostars.org/p/388416/
 rnames <- sapply(list(ref_motor_cortex, ref_spinal_cord, embryonic_sc), rownames)
+names(rnames) <- c("ref_motor_cortex", "ref_spinal_cord", "embryonic_sc")
 lapply(rnames, head, n=30)
 sapply(rnames, length)
-purrr::reduce(rnames, intersect) %>% length() # 20,243 gene names in common in RNA assay
+common <- purrr::reduce(rnames, intersect)
+length(common) # 20,243 gene names in common in RNA assay
+```
+
+https://support.10xgenomics.com/single-cell-dna/software/pipelines/latest/advanced/references 
+"only annotations with gene_type or gene_biotype attribute of protein_coding or pseudogene are considered."
+
+Conclusion: most of these missing genes are biotypes that are not included in the standard 10x reference for CellRanger and thus the other publications probably did not quantify them. 
+
+Investigating gene aliases does not satisfy any missing gene_names, as these tend to be non-coding genes aliases.  
+
+
+```{r eval=FALSE}
+allen_ens <- allen_genes %>% 
+  left_join(., human_ens_entrez, by=c("entrez_id"="gene_id")) %>% 
+  select(geneid = ensembl_gene_identifier,
+         gene_name = gene,
+         entrez_id) %>% 
+  group_by(entrez_id) %>% 
+  filter(!duplicated(entrez_id))
+
+
+gene_id_update <- data.frame(gene_name = purrr::reduce(rnames, union)) %>% 
+  distinct() %>% 
+  mutate(matched = ifelse(gene_name %in% common,"yes","no"), 
+         in_mc = gene_name %in% rnames$ref_motor_cortex,
+         in_sc = gene_name %in% rnames$ref_spinal_cord,
+         in_esc = gene_name %in% rnames$embryonic_sc) 
+
+gene_id_update
+# table(gene_id_update$matched)
+
+possible_ens_alias <- gene_id_update %>% 
+  filter(matched == "no") %>% 
+  left_join(., idmap, by = "gene_name") %>% 
+  filter(!is.na(geneid), gene_synonym != "") %>% 
+  mutate(in_sc = gene_synonym %in% rnames$ref_spinal_cord & !gene_synonym %in% common,
+         in_esc = gene_synonym %in% rnames$embryonic_sc  & !gene_synonym %in% common) 
+
+pesc <- possible_ens_alias %>% 
+  filter(in_esc)
+# for example AC007365.1 and LINC02579 synonyms but BOTH are quanitfied in ref_embryonic_spinal_cord, so I cannot re-name it. 
+gene_id_update %>% 
+  filter(grepl("AC007365.1|LINC02579", gene_name))
+# table(possible_ens_alias$gene_type)
+
+#only identified SMIM11 which is already in common
+# possible_ens_alias %>% 
+#   filter(gene_type == "protein_coding") %>% 
+#   filter(in_sc)
+# possible_ens_alias %>% 
+#   filter(gene_type == "protein_coding") %>% 
+#   filter(in_esc)
 ```
 
 ```{r eval=FALSE}
@@ -1185,17 +1260,20 @@ dim(merged_meta) # 175,307
 table(merged_meta$donor)
 # write.csv(merged_meta, "results/integrated_ref/Allen_Rayon_Yadav_integrated_cell_ref_metadata.csv", row.names = F)
 
-merged_obj <-  CreateSeuratObject(counts = list("ref_spinal_cord"=LayerData(ref_spinal_cord, layer = 'counts'),
-                                                "ref_motor_cortex"=LayerData(ref_motor_cortex, layer = 'counts'),
-                                                "ref_embryonic_sc"=LayerData(JoinLayers(embryonic_sc), layer = 'counts')), 
+merged_obj <-  CreateSeuratObject(counts = list("ref_spinal_cord"=LayerData(ref_spinal_cord, layer = 'counts')[common,],
+                                                "ref_motor_cortex"=LayerData(ref_motor_cortex, layer = 'counts')[common,],
+                                                "ref_embryonic_sc"=LayerData(JoinLayers(embryonic_sc), layer = 'counts')[common,]), 
                                   meta.data = merged_meta)
 
 merged_obj <- JoinLayers(merged_obj)
-
 merged_obj
+
 rm(ref_spinal_cord, ref_motor_cortex, embryonic_sc)
 # table(merged_obj$donor)
-# saveRDS(merged_obj, "resources/cell_refs/integrated/embryonic_adult_spinal_cord_motor_cortex_merged_seurat_obj.RDS")
+
+job::job({
+  saveRDS(merged_obj, "resources/cell_refs/integrated/embryonic_adult_spinal_cord_motor_cortex_merged_seurat_obj.RDS")
+}, import = c("merged_obj"))
 ```
 
 ## Merge and Clean Cell Annotations
@@ -1204,6 +1282,7 @@ rm(ref_spinal_cord, ref_motor_cortex, embryonic_sc)
 if(!exists("merged_obj")){
   merged_obj <- readRDS("resources/cell_refs/integrated/embryonic_adult_spinal_cord_motor_cortex_merged_seurat_obj.RDS")
 }
+dim(merged_obj)
 
 # Split by sample donor
 DefaultAssay(merged_obj) <- "RNA"
@@ -1222,10 +1301,10 @@ merged_split_obj <- merged_split_obj %>%
   RunPCA(npcs = 50,
          verbose = TRUE)
 
-# saveRDS(merged_split_obj,"results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_merged_split_normalized_seurat_obj.RDS")
-```
+job::job({
+  saveRDS(merged_split_obj,"results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_merged_split_normalized_seurat_obj.RDS")
+})
 
-```{r eval=FALSE}
 if(!exists("merged_split_obj")){
   merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_merged_split_normalized_seurat_obj.RDS")
 }
@@ -1273,7 +1352,7 @@ merged_split_obj <- AddMetaData(merged_split_obj, metadata = sc_meta_to_add)
 merged_split_obj <- clean_standardize_annots(merged_split_obj)
 
 DefaultAssay(merged_split_obj)
-merged_split_obj
+# merged_split_obj
 ```
 
 ```{r eval=FALSE}
@@ -1361,7 +1440,7 @@ celltypes_to_retain <- celltype_annots %>%
 dim(celltypes_to_retain)
 
 sum(celltypes_to_retain$number_of_cells) # 87,603
-table(celltypes_to_retain$standardized_top_level_annotation)
+# table(celltypes_to_retain$standardized_top_level_annotation)
 ```
 
 ```{r eval=FALSE}
@@ -1371,7 +1450,7 @@ params <- list("v1"=list(k_anchor = 5, theta = NULL, lambda = NULL, subset = FAL
                "v4"=list(k_anchor = 20, theta = NULL, lambda = NULL, subset = TRUE))
 
 # Integration
-integration_jobs <-  purrr::map(names(params)[c(4)], function(param_set) {
+integration_jobs <-  purrr::map(names(params)[c(1)], function(param_set) {
   input_params <- params[[param_set]]
   print(c("Using params: ", input_params))
 
@@ -1380,20 +1459,20 @@ integration_jobs <-  purrr::map(names(params)[c(4)], function(param_set) {
     idx <- which(merged_split_obj$subtype_annotation %in% celltypes_to_retain$subtype_annotation)
     subset_meta_data <- merged_split_obj@meta.data[idx,]
     DefaultAssay(merged_split_obj) <- "RNA"
-    merged_split_obj <- subset(merged_split_obj, cells = rownames(subset_meta_data)) %>% 
+    obj <- subset(merged_split_obj, cells = rownames(subset_meta_data)) %>% 
         # re-normalize the RNA assay on the subset of cells
         SCTransform(method = "glmGamPoi",
               vst.flavor = "v2", 
               verbose = TRUE) %>% 
         RunPCA(npcs = 50, verbose = TRUE)
-    print(dim(merged_split_obj))
+    print(dim(obj))
   }
 
   # Background the processes
-  job::job({
-    Idents(merged_split_obj) <- merged_split_obj$donor
+  # job::job({
+    Idents(obj) <- obj$donor
     # k.anchor = 5 is default used here
-    merged_split_obj <- IntegrateLayers(merged_split_obj,
+    obj <- IntegrateLayers(obj,
                                   method = RPCAIntegration,
                                   orig.reduction = "pca",
                                   new.reduction = "integrated.rpca",
@@ -1403,7 +1482,7 @@ integration_jobs <-  purrr::map(names(params)[c(4)], function(param_set) {
                                   verbose = TRUE)
     # harmony groups are the 13 SCT models (1 per donor)
     # default theta = NULL
-    merged_split_obj <- IntegrateLayers(merged_split_obj,
+    obj <- IntegrateLayers(obj,
                                   method = HarmonyIntegration,
                                   orig.reduction = "pca",
                                   new.reduction = "harmony",
@@ -1413,7 +1492,7 @@ integration_jobs <-  purrr::map(names(params)[c(4)], function(param_set) {
                                   verbose = TRUE)
 
     # Run UMAP
-    merged_split_obj <- merged_split_obj %>%
+    obj <- obj %>%
       RunUMAP(n.components = 3L,
                    reduction = "pca",
                    dims = 1:50,
@@ -1428,15 +1507,14 @@ integration_jobs <-  purrr::map(names(params)[c(4)], function(param_set) {
                    reduction.name = "umap.rpca")
 
     # save object
-    saveRDS(merged_split_obj,
+    saveRDS(obj,
             glue("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj_{param_set}.RDS"))
-    rm(merged_split_obj)
+    rm(obj)
     gc()
     input_params
     
-  }, import = c("merged_split_obj", "input_params", "param_set"))
+  # }, import = c("merged_split_obj", "input_params", "param_set"))
 })
-# rm(merged_split_obj)
 ```
 
 https://satijalab.org/seurat/articles/seurat5_integration.html
@@ -1464,7 +1542,7 @@ merged_sketch_obj <- SketchData(object = merged_sketch_obj,
                                method = "LeverageScore", 
                                sketched.assay = "sketch")
 
-merged_sketch_obj
+# merged_sketch_obj
 ```
 
 Harmony: theta\
@@ -1608,12 +1686,12 @@ library(anndata)
 reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "opt/mambaforge/envs/scanvi_scib"))
 
 py_config()
-# python:         /Users/jsmi26/opt/mambaforge/envs/scanvi/bin/python
-# libpython:      /Users/jsmi26/opt/mambaforge/envs/scanvi/lib/libpython3.10.dylib
-# pythonhome:     /Users/jsmi26/opt/mambaforge/envs/scanvi:/Users/jsmi26/opt/mambaforge/envs/scanvi
-# version:        3.10.13 | packaged by conda-forge | (main, Oct 26 2023, 18:09:17) [Clang 16.0.6 ]
-# numpy:          /Users/jsmi26/opt/mambaforge/envs/scanvi/lib/python3.10/site-packages/numpy
-# numpy_version:  1.24.4
+# python:         /Users/jsmi26/opt/mambaforge/envs/scanvi_scib/bin/python
+# libpython:      /Users/jsmi26/opt/mambaforge/envs/scanvi_scib/lib/libpython3.10.dylib
+# pythonhome:     /Users/jsmi26/opt/mambaforge/envs/scanvi_scib:/Users/jsmi26/opt/mambaforge/envs/scanvi_scib
+# version:        3.10.0 | packaged by conda-forge | (default, Nov 20 2021, 02:27:15) [Clang 11.1.0 ]
+# numpy:          /Users/jsmi26/opt/mambaforge/envs/scanvi_scib/lib/python3.10/site-packages/numpy
+# numpy_version:  1.26.0
 
 sc <- import("scanpy", convert = FALSE)
 scvi <- import("scvi", convert = FALSE)
@@ -1630,12 +1708,12 @@ https://docs.scvi-tools.org/en/stable/tutorials/notebooks/quick_start/api_overvi
 if(!exists("merged_split_obj")){
   # start with the subsetted dataset
   merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj_v4.RDS")
+  merged_split_obj <- clean_standardize_annots(merged_split_obj)
 }
 
 # Note: scvi-tools requires raw gene expression
 DefaultAssay(merged_split_obj) <- "RNA"
 merged_scanvi_obj <- DietSeurat(merged_split_obj, assays = "RNA")
-merged_scanvi_obj <- clean_standardize_annots(merged_scanvi_obj)
 
 # re-join layers since convertFormat expects a Seurat v3 object, not v5
 merged_scanvi_obj <- JoinLayers(merged_scanvi_obj)
@@ -2003,6 +2081,8 @@ adata_update$obs %>%
 
 ## Benchmarking 
 
+https://rstudio.github.io/reticulate/reference/py_save_object.html
+
 ```{r}
 #adata.X should contain a form of the data that is not integrated, but is normalized.
 bm1 <-  scib$Benchmarker(
@@ -2014,6 +2094,7 @@ bm1 <-  scib$Benchmarker(
 )
 bm1$benchmark()
 ```
+
 
 ```{r}
 bm2 <-  scib$Benchmarker(
@@ -2031,60 +2112,144 @@ benchmarking_df <-  bm1$get_results(min_max_scale=FALSE) %>%
   py_to_r() %>% 
   as.data.frame()
 
-# benchmarking_df$Total
+benchmarking_df
+# unlist(benchmarking_df$Total)
 ```
 
 ```{r fig.width=20}
-bm1$plot_results_table(min_max_scale=FALSE)
+outdir <- "results/integrated_ref/benchmark"
+# py_save_object(bm1, filename = file.path(outdir, "scib_benchmarker_batch.donor_subtype_standardized_object.pickle"))
+# py_save_object(bm2, filename = file.path(outdir, "scib_benchmarker_batch.dataset_subtype_standardized_object.pickle"))
+
+bm1$plot_results_table(min_max_scale=FALSE, save_dir = outdir)
+# file.rename(from = file.path(outdir, "scib_results.svg"), to = file.path(outdir,"scib_benchmarker_batch.donor_subtype_standardized.svg"))
+
+bm2$plot_results_table(min_max_scale=FALSE, save_dir = "results/integrated_ref/benchmark")
+# file.rename(from = file.path(outdir, "scib_results.svg"), to = file.path(outdir,"scib_benchmarker_batch.dataset_subtype_standardized.svg"))
 ```
+
 
 ### Update Seurat Object
 
 ```{r}
 if(!exists("merged_split_obj")){
   # start with the subsetted dataset
-  merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj_v4.RDS")
+  merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj_v4.RDS")  
+  merged_split_obj <- clean_standardize_annots(merged_split_obj)
 }
-adata_update <- anndata::read_h5ad(file.path(scanvi_dir, "embryonic_adult_spinal_cord_motor_cortex_scanvi_umap_mde_adata.h5ad"))
-sc$tl$pca(adata_update, n_comps=30L, use_highly_variable=TRUE)
+scanvi_dir <- "results/integrated_ref/scanvi/"
+if(!exists("adata_update")){
+  adata_update <- anndata::read_h5ad(file.path(scanvi_dir, "embryonic_adult_spinal_cord_motor_cortex_scanvi_benchmarking_adata.h5ad"))
+}
+# adata_update
+# merged_split_obj
+```
 
+```{r}
 # get the latent represenations
-# scvi_latent = adata_update$obsm[['X_scVI']]
-# rownames(scvi_latent) <- adata_update$obs_names
-# scanvi_latent = adata_update$obsm[['X_scANVI']]
-# rownames(scanvi_latent) <- adata_update$obs_names
-# 
-# # put it back in Seurat object
-# merged_split_obj[["scvi"]] <- CreateDimReducObject(embeddings = scvi_latent,
-#                                                    key = "scvi_", 
-#                                                    assay = 'RNA')
-# merged_split_obj[['scanvi']] <- CreateDimReducObject(embeddings = scanvi_latent, 
-#                                                      key = "scanvi_", 
-#                                                      assay = 'RNA')
+scvi_latent = adata_update$obsm[['X_scVI']]
+rownames(scvi_latent) <- adata_update$obs_names
+scanvi_latent = adata_update$obsm[['X_scANVI']]
+rownames(scanvi_latent) <- adata_update$obs_names
+# dim(scvi_latent) #87603    30
+# dim(scanvi_latent) #87603    30
+
+# put it back in Seurat object
+merged_split_obj[["scvi"]] <- CreateDimReducObject(embeddings = scvi_latent,
+                                                   key = "scvi_",
+                                                   assay = 'RNA')
+merged_split_obj[['scanvi']] <- CreateDimReducObject(embeddings = scanvi_latent,
+                                                     key = "scanvi_",
+                                                     assay = 'RNA')
+# merged_split_obj
 ```
 
 ```{r}
 merged_split_obj <- RunUMAP(merged_split_obj, 
-                            dims = 1:10, 
+                            dims = 1:30, 
                             reduction.name = "umap.scvi",
                             reduction = "scvi", 
                             n.components = 3) %>% 
                   RunUMAP(., 
-                            dims = 1:10, 
+                            dims = 1:30, 
                             reduction.name = "umap.scanvi",
                             reduction = "scanvi", 
                             n.components = 3) 
-DimPlot(merged_split_obj, 
-        reduction = "umap.scvi",
-        group.by = "subtype_standardized", 
-        pt.size=2)
 
+merged_split_obj
+
+merged_split_obj <- AddMetaData(merged_split_obj, as.data.frame(merged_split_obj@reductions$umap.scvi@cell.embeddings))
+merged_split_obj <- AddMetaData(merged_split_obj, as.data.frame(merged_split_obj@reductions$umap.scanvi@cell.embeddings))
+```
+
+```{r}
+custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors){
+  x_names <- paste0(dimred_colnames, "_1")
+  y_names <- paste0(dimred_colnames, "_2")
+  
+  labs_df <- metadata %>% 
+  select(all_of(colorby), matches(xy_names)) %>% 
+  group_by(!! colorby ) %>% 
+  summarise(x = mean(!! x_names ), 
+            y = mean(!! y_names))
+
+   plot <- ggplot(metadata, 
+         aes_string(x = x_names, y = y_names, color = colorby)) +
+    geom_point(alpha = 0.6) +
+    ggrepel::geom_text_repel(data = labs_df, 
+                             mapping = aes_string(x = "x", y = "y", label = colorby),
+                             color = "black") +
+    scale_color_manual(values = custom_colors) +
+    guides(color = guide_legend(override.aes = list(alpha = 1))) +
+    theme_classic() +
+    theme(legend.position = "bottom")
+   return(plot)
+}
+```
+
+
+```{r fig.height=10, fig.width=10}
+labs_df <- merged_split_obj@meta.data %>% 
+  select(subtype_standardized, matches("umapscanvi_[12]")) %>% 
+  group_by(subtype_standardized) %>% 
+  summarise(x = mean(umapscanvi_1), 
+            y = mean(umapscanvi_2)) 
+
+
+ggplot(merged_split_obj@meta.data, 
+       aes(x = umapscanvi_1, y = umapscanvi_2, color = subtype_standardized)) +
+  geom_point(alpha = 0.6) +
+  ggrepel::geom_text_repel(data = labs_df, 
+                           mapping = aes(x = x, y = y, label = subtype_standardized),
+                           color = "black") +
+  scale_color_manual(values = colors_vector) +
+  guides(color = guide_legend(override.aes = list(alpha = 1))) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+labs_df2 <- merged_split_obj@meta.data %>% 
+  select(subtype_standardized, matches("umapscvi_[12]")) %>% 
+  group_by(subtype_standardized) %>% 
+  summarise(x = mean(umapscvi_1), 
+            y = mean(umapscvi_2))
+
+ggplot(merged_split_obj@meta.data, 
+       aes(x = umapscvi_1, y = umapscvi_2, color = subtype_standardized)) +
+  geom_point(alpha = 0.6) +
+  ggrepel::geom_text_repel(data = labs_df2, 
+                           mapping = aes(x = x, y = y, label = subtype_standardized),
+                           color = "black") +
+  scale_color_manual(values = colors_vector) +
+  guides(color = guide_legend(override.aes = list(alpha = 1))) +
+  theme_classic() +
+  theme(legend.position = "bottom")
 ```
 
 
 # Differential Expression
 
 ```{r}
+DefaultAssay(merged_split_obj) <- 'SCT'
 # Found 13 SCT models. Recorrecting SCT counts using minimum median counts: 2842
 merged_split_obj <- PrepSCTFindMarkers(merged_split_obj)
 ```
@@ -2116,14 +2281,9 @@ TO DO: - plot expression of the genes in the Yadav dorsal and ventral
 clusters - plot SST cell-type expression - Add Allen institute donor age
 
 ```{r}
-merged_split_obj
-Idents(merged_split_obj) %>% head()
-```
-
-```{r}
 colors_mn <- c("Other"="grey80", "Motoneurons" = "#641A80FF", pMN = "#B63679FF" ,MN = "#FECE91FF")
 
-reds <- c("umap.unintegrated", "umap.harmony", "umap.rpca")
+reds <- c("umap.unintegrated", "umap.harmony", "umap.rpca","umap.scvi","umap.scanvi")
 meta_cols <- c("motorneuron", "age_clean", "donor", "tissue","top_level_annotation", "top_level_standardized", "class_label_standardized", "subtype_standardized")
 subdir <- c("subset")
 to_plot <- crossing(reds, meta_cols)
