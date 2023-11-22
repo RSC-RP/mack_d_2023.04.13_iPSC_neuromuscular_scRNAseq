@@ -1,0 +1,288 @@
+---
+title: "iPSC Motor Neurons Time-series Data"
+author: "Jenny L Smith"
+date: "`R Sys.Date()`"
+output: html_document
+---
+
+# Set-up 
+
+```{r set-up, echo=FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80),
+                      tidy=TRUE,
+                      fig.align='center',
+                      fig.width = 10, fig.height = 10,
+                      eval = TRUE)
+
+options(stringsAsFactors = FALSE, max.print = 100)
+options(Seurat.object.assay.version = 'v5')
+table = function (..., useNA = 'ifany') base::table(..., useNA = useNA)
+```
+
+```{r message=FALSE,warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(stringr)
+library(tibble)
+library(glue)
+
+library(ggplot2)
+library(plotly)
+library(RColorBrewer)
+
+library(Seurat)
+
+```
+
+```{r}
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter","dplyr")
+conflicted::conflict_prefer("saveRDS","base")
+```
+
+# Define Functions
+
+```{r}
+colors_vector <- c(RColorBrewer::brewer.pal(12, "Paired"), 
+            "blue1", "darkslategray3", "burlywood3", "#984EA3",
+            "seagreen1", "yellow2", "orchid", "darkblue", 
+            "lightsalmon2","slateblue1","lightskyblue4",
+            "azure2", "chartreuse1",  "lemonchiffon2",
+            "deeppink", "darkslategray1", "green4", "navajowhite", 
+            "brown4", "darkgoldenrod2", "deepskyblue1", "lightpink") %>% 
+  c(., ggpubr::get_palette("jco", 5)) %>% 
+  c("mediumpurple4","magenta", "peru") %>% 
+  c(ggsci::pal_igv()(51))
+
+length(colors_vector) 
+```
+
+# Parallelization 
+
+```{r}
+library(future)
+# check the current active plan
+plan()
+```
+
+```{r eval=FALSE}
+plan("multisession", workers = 16)
+plan()
+options(future.globals.maxSize = 60000 * 1024^2)
+```
+
+# Genomic References 
+
+```{r}
+
+```
+
+# Celltype Reference 
+
+```{r}
+cell_ref_obj <-  readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_dimred_seurat_obj_v4.RDS")  
+cell_ref_obj <- clean_standardize_annots(cell_ref_obj)
+```
+
+```{r}
+# Add unsupervised clusters 
+cell_ref_obj <- FindNeighbors(cell_ref_obj, reduction = "scanvi", dims = 1:30)
+cell_ref_obj <- FindClusters(cell_ref_obj)
+```
+
+```{r fig.width=10}
+DimPlot(cell_ref_obj, 
+        group.by = c("tech", "celltype","seurat_clusters"))
+```
+
+
+
+# Read in the Seurat Object
+
+```{r}
+#https://github.com/satijalab/seurat/issues/3622
+options(future.rng.onMisuse="ignore")
+```
+
+```{r}
+seurat_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
+
+seurat_obj
+```
+
+
+# Data Dimension Reduction 
+
+min.dist	
+This controls how tightly the embedding is allowed compress points together. Larger values ensure embedded points are moreevenly distributed, while smaller values allow the algorithm to optimise more accurately with regard to local structure. Sensible values are in the range 0.001 to 0.5.
+
+n.neighbors	
+This determines the number of neighboring points used in local approximations of manifold structure. Larger values will result in more global structure being preserved at the loss of detailed local structure. In general this parameter should often be in the range 5 to 50.
+
+```{r}
+# Add metadata and idents
+seurat_obj$id <- factor(seurat_obj$orig.ident, levels=unique(seurat_obj$orig.ident))
+seurat_obj$seurat_clusters <- seurat_obj$SCT_snn_res.1
+Idents(seurat_obj) <- seurat_obj$orig.ident
+
+# seurat_obj
+class(seurat_obj[["RNA"]]) #v5
+```
+
+```{r}
+seurat_obj <- seurat_obj %>% 
+          RunUMAP(reduction = "pca",
+                dims = 1:30,
+                # features = VariableFeatures(seurat_obj),
+                # assay = 'SCT',
+                n.components = 3,
+                n.neighbors = 30,# default 30
+                metric = "cosine",
+                min.dist = 0.01, # default 0.3
+                n.epochs = 500,
+                return.model = TRUE,
+                verbose = T)
+
+seurat_obj <- AddMetaData(seurat_obj,as.data.frame(seurat_obj@reductions$umap@cell.embeddings))
+# saveRDS(seurat_obj,"results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_seurat_obj_v5.RDS")
+```
+
+
+### Review Clustering plots
+
+```{r fig.height=10, fig.width=10}
+DimPlot(seurat_obj, 
+        reduction = "umap",
+        label = TRUE,
+        label.size = 8,
+        repel = TRUE,
+        dims = c(1,2)) +
+  scale_color_manual(values = colors_vector) +
+  theme(legend.position = 'bottom')
+
+
+DimPlot(seurat_obj, 
+        reduction = "umap",
+        group.by = 'seurat_clusters',
+        label = TRUE,
+        label.size = 10,
+        repel = TRUE,
+        dims = c(1,2)) +
+  scale_color_manual(values = colors_vector) +
+  theme(legend.position = 'bottom')
+```
+
+```{r fig.height=10}
+filt_d1 <- DimPlot(seurat_obj, 
+        group.by = c("batch","id"),
+        label = T, 
+        repel = T,
+        label.size = 7) + 
+  scale_color_manual(values = colors)
+
+filt_s1 <- DimPlot(seurat_obj, 
+        group.by = c("id"),
+        split.by = "batch",
+        label = T, 
+        repel = T,
+        label.size = 7) + 
+  scale_color_manual(values = colors)
+
+filt_d1
+filt_s1
+```
+
+# Transfer Labels 
+
+https://github.com/satijalab/seurat/issues/6675
+https://github.com/satijalab/seurat/issues/6054
+
+IntegrateLayers was completed on the SCT assay! So what do I do with 13 models??
+
+```{r eval=FALSE}
+#Found 13 SCT models. Recorrecting SCT counts using minimum median counts: 2408
+# this does not change the 13 individual models
+cell_ref_obj <- PrepSCTFindMarkers(cell_ref_obj)
+cell_ref_obj[["SCT"]]
+cell_ref_obj[["RNA"]] # has 1 integrated layer in RNA assay only
+
+cell_ref_split <- SplitObject(cell_ref_obj, split.by = "donor")
+# cell_ref_split
+features <- SelectIntegrationFeatures(object.list = cell_ref_split, 
+                                      nfeatures = 3000)
+cell_ref_split <- PrepSCTIntegration(object.list = cell_ref_split, 
+                                         anchor.features = features)
+ref_anchors <- FindIntegrationAnchors(object.list = cell_ref_split, 
+                                         normalization.method = "SCT",
+                                         anchor.features = features)
+integrated_ref_obj <- IntegrateData(anchorset = ref_anchors, 
+                                    normalization.method = "SCT")
+```
+
+normalization.method	
+Name of normalization method used: LogNormalize or SCT.
+
+reference.assay	--> use scanvi normalized (denoised) counts
+Name of the Assay to use from reference
+probably only 5k genes though 
+
+query.assay --> SCT	
+Name of the Assay to use from query
+
+```{r}
+anchors <- FindTransferAnchors(reference = cell_ref_obj, 
+                                  query = seurat_obj,
+                                  reduction = "pcaproject",#default
+                                  normalization.method = "SCT", 
+                                  reference.assay = "SCT",
+                                  query.assay = "SCT",
+                                  reference.reduction = "pca", 
+                                  dims = 1:50)
+```
+
+```{r}
+seurat_obj <- MapQuery(
+  anchorset = anchors_24,
+  query = seurat_obj,
+  reference = ref_24hr,
+  refdata = list(
+    cell_type_sub = "cell_type_sub",
+    cell_type_broad = "cell_type_broad",
+    ),
+  new.reduction.name = "integrated",
+  reference.reduction = "pca", 
+  reduction.model = "umap"
+)
+```
+
+```{r fig.height=15, fig.width=15}
+mapped_cell_ids_plot <- DimPlot(seurat_obj_test, 
+                           reduction = "ref.umap",
+                           group.by = "predicted.cell_type_broad",
+                           cols=ggpubr::get_palette("rickandmorty", 69),
+                           label = TRUE,
+                           label.size = 6,
+                           repel = TRUE) + 
+  NoLegend() + 
+  ggtitle("DMD transferred labels")
+
+
+# pdf("figures/soupX_corrected/mapped_cell_identitites_UMAP.pdf", height = 15, width = 15)
+mapped_cell_ids_plot
+# dev.off()
+```
+
+
+# Session Info
+
+```{r}
+session_info()
+```
+
+
+
+
+
+
