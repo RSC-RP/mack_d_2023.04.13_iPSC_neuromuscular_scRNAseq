@@ -1,0 +1,598 @@
+---
+title: "iPSC Motor Neurons Time-series Data"
+author: "Jenny L Smith"
+date: "`R Sys.Date()`"
+output: html_document
+---
+
+# Set-up 
+
+```{r set-up, echo=FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80),
+                      tidy=TRUE,
+                      fig.align='center',
+                      fig.width = 10, fig.height = 10,
+                      eval = TRUE)
+
+options(stringsAsFactors = FALSE, max.print = 100)
+options(Seurat.object.assay.version = 'v5')
+table = function (..., useNA = 'ifany') base::table(..., useNA = useNA)
+```
+
+```{r message=FALSE,warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(stringr)
+library(tibble)
+library(glue)
+
+library(ggplot2)
+library(plotly)
+library(RColorBrewer)
+
+library(Seurat)
+library(reticulate)
+library(anndata)
+```
+
+```{r message=FALSE, warning=FALSE}
+# python modules
+if(Sys.info()["sysname"] != "Linux"){
+  reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "opt/mambaforge/envs/scanvi_scib"))
+  sc <- import("scanpy", convert = FALSE)
+  scvi <- import("scvi", convert = FALSE)
+  scib <- import("scib_metrics.benchmark", convert = FALSE)
+}
+```
+
+```{r}
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter","dplyr")
+conflicted::conflict_prefer("saveRDS","base")
+```
+
+# Define Functions
+
+```{r}
+colors_vector <- c(RColorBrewer::brewer.pal(12, "Paired"), 
+            "blue1", "darkslategray3", "burlywood3", "#984EA3",
+            "seagreen1", "yellow2", "orchid", "darkblue", 
+            "lightsalmon2","slateblue1","lightskyblue4",
+            "azure2", "chartreuse1",  "lemonchiffon2",
+            "deeppink", "darkslategray1", "green4", "navajowhite", 
+            "brown4", "darkgoldenrod2", "deepskyblue1", "lightpink") %>% 
+  c(., ggpubr::get_palette("jco", 5)) %>% 
+  c("mediumpurple4","magenta", "peru") %>% 
+  c(ggsci::pal_igv()(51))
+
+length(colors_vector)
+```
+
+```{r}
+make_3D_umap <- function(metadata, idents_column, extra_label_cols=NULL, selected_colors=NULL){
+    "
+    idents_column is for labeling. ex) 'RNA_snn_res.0.7 as well as the UMAP colnames, eg UMAP_1, UMAP_2'
+    "
+    # 3D UMAP
+    plot.data <- metadata %>% 
+      select(all_of(c(idents_column)))
+    plot.data$label <- paste(rownames(plot.data))
+    if(!is.null(extra_label_cols)){
+      plot.data$label <- paste(plot.data$label, 
+                               metadata[[extra_label_cols]],
+                               sep = "\n")
+    }
+    
+    if(is.null(selected_colors)){
+      selected_colors <- c("lightseagreen", "gray50",  "darkgreen", "red4", "red", "turquoise4","black","yellow4","royalblue1","lightcyan3",
+                 "peachpuff3","lightskyblue","gray20","orange2","royalblue4","yellow3","gray80","darkorchid1","lawngreen","plum2", 
+                 "darkorange4","darkmagenta","mediumorchid1","lightslateblue","midnightblue", "tan2") #26
+    }
+
+    cnames <- colnames(plot.data)
+    formulas <- sapply(1:3, function(x) as.formula(paste0("~", grep(x, cnames, value = TRUE))))
+    fig <- plot_ly(data = plot.data, 
+        x = formulas[[1]], y = formulas[[2]], z = formulas[[3]], 
+        color = as.formula(paste0("~", idents_column[4])), 
+        colors = selected_colors, 
+        type = "scatter3d", 
+        mode = "markers", 
+        marker = list(size = 1, width=2), # controls size of points
+        text=~label, # This is that extra column we made earlier for which we will use for cell ID
+        hoverinfo="text") #When you visualize your plotly object, hovering your mouse pointer over a point shows cell names
+
+    return(fig)
+}
+```
+
+```{r}
+custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
+                           lab_size = 6, ny = 0, custom_lab_fill = NULL,
+                           add_text = TRUE, seed = 2023){
+  
+  # define x and y column names
+  x_names <- paste0(dimred_colnames, "_1")
+  y_names <- paste0(dimred_colnames, "_2")
+  
+  # define labels positions
+  labs_df <- metadata %>%
+    select(all_of(c(colorby, x_names, y_names))) %>%
+    group_by(!! as.name(colorby)) %>% 
+    summarise(x = mean(!! as.name(x_names)),
+              y = mean(!! as.name(y_names)))
+  
+   # define point sizes based on how many total cells in data
+   ncells <- nrow(metadata)
+   pt_size <- case_when(
+     ncells < 5e4 ~ 1,
+     ncells >= 5e4 & ncells < 1e5 ~ 0.5,
+     ncells >= 1e5 ~ 0.25)
+   
+   # Make the scatterplot
+   plot <- ggplot(metadata, 
+         aes_string(x = x_names, y = y_names, color = colorby)) +
+    geom_point(size = pt_size, alpha = 0.6) +
+    scale_color_manual(values = custom_colors) +
+    guides(color = guide_legend(override.aes = list(alpha = 1, size = 2))) +
+    theme_classic() +
+    theme(legend.position = "top")
+   
+   # customize label positions
+   if(is.character(ny)){
+     y_val <-  ifelse(grepl(ny, labs_df[[colorby]]), 1.5, 0)
+   }else{
+     y_val <- ny
+   }
+   
+   if(is.null(custom_lab_fill)){
+     fill_val <-  "white"
+   }else{
+     fill_val <- custom_lab_fill
+   }
+
+   if(add_text){
+     plot <- plot + 
+           ggrepel::geom_text_repel(data = labs_df, 
+                             mapping = aes_string(x = "x", y = "y",
+                                                  label = colorby, color = colorby),
+                             fill = fill_val,
+                             nudge_y = y_val,
+                             segment.colour = NA,
+                             label.size = 0.5, 
+                             size = lab_size,
+                             seed = seed)
+   }else{
+      plot <- plot + 
+         ggrepel::geom_label_repel(data = labs_df, 
+                           mapping = aes_string(x = "x", y = "y", 
+                                                label = colorby, color = colorby),
+                           fill = fill_val,
+                           nudge_y = y_val,
+                           segment.colour = NA,
+                           label.size = 0.5,
+                           size = lab_size,
+                           show.legend = FALSE,
+                           seed = seed)
+   }
+   
+   return(plot)
+}
+```
+
+```{r}
+custom_heatmaps <- function(seurat_obj, genes,columns = NULL, annot_colors = NULL, celltype="ALL"){
+  
+  if(celltype == "ALL"){
+    cell_ids <- colnames(seurat_obj)
+  }else{
+    cell_ids <- CellsByIdentities(seurat_obj, idents = celltype) %>%  unlist()
+  }
+  
+  print(c("The assay is", DefaultAssay(seurat_obj)))
+  genes <- intersect(genes,rownames(seurat_obj))
+  seurat_obj <- ScaleData(seurat_obj, features = genes)
+  
+  print("Extracting expression data")
+  norm_counts <- LayerData(seurat_obj[[DefaultAssay(seurat_obj)]], 
+                           layer = 'scale.data', 
+                           features = genes, 
+                           cells = cell_ids)
+  
+  col_annots <- seurat_obj@meta.data %>% 
+    select(-all_of("barcode")) %>% 
+    rownames_to_column("barcode") %>% 
+    filter(barcode %in% colnames(norm_counts)) %>% 
+    as.data.frame() %>%
+    set_rownames(.$barcode) %>%
+    select(all_of(columns))
+  
+  # row_annots <- temp %>% 
+  #   set_rownames(.$coords) %>% 
+  #   select(gene_name, p_val, p_val_adj) 
+  
+  x <- nrow(norm_counts)
+  fontsize_rows <- case_when(
+    x < 50 ~ 10,
+    x >= 50 & x < 100 ~ 8, 
+    x >= 100 & x < 200 ~ 6, 
+    x >= 200 ~ 4)
+
+
+  len <- 299
+  colors <- colorRampPalette(viridis::viridis(10))(len)
+  colors_list <- lapply(columns, function(x){
+          grps <- unique(pull(col_annots, all_of(x)))
+          n <- length(grps)
+          colors <- annot_colors[1:n] %>% 
+            set_names(grps)
+          return(colors)
+    })
+  names(colors_list) <- columns
+  
+
+  pheatmap::pheatmap(mat=as.matrix(norm_counts), 
+                     scale = "none", 
+                     color = colors,
+                     fontsize_row = fontsize_rows,
+                     # main = glue::glue("{celltype}: DA Peaks p<0.05 & FC >= {th}"),
+                     annotation_col = col_annots,
+                     annotation_colors = colors_list,
+                     # annotation_row = row_annots[,-1],
+                     labels_row = rownames(norm_counts),
+                     clustering_method = 'ward.D2',
+                     show_colnames = FALSE)
+}
+```
+
+
+# Parallelization 
+
+```{r}
+library(future)
+# check the current active plan
+plan()
+```
+
+```{r eval=FALSE}
+plan("multisession", workers = 16)
+plan()
+options(future.globals.maxSize = 60000 * 1024^2)
+```
+
+# Genomic References 
+
+```{r}
+
+```
+
+```{r}
+changho_refs_file <- "references/changho_updated_marker_genes_MN_IN_annotation.xlsx"
+marker_genes_chun <- purrr::map_dfr(openxlsx::getSheetNames(changho_refs_file)[2:4], function(x){
+  openxlsx::read.xlsx(changho_refs_file, sheet = x)
+}) %>% 
+  janitor::clean_names() %>% 
+  distinct() %>% 
+  mutate(group=paste(author, tolower(neural_pop)) %>% 
+           gsub("\\s","_",.)) %>% 
+  mutate(specific_markers_for_each_type_of_neuron=gsub("\\s","", specific_markers_for_each_type_of_neuron))
+
+# marker_genes_chun
+marker_genes_chun_list <- purrr::map(unique(marker_genes_chun$group), function(x){
+  marker_genes_chun %>%
+    filter(group == x) %>%
+    pull(specific_markers_for_each_type_of_neuron)
+}) %>% 
+  set_names(unique(marker_genes_chun$group))
+marker_genes_chun_list[["pan_neuronal_markers"]] <- str_split(marker_genes_chun[1,"pan_neuronal_markers"], pattern = ", ", n=3)[[1]]
+
+# marker_genes_chun_list
+```
+
+```{r}
+# https://github.com/regan-hamel/h-iPSCs-MNI/blob/master/R%20workflow_iMNs_LThiry_2020.Rmd
+marker_genes_iPSC <- list(MNPCs = c("CHAT", "ISL1", "ISL2", "MNX1", "OLIG2", "NEUROG2"),
+                INs = c("PAX3", "VSX2", "GATA3", "SOX14", "SIM1", "LBX1", "TLX3"),
+                NPCs = c("SOX1", "SOX2", "MKI67"),
+                Glial = c("SOX9", "S100B", "GFAP"),
+                Oligodendrocytes = c("PDGFRA", "GALC"),
+                iPSCs = c("NANOG", "POU5F1"))
+```
+
+```{r}
+rayon_marker_genes <- openxlsx::read.xlsx(xlsxFile = "resources/cell_refs/Rayon_2021/TableS2.xlsx") %>% 
+  janitor::clean_names() %>% 
+  mutate(id = paste("rayon", type, neural_pop, sep="_") %>% 
+           gsub("\\s", "_", .)) %>% 
+  mutate(description = case_when(
+    grepl("FP", id) ~ gsub("FP","floor plate", id),
+    grepl("RP", id) ~ gsub("RP","roof plate", id),
+    grepl("dp", id) ~ gsub("dp[0-9]", "dorsal interneuron progenitors", id),
+    grepl("p[0-2]", id) ~ gsub("p[0-2]", "intermediate interneuron progenitors", id),
+    grepl("p3", id) ~ gsub("p3","ventral interneuron progenitors p3", id), 
+    grepl("V[0-3]", id) ~ gsub("V[0-9].?", "ventral neurons", id),
+    grepl("MN", id) ~ gsub(".?MN","motor neuron", id),
+    grepl("dl[0-6]", id) ~ gsub("dl[0-9]", "dorsal Interneuron", id),
+    grepl("LTMR|LMTR", id) ~ gsub("C?-{0,1}(LTMR|LMTR).{0,}", "mechanoreceptor", id),
+    grepl("Proprioceptor|nociceptor", id) ~ gsub("Peripheral","PNS Peripheral",id),
+    grepl("Mesoderm|Eryt|Blood|Hema|Myoblast|Oligo", id) ~ paste("rayon",str_split_fixed(id, "_", n=3)[,2]),
+    TRUE ~ id
+  ) %>% gsub("_"," ", .) %>% gsub("rayon ","", .))
+
+
+# View(rayon_marker_genes)
+# head(rayon_marker_genes)
+
+rayon_marker_genes_long <- rayon_marker_genes %>% 
+  separate(genes_map_step1, into = paste0("gene",1:5), sep=", ") %>% 
+  separate(genes_map_step2, into = paste0("gene",5:20), sep = ", ") %>% 
+  pivot_longer(cols = matches("^gene"),
+               names_to = "colname",
+               values_to = "genes") %>% 
+  filter(!is.na(genes)) 
+
+# rayon_marker_genes_long
+
+rayon_marker_gene_list <-  purrr::map(unique(rayon_marker_genes_long$id), function(x){
+  rayon_marker_genes_long %>% 
+    filter(id == x) %>% 
+    pull(genes) %>% 
+    unique()
+})
+names(rayon_marker_gene_list) <- unique(rayon_marker_genes_long$id)
+# rayon_marker_gene_list
+```
+
+```{r}
+rayon_degs <- openxlsx::read.xlsx("resources/cell_refs/Yadav_2023/1-s2.0-S0896627323000314-mmc5.xlsx", sheet = 1, check.names = FALSE, sep.names = " ") %>% 
+  pivot_longer(cols = everything(),
+               names_to = "subtype_annotation", 
+               values_to = "degs") %>% 
+  mutate(names = gsub("-[0-9]{1,2}$","", subtype_annotation) %>% 
+           gsub(".+\\s(.+)$", "\\1", .) %>% 
+           gsub("\\/|-","_", .))
+
+esc_celltypes <- unique(rayon_degs$names)
+rayon_deg_gene_list <-  purrr::map(esc_celltypes, function(x){
+  rayon_degs %>%
+    filter(names == x) %>%
+    pull(degs) %>%
+    unique()
+})
+names(rayon_deg_gene_list) <- esc_celltypes
+```
+
+```{r}
+mn_subtype_markers <- openxlsx::read.xlsx("references/11122023_Alpha_Gamma_MNs_consolidated marker list.xlsx", sheet = 2)
+head(mn_subtype_markers)
+# table(mn_subtype_markers$celltype)
+```
+
+
+# Read in the Seurat Object
+
+```{r}
+#https://github.com/satijalab/seurat/issues/3622
+options(future.rng.onMisuse="ignore")
+```
+
+```{r}
+ipsc_obj <- 
+  readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_ipsc_obj_v5.RDS")
+  # readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
+
+
+ipsc_obj
+```
+
+## Update Data Dimension Reduction 
+
+min.dist	
+This controls how tightly the embedding is allowed compress points together. Larger values ensure embedded points are moreevenly distributed, while smaller values allow the algorithm to optimise more accurately with regard to local structure. Sensible values are in the range 0.001 to 0.5.
+
+n.neighbors	
+This determines the number of neighboring points used in local approximations of manifold structure. Larger values will result in more global structure being preserved at the loss of detailed local structure. In general this parameter should often be in the range 5 to 50.
+
+```{r eval=FALSE}
+# Add metadata and idents
+ipsc_obj$id <- factor(ipsc_obj$orig.ident, levels=unique(ipsc_obj$orig.ident))
+ipsc_obj$seurat_clusters <- ipsc_obj$SCT_snn_res.1
+Idents(ipsc_obj) <- ipsc_obj$orig.ident
+
+# ipsc_obj
+class(ipsc_obj[["RNA"]]) #v5
+
+# Update umap params
+ipsc_obj <- ipsc_obj %>% 
+          RunUMAP(reduction = "pca",
+                dims = 1:30,
+                # features = VariableFeatures(ipsc_obj),
+                assay = 'SCT',
+                n.components = 3,
+                n.neighbors = 30,# default 30
+                metric = "cosine",
+                min.dist = 0.01, # default 0.3
+                n.epochs = 500,
+                return.model = TRUE,
+                verbose = T)
+
+ipsc_obj <- AddMetaData(ipsc_obj,as.data.frame(ipsc_obj@reductions$umap@cell.embeddings))
+# saveRDS(ipsc_obj,"results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_ipsc_obj_v5.RDS")
+```
+
+
+### Review Clustering plots
+
+```{r fig.height=5, fig.width=5}
+DimPlot(ipsc_obj, 
+        reduction = "umap",
+        label = TRUE,
+        label.size = 8,
+        repel = TRUE,
+        dims = c(1,2)) +
+  scale_color_manual(values = colors_vector) +
+  theme(legend.position = 'bottom')
+
+
+DimPlot(ipsc_obj, 
+        reduction = "umap",
+        group.by = 'SCT_snn_res.1',
+        label = TRUE,
+        label.size = 10,
+        repel = TRUE,
+        dims = c(1,2)) +
+  scale_color_manual(values = colors_vector) +
+  theme(legend.position = 'bottom')
+```
+
+```{r fig.height=10}
+filt_d1 <- DimPlot(ipsc_obj, 
+        group.by = c("batch","id"),
+        label = T, 
+        repel = T,
+        label.size = 7) + 
+  scale_color_manual(values = colors_vector)
+
+filt_s1 <- DimPlot(ipsc_obj, 
+        group.by = c("id"),
+        split.by = "batch",
+        label = T, 
+        repel = T,
+        label.size = 7) + 
+  scale_color_manual(values = colors_vector)
+
+filt_d1
+filt_s1
+```
+
+
+# CTMR 
+
+```{r}
+ipsc_obj$time_category <- case_when(ipsc_obj$batch == "batch1" ~ "early", 
+                                    ipsc_obj$batch == "batch2" ~ "intermediate",
+                                    ipsc_obj$batch == "batch3" ~ "late")
+table(ipsc_obj$time_category)
+```
+
+```{r fig.height=10}
+time_cat_umap <- custom_dimplot(ipsc_obj@meta.data, 
+               dimred_colnames = "UMAP", 
+               colorby = "time_category",
+               lab_size = 10,
+               custom_colors = ggpubr::get_palette("simpsons", 3)) +
+  theme(axis.title = element_text(size=14),
+        axis.text = element_text(size=14), 
+        legend.title = element_text(size = 18),
+        legend.text = element_text(size = 18))
+
+# pdf("figures/day0_day50/CTMR/iPSC_day0-day50_time_category_UMAP.pdf", height = 12, width = 10)
+png("figures/day0_day50/CTMR/iPSC_day0-day50_time_category_UMAP.png", height = 10, width = 10, units = "in", res = 150)
+time_cat_umap
+dev.off()
+```
+
+override.aes = list(size = 5)
+
+```{r fig.height=10}
+ipsc_obj@meta.data$time_point_day <- gsub("iPSC_","", ipsc_obj@meta.data$id) %>% 
+  factor(., levels = unique(.))
+
+time_pt_umap <- custom_dimplot(ipsc_obj@meta.data, 
+               dimred_colnames = "UMAP", 
+               colorby = "time_point_day",
+               lab_size = 6,
+               add_text = FALSE,
+               custom_colors = tail(colors_vector, n = 15)) +
+  theme(axis.title = element_text(size=14),
+        axis.text = element_text(size=14), 
+        legend.title = element_blank(),
+        legend.text = element_text(size = 12)) +
+  guides(color = guide_legend(ncol=8))
+
+# png("figures/day0_day50/CTMR/iPSC_day0-day50_time_point_day_UMAP.png", height = 10, width = 10, units = "in", res = 150)
+time_pt_umap
+# dev.off()
+```
+
+# Motorneuron Markers
+
+```{r eval=FALSE}
+custom_heatmaps(seurat_obj = ipsc_obj, 
+                genes = marker_genes_chun_list$rayon_motor_neurons,
+                columns = c("SCT_snn_res.1", "time_point_day","time_category"),
+                annot_colors = colors_vector)
+
+custom_heatmaps(seurat_obj = ipsc_obj, 
+                genes = marker_genes_chun_list$yadav_motor_neurons,
+                annot_colors = c("SCT_snn_res.1", "time_point_day","time_category"))
+```
+
+
+```{r}
+# not what I really expected
+ipsc_obj <- AddModuleScore(ipsc_obj,
+                           seed = 11272023,
+                           features =  marker_genes_chun_list$rayon_motor_neurons)
+
+FeaturePlot(ipsc_obj, features = paste0("Cluster",1:11))
+```
+
+```{r fig.height=10}
+marker_genes <- marker_genes_chun_list[c("rayon_motor_neurons", "yadav_motor_neurons")]
+
+plots <- purrr::map(names(genes), function(geneset){
+  genes <- marker_genes[[geneset]]
+  
+  print(c("The assay is", DefaultAssay(ipsc_obj)))
+  genes <- intersect(genes, rownames(ipsc_obj))
+  ipsc_obj <- ScaleData(ipsc_obj, features = genes)
+  
+  print("Extracting expression data")
+  norm_counts <- LayerData(ipsc_obj[[DefaultAssay(ipsc_obj)]], 
+                           layer = 'scale.data', 
+                           features = genes)
+  
+  gene_colsums <- colSums(norm_counts)
+  ipsc_obj$mean_zscore <- gene_colsums
+  pct98 <- ipsc_obj$mean_zscore %>% quantile(., probs = 0.98)
+  ipsc_obj$mean_zscore[ipsc_obj$mean_zscore >= pct98] <- pct98
+  
+  plot <- ggplot(ipsc_obj@meta.data, aes(x = UMAP_1, y = UMAP_2)) +
+    geom_point(aes(color = mean_zscore), size = 0.5) +
+    scale_color_gradient(low = "navy", high = "red") +
+    labs(title = glue("Marker Gene Expression from {gsub('_',' ',geneset)}")) +
+    theme_classic() +
+    theme(plot.title = element_text(size=14),
+          axis.title = element_text(size=14),
+          axis.text = element_text(size=14), 
+          legend.position = "top",
+          legend.title = element_text(size = 12),
+          legend.text = element_text(size = 12))
+})
+names(plots) <- names(genes)
+```
+
+```{r fig.height=10}
+# png("figures/day0_day50/CTMR/iPSC_day0-day50_rayon_motor_neurons_mean_zscore_UMAP.png", height = 10, width = 10, units = "in", res = 150)
+plots$rayon_motor_neurons
+# dev.off()
+
+# png("figures/day0_day50/CTMR/iPSC_day0-day50_yadav_motor_neurons_mean_zscore_UMAP.png", height = 10, width = 10, units = "in", res = 150)
+plots$yadav_motor_neurons
+# dev.off()
+```
+
+
+# Session Info
+
+```{r}
+session_info()
+```
+
+
+
+
+
+
