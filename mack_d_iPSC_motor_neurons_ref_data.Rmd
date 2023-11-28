@@ -106,7 +106,6 @@ colors_vector <- c(RColorBrewer::brewer.pal(12, "Paired"),
 length(colors_vector) 
 ```
 
-
 ```{r}
 clean_standardize_annots <- function(seurat_obj){
   
@@ -229,15 +228,19 @@ custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors){
   x_names <- paste0(dimred_colnames, "_1")
   y_names <- paste0(dimred_colnames, "_2")
   
-  labs_df <- metadata %>% 
-  select(all_of(colorby), matches(xy_names)) %>% 
-  group_by(!! colorby ) %>% 
-  summarise(x = mean(!! x_names ), 
-            y = mean(!! y_names))
-
+  labs_df <- metadata %>%
+    select(all_of(c(colorby, x_names, y_names))) %>%
+    group_by(!! as.name(colorby)) %>% 
+    summarise(x = mean(!! as.name(x_names)),
+              y = mean(!! as.name(y_names)))
+   ncells <- nrow(metadata)
+   pt_size <- case_when(
+     ncells < 5e4 ~ 1,
+     ncells >= 5e4 & ncells < 1e5 ~ 0.5,
+     ncells >= 1e5 ~ 0.25)
    plot <- ggplot(metadata, 
          aes_string(x = x_names, y = y_names, color = colorby)) +
-    geom_point(alpha = 0.6) +
+    geom_point(size = pt_size, alpha = 0.6) +
     ggrepel::geom_text_repel(data = labs_df, 
                              mapping = aes_string(x = "x", y = "y", label = colorby),
                              color = "black") +
@@ -245,6 +248,7 @@ custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors){
     guides(color = guide_legend(override.aes = list(alpha = 1))) +
     theme_classic() +
     theme(legend.position = "bottom")
+   
    return(plot)
 }
 ```
@@ -1766,13 +1770,12 @@ https://docs.scvi-tools.org/en/stable/tutorials/notebooks/quick_start/api_overvi
 if(!exists("merged_split_obj")){
   # start with the subsetted dataset
   merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj_v4.RDS")
-  # merged_split_obj <- clean_standardize_annots(merged_split_obj)
+  merged_split_obj <- clean_standardize_annots(merged_split_obj)
 }
 
 # Note: scvi-tools requires raw gene expression
 DefaultAssay(merged_split_obj) <- "RNA"
 merged_scanvi_obj <- DietSeurat(merged_split_obj, assays = "RNA")
-merged_scanvi_obj <- clean_standardize_annots(merged_scanvi_obj)
 
 # re-join layers since convertFormat expects a Seurat v3 object, not v5
 merged_scanvi_obj <- JoinLayers(merged_scanvi_obj)
@@ -1785,6 +1788,8 @@ merged_scanvi_obj <- NormalizeData(merged_scanvi_obj)
 #   argument 1 is not a vector
 
 merged_scanvi_obj
+rm(merged_split_obj)
+gc()
 # table(merged_scanvi_obj$subtype_standardized)
 # table(merged_scanvi_obj$donor)
 # table(merged_scanvi_obj$dataset)
@@ -1850,6 +1855,10 @@ adata <- AnnData(
   var = as.data.frame(merged_scanvi_obj@assays$RNA@meta.features),
   layers = list(counts = tr_counts_mat)
 )
+# remove large objects from memory
+rm(tr_counts_mat)
+rm(merged_scanvi_obj)
+gc()
 
 # save another copy of the raw dataset in the object 
 adata$raw = adata
@@ -1885,15 +1894,12 @@ scvi$settings$seed <- as.integer(20231030)
 # https://scanpy.readthedocs.io/en/stable/generated/scanpy.pp.highly_variable_genes.html
 scvi$model$SCVI$setup_anndata(adata,
                               layer="counts", 
-                              categorical_covariate_keys = c('dataset','donor'))
+                              batch_key = "donor",
+                              # transfering labels DOES NOT work with multiple covariates
+                              # categorical_covariate_keys = c('dataset','donor')
+                              )
 
 # adata
-
-# remove large objects from memory
-rm(merged_split_obj)
-rm(tr_counts_mat)
-rm(merged_scanvi_obj)
-
 # min(round((20000 / adata$shape[1]) * 400), 400) # 91 max_epochs by default for training
 
 # create the model
@@ -1937,7 +1943,7 @@ model <- scvi$model$SCVI$load(dir_path = "results/integrated_ref/scanvi",
 
 SCVI_NORMALIZED_KEY <- "scvi_normalized"
 SCVI_LATENT_KEY <- "X_scVI"
-norm_cts <- model$get_normalized_expression(library_size=10e4) #should this be 1e4?
+norm_cts <- model$get_normalized_expression(library_size=1e4) #should this be 1e4?
 latent <- model$get_latent_representation()
 
 # unable to assign obsm in reticulate/anndataR in the same way as `adata$layers <- matrix()`. Limitation of the package currently. 
@@ -1947,8 +1953,7 @@ adata_update <- AnnData(
   obs = adata$obs, 
   var = adata$var, 
   uns = adata$uns,
-  obsm = list("_scvi_extra_categorical_covs" = adata$obsm$`_scvi_extra_categorical_covs`,
-              "X_scVI" = latent), 
+  obsm = list("X_scVI" = latent), 
   layers = list("counts" = adata$layers['counts'],
                 "scvi_normalized" = norm_cts)
 )
@@ -1957,14 +1962,14 @@ adata_update <- AnnData(
 # adata_update$X %>% quantile()
 # adata_update$layers[['counts']] %>% quantile()
 # adata_update$layers[['scvi_normalized']] %>% quantile()
-
-# run PCA then generate UMAP plots
-sc$tl$pca(adata_update, n_comps=30L, use_highly_variable=TRUE)
-sc$pp$neighbors(adata_update, n_pcs=30L, n_neighbors=20L)
-sc$tl$umap(adata_update, min_dist=0.3)
 ```
 
 ```{r eval=FALSE}
+# run PCA then generate UMAP plots of the unintegrated data 
+sc$tl$pca(adata_update, n_comps=30L, use_highly_variable=TRUE)
+sc$pp$neighbors(adata_update, n_pcs=30L, n_neighbors=20L)
+sc$tl$umap(adata_update, min_dist=0.3)
+
 pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_subtype_standardized_unintegrated_UMAP.pdf", height = 15, width = 20)
 sc$pl$umap(
     adata_update,
@@ -2014,6 +2019,7 @@ dev.off()
 ```
 
 ```{r eval=FALSE}
+# Run the semi-supervised model 
 scanvi_model <- scvi$model$SCANVI$from_scvi_model(
     model,
     adata=adata_update,
@@ -2050,28 +2056,30 @@ if(!exists("merged_split_obj")){
 # Add the scanvi latent data to the adata object 
 # Update the anndata object with all integration methods for benchmarking 
 scanvi_latent <- scanvi_model$get_latent_representation(adata_update)
+scanvi_norm_cts <- scanvi_model$get_normalized_expression(library_size=1e4) #should this be 1e4?
+
 adata_update <- AnnData(
   X = adata_update$X, #lognorm counts
   obs = adata_update$obs, 
   var = adata_update$var, 
   uns = adata_update$uns,
-  obsm = list("_scvi_extra_categorical_covs" = adata_update$obsm$`_scvi_extra_categorical_covs`,
-              "X_pca" =  adata_update$obsm[['X_pca']],
+  obsm = list("X_pca" =  adata_update$obsm[['X_pca']],
               "X_scVI" = adata_update$obsm[['X_scVI']], 
               "X_scANVI" = scanvi_latent, 
               "X_rpca" = merged_split_obj@reductions$integrated.rpca@cell.embeddings,
               "X_harmony" = merged_split_obj@reductions$harmony@cell.embeddings,
               "X_sct_pca" = merged_split_obj@reductions$pca@cell.embeddings
-              # "X_scANVI_MDE" = scanvi_mde
               ), 
   layers = list("counts" = adata_update$layers['counts'],
-                "scvi_normalized" = adata_update$layers['scvi_normalized'])
+                "scvi_normalized" = adata_update$layers['scvi_normalized'],
+                "scanvi_normalized" = scanvi_norm_cts
+                )
 )
 # adata_update
 anndata::write_h5ad(adata_update, filename = file.path(scanvi_dir, "embryonic_adult_spinal_cord_motor_cortex_scanvi_benchmarking_adata.h5ad"))
 ```
 
-```{r}
+```{r eval=FALSE}
 if(!exists("adata_update")){
   adata_update <- anndata::read_h5ad(
     filename = "results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_scanvi_benchmarking_adata.h5ad")
@@ -2107,7 +2115,7 @@ sc$pl$umap(
 dev.off()
 
 
-pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_donor_subset_motorneuron_scanvi_UMAP.pdf", height = 7, width = 15)
+pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_donor_subset_motorneuron_scanvi_UMAP.pdf", height = 10, width = 15)
 sc$pl$umap(
     adata_update[grepl("motor|pMN",adata_update$obs$subtype_standardized)],
     color=c('donor','subtype_standardized'),
@@ -2199,7 +2207,12 @@ merged_split_obj[["scvi"]] <- CreateDimReducObject(embeddings = scvi_latent,
 merged_split_obj[['scanvi']] <- CreateDimReducObject(embeddings = scanvi_latent,
                                                      key = "scanvi_",
                                                      assay = 'RNA')
+
+merged_split_obj[["SCANVI"]] <- CreateAssay5Object(data = t(adata_update$layers['scanvi_normalized']))
+merged_split_obj[["SCVI"]] <- CreateAssayObject(data = t(adata_update$layers['scvi_normalized']))
+
 # Run UMAP on the latent data
+DefaultAssay(merged_split_obj) <- 'SCT'
 merged_split_obj <- RunUMAP(merged_split_obj, 
                             dims = 1:30, 
                             reduction.name = "umap.scvi",
@@ -2219,7 +2232,7 @@ merged_split_obj <- AddMetaData(merged_split_obj, as.data.frame(merged_split_obj
 merged_split_obj <- AddMetaData(merged_split_obj, as.data.frame(merged_split_obj@reductions$umap.unintegrated@cell.embeddings))
 
 # Save the ob
-merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_dimred_seurat_obj_v4.RDS")  
+# saveRDS(merged_split_obj, "results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_dimred_seurat_obj_v4.RDS")  
 ```
 
 ```{r fig.height=10, fig.width=10}
@@ -2263,8 +2276,14 @@ ggplot(merged_split_obj@meta.data,
 # Differential Expression
 
 ```{r}
+merged_split_obj <-  readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_dimred_seurat_obj_v4.RDS")
+
+merged_split_obj
+```
+
+```{r}
 DefaultAssay(merged_split_obj) <- 'SCT'
-# Found 13 SCT models. Recorrecting SCT counts using minimum median counts: 2842
+# Found 13 SCT models. Recorrecting SCT counts using minimum median counts: 2408
 merged_split_obj <- PrepSCTFindMarkers(merged_split_obj)
 ```
 
@@ -2291,13 +2310,10 @@ cell_type_table <- merged_split_obj@meta.data %>%
 View(cell_type_table)
 ```
 
-TO DO: - plot expression of the genes in the Yadav dorsal and ventral
-clusters - plot SST cell-type expression - Add Allen institute donor age
-
 ```{r}
 colors_mn <- c("Other"="grey80", "Motoneurons" = "#641A80FF", pMN = "#B63679FF" ,MN = "#FECE91FF")
 
-reds <- c("umap.unintegrated", "umap.harmony", "umap.rpca","umap.scvi","umap.scanvi")
+reds <- c("umapunintegrated", "umapharmony", "umaprpca","umapscvi","umapscanvi")
 meta_cols <- c("motorneuron", "age_clean", "donor", "tissue","top_level_annotation", "top_level_standardized", "class_label_standardized", "subtype_standardized")
 subdir <- c("subset")
 to_plot <- crossing(reds, meta_cols)
@@ -2307,16 +2323,14 @@ purrr::map(1:nrow(to_plot), function(x){
     dplyr::slice(x)
   red <- to_plot[["reds"]]
   col <- to_plot[["meta_cols"]]
-
-  outfile <- glue("figures/cell_refs/allen_yadav_rayon_integrated/{subdir}/embryonic_adult_spinal_cord_motor_cortex_{gsub('umap.','', red)}_integrated_{col}_UMAP.pdf")
+  
+  outfile <- glue("figures/cell_refs/allen_yadav_rayon_integrated/{subdir}/embryonic_adult_spinal_cord_motor_cortex_{gsub('umap','', red)}_integrated_{col}_UMAP.pdf")
   cc <- ifelse(grepl("motorneuron", col), "colors_mn", "colors_vector")
-  dp <- DimPlot(merged_split_obj,
-        group.by = col,
-        reduction = red,
-        label = TRUE,
-        repel = TRUE) +
-    scale_color_manual(values = get(cc)) +
-    theme(legend.position = "bottom")
+   dp <- custom_dimplot(merged_split_obj@meta.data, 
+               colorby = col,
+               dimred_colnames = red, 
+               custom_colors = get(cc))
+
   
   pdf(outfile, height = 15, width = 15)
   print(dp)
@@ -2324,12 +2338,19 @@ purrr::map(1:nrow(to_plot), function(x){
 })
 ```
 
-
 ```{r}
-make_3D_umap(sobj_3d = merged_split_obj@meta.data, 
-             idents_column = c(paste0("umaprpca_",1:3), "top_level_standardized"), 
+rpca_3d <- make_3D_umap(metadata = merged_split_obj@meta.data, 
+             idents_column = c(paste0("umaprpca_",1:3), "subtype_standardized"), 
              extra_label_cols = c("subtype_standardized"), 
              selected_colors = colors_vector)
+
+scanvi_3d <- make_3D_umap(metadata = merged_split_obj@meta.data, 
+             idents_column = c(paste0("umapscanvi_",1:3), "subtype_standardized"), 
+             extra_label_cols = c("subtype_standardized"), 
+             selected_colors = colors_vector)
+
+# htmlwidgets::saveWidget(rpca_3d, "figures/cell_refs/allen_yadav_rayon_integrated/embryonic_adult_sc_mc_integrated_rpca_UMAP.html")
+# htmlwidgets::saveWidget(scanvi_3d, "figures/cell_refs/allen_yadav_rayon_integrated/embryonic_adult_sc_mc_integrated_scanvi_UMAP.html")
 ```
 
 

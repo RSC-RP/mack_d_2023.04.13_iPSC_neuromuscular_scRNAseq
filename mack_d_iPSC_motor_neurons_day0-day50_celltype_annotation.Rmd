@@ -33,7 +33,16 @@ library(plotly)
 library(RColorBrewer)
 
 library(Seurat)
+library(reticulate)
+library(anndata)
+```
 
+```{r message=FALSE, warning=FALSE}
+# python modules
+reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "opt/mambaforge/envs/scanvi_scib"))
+sc <- import("scanpy", convert = FALSE)
+scvi <- import("scvi", convert = FALSE)
+scib <- import("scib_metrics.benchmark", convert = FALSE)
 ```
 
 ```{r}
@@ -82,22 +91,18 @@ options(future.globals.maxSize = 60000 * 1024^2)
 # Celltype Reference 
 
 ```{r}
-cell_ref_obj <-  readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_dimred_seurat_obj_v4.RDS")  
-cell_ref_obj <- clean_standardize_annots(cell_ref_obj)
+cell_ref_adata <- anndata::read_h5ad("results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_scanvi_benchmarking_adata.h5ad")
+
+# cell_ref_adata
 ```
 
 ```{r}
-# Add unsupervised clusters 
-cell_ref_obj <- FindNeighbors(cell_ref_obj, reduction = "scanvi", dims = 1:30)
-cell_ref_obj <- FindClusters(cell_ref_obj)
+scanvi_dir <- "results/integrated_ref/scanvi/"
+if(!exists("scanvi_model")){
+  scanvi_model <- scvi$model$SCANVI$load(dir_path = scanvi_dir, 
+                                        prefix = "embryonic_adult_spinal_cord_motor_cortex_scanvi_")
+}
 ```
-
-```{r fig.width=10}
-DimPlot(cell_ref_obj, 
-        group.by = c("tech", "celltype","seurat_clusters"))
-```
-
-
 
 # Read in the Seurat Object
 
@@ -107,13 +112,12 @@ options(future.rng.onMisuse="ignore")
 ```
 
 ```{r}
-seurat_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
+ipsc_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_ipsc_obj_v5.RDS")
 
-seurat_obj
+ipsc_obj
 ```
 
-
-# Data Dimension Reduction 
+## Update Data Dimension Reduction 
 
 min.dist	
 This controls how tightly the embedding is allowed compress points together. Larger values ensure embedded points are moreevenly distributed, while smaller values allow the algorithm to optimise more accurately with regard to local structure. Sensible values are in the range 0.001 to 0.5.
@@ -121,22 +125,21 @@ This controls how tightly the embedding is allowed compress points together. Lar
 n.neighbors	
 This determines the number of neighboring points used in local approximations of manifold structure. Larger values will result in more global structure being preserved at the loss of detailed local structure. In general this parameter should often be in the range 5 to 50.
 
-```{r}
+```{r eval=FALSE}
 # Add metadata and idents
-seurat_obj$id <- factor(seurat_obj$orig.ident, levels=unique(seurat_obj$orig.ident))
-seurat_obj$seurat_clusters <- seurat_obj$SCT_snn_res.1
-Idents(seurat_obj) <- seurat_obj$orig.ident
+ipsc_obj$id <- factor(ipsc_obj$orig.ident, levels=unique(ipsc_obj$orig.ident))
+ipsc_obj$seurat_clusters <- ipsc_obj$SCT_snn_res.1
+Idents(ipsc_obj) <- ipsc_obj$orig.ident
 
-# seurat_obj
-class(seurat_obj[["RNA"]]) #v5
-```
+# ipsc_obj
+class(ipsc_obj[["RNA"]]) #v5
 
-```{r}
-seurat_obj <- seurat_obj %>% 
+# Update umap params
+ipsc_obj <- ipsc_obj %>% 
           RunUMAP(reduction = "pca",
                 dims = 1:30,
-                # features = VariableFeatures(seurat_obj),
-                # assay = 'SCT',
+                # features = VariableFeatures(ipsc_obj),
+                assay = 'SCT',
                 n.components = 3,
                 n.neighbors = 30,# default 30
                 metric = "cosine",
@@ -145,15 +148,15 @@ seurat_obj <- seurat_obj %>%
                 return.model = TRUE,
                 verbose = T)
 
-seurat_obj <- AddMetaData(seurat_obj,as.data.frame(seurat_obj@reductions$umap@cell.embeddings))
-# saveRDS(seurat_obj,"results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_seurat_obj_v5.RDS")
+ipsc_obj <- AddMetaData(ipsc_obj,as.data.frame(ipsc_obj@reductions$umap@cell.embeddings))
+# saveRDS(ipsc_obj,"results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_ipsc_obj_v5.RDS")
 ```
 
 
 ### Review Clustering plots
 
 ```{r fig.height=10, fig.width=10}
-DimPlot(seurat_obj, 
+DimPlot(ipsc_obj, 
         reduction = "umap",
         label = TRUE,
         label.size = 8,
@@ -163,7 +166,7 @@ DimPlot(seurat_obj,
   theme(legend.position = 'bottom')
 
 
-DimPlot(seurat_obj, 
+DimPlot(ipsc_obj, 
         reduction = "umap",
         group.by = 'seurat_clusters',
         label = TRUE,
@@ -175,41 +178,194 @@ DimPlot(seurat_obj,
 ```
 
 ```{r fig.height=10}
-filt_d1 <- DimPlot(seurat_obj, 
+filt_d1 <- DimPlot(ipsc_obj, 
         group.by = c("batch","id"),
         label = T, 
         repel = T,
         label.size = 7) + 
-  scale_color_manual(values = colors)
+  scale_color_manual(values = colors_vector)
 
-filt_s1 <- DimPlot(seurat_obj, 
+filt_s1 <- DimPlot(ipsc_obj, 
         group.by = c("id"),
         split.by = "batch",
         label = T, 
         repel = T,
         label.size = 7) + 
-  scale_color_manual(values = colors)
+  scale_color_manual(values = colors_vector)
 
 filt_d1
 filt_s1
 ```
 
-# Transfer Labels 
+
+# SCANVI Transfer Labels 
+
+### Prepare iPSC Anndata Object 
+
+```{r}
+# logNormalize to be consistent with the reference dataset
+DefaultAssay(ipsc_obj) <- 'RNA'
+ipsc_obj <- NormalizeData(ipsc_obj, normalization.method = "LogNormalize")
+# join layers to export the full raw counts matrix for all samples (layers)
+ipsc_obj[["RNA"]] <- JoinLayers(ipsc_obj[["RNA"]])
+
+# create an anndata object with transposed counts matrices
+ispc_adata <- AnnData(
+  X = t(as.matrix(LayerData(ipsc_obj,assay = 'RNA', layer = "data"))), 
+  obs = as.data.frame(ipsc_obj@meta.data),
+  layers = list(counts = t(as.matrix(LayerData(ipsc_obj,assay = 'RNA', layer = "counts")))
+                )
+)
+# Add matching columns for the celltype annotation from reference dataset
+ispc_adata$obs$dataset <- "iPSC"
+ispc_adata$obs$donor <- ispc_adata$obs$orig.ident
+# ispc_adata
+
+anndata::write_h5ad(ispc_adata, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_adata_obj.RDS")
+```
+
+```{r}
+#these are not integer counts after processing with soupX.
+quantile(ispc_adata$layers['counts'])
+    #   0%      25%      50%      75%     100% 
+    # 0.00     0.00     0.00     0.00 12450.19
+quantile(ispc_adata$X)
+#       0%      25%      50%      75%     100% 
+# 0.000000 0.000000 0.000000 0.000000 8.057314 
+```
+
+### Query Data 
+
+```{r fig.height=10}
+# Look at the integrated reference
+sc$pp$neighbors(cell_ref_adata, use_rep="X_scANVI")
+sc$tl$leiden(cell_ref_adata)
+sc$tl$umap(cell_ref_adata)
+
+sc$pl$umap(
+    cell_ref_adata,
+    color=c("top_level_standardized", "subtype_standardized"),
+    frameon=TRUE,
+    ncols=1L,
+)
+```
+
+```{r}
+length(colnames(ispc_adata))
+length(colnames(cell_ref_adata))
+# all 5000 most variable genes are present in the iPSC query set
+table(colnames(ispc_adata) %in% colnames(cell_ref_adata))
+```
+
+```{r}
+# prepare the query dataset
+scanvi_model$prepare_query_anndata(adata = ispc_adata,
+                                   reference_model =  scanvi_model)
+```
+
+```{r}
+# create the query model 
+scanvi_query = scanvi_model$load_query_data(adata = ispc_adata, 
+                                            reference_model = scanvi_model, 
+                                            accelerator = 'cpu',
+                                            device = 'auto')
+
+scanvi_query
+# All annotation labels are set as unknown by default. 
+ispc_adata$obs$subtype_standardized %>% table()
+```
+
+weight_decay of 0.0
+ *  ensures the latent representation of  reference cells will remain exactly the same
+
+```{r}
+# train the query model
+scanvi_query$train(accelerator = 'cpu',
+                   devices = 'auto',
+                   max_epochs=200L, 
+                   plan_kwargs=list("weight_decay" = 0.0))
+
+# Add the latent representation to the adata object
+ispc_adata$obsm['X_scANVI'] = scanvi_query$get_latent_representation()
+```
+
+```{r}
+# Examine the reduced dimension representation
+sc$pp$neighbors(ispc_adata, use_rep='X_scANVI')
+sc$tl$leiden(ispc_adata)
+sc$tl$umap(ispc_adata)
+
+sc$pl$umap(
+    ispc_adata,
+    color=c("donor", "subtype_standardized"),
+    frameon=FALSE,
+    ncols=2,
+)
+```
+
+
+# Seurat Transfer Labels 
 
 https://github.com/satijalab/seurat/issues/6675
 https://github.com/satijalab/seurat/issues/6054
 
 IntegrateLayers was completed on the SCT assay! So what do I do with 13 models??
 
+### Prepare Cell Ref Object 
+
+```{r eval=FALSE}
+cell_ref_obj <-  readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_dimred_ipsc_obj_v4.RDS")
+```
+
+```{r eval=FALSE}
+cell_ref_obj <- LogNormalize(cell_ref_obj)
+
+# Add unsupervised nearest neighbors graphs 
+cell_ref_obj <- FindNeighbors(cell_ref_obj, 
+                              reduction = "scanvi", 
+                              dims = 1:30, 
+                              # return.neighbor=TRUE,
+                              compute.SNN = TRUE,
+                              graph.name = c("scanvi_nn","scanvi_snn"))
+
+cell_ref_obj <- FindNeighbors(cell_ref_obj, 
+                          return.neighbor = TRUE,
+                          reduction = "scanvi", 
+                          dims = 1:30)
+
+Neighbors(cell_ref_obj)
+Graphs(cell_ref_obj)
+```
+
+```{r}
+# Add unsupervised clusters and compare to subtypes 
+cell_ref_obj <- FindClusters(cell_ref_obj, 
+                             resolution = c(0.5,1,2), 
+                             graph.name = "scanvi_snn", 
+                             group.singletons = FALSE,
+                             verbose = TRUE)
+
+plots <- DimPlot(cell_ref_obj, 
+                 reduction = "umap.scanvi",
+                 group.by = c("donor", "subtype_standardized","scanvi_snn_res.0.5"), 
+                 combine = FALSE)
+
+lapply(plots, function(p) p + 
+         scale_color_manual(values = colors_vector) + 
+         theme(legend.position = "top"))
+```
+
 ```{r eval=FALSE}
 #Found 13 SCT models. Recorrecting SCT counts using minimum median counts: 2408
-# this does not change the 13 individual models
+# PrepSCTFindMarkers does not change the 13 individual models
 cell_ref_obj <- PrepSCTFindMarkers(cell_ref_obj)
 cell_ref_obj[["SCT"]]
 cell_ref_obj[["RNA"]] # has 1 integrated layer in RNA assay only
 
 cell_ref_split <- SplitObject(cell_ref_obj, split.by = "donor")
 # cell_ref_split
+
+# https://github.com/satijalab/seurat/issues/6064
 features <- SelectIntegrationFeatures(object.list = cell_ref_split, 
                                       nfeatures = 3000)
 cell_ref_split <- PrepSCTIntegration(object.list = cell_ref_split, 
@@ -232,20 +388,30 @@ query.assay --> SCT
 Name of the Assay to use from query
 
 ```{r}
+table(rownames(ipsc_obj) %in% rownames(cell_ref_obj))
+# rownames(ipsc_obj)[!rownames(ipsc_obj) %in% rownames(cell_ref_obj)]
+table(rownames(cell_ref_obj) %in% rownames(ipsc_obj))
+```
+
+
+```{r}
 anchors <- FindTransferAnchors(reference = cell_ref_obj, 
-                                  query = seurat_obj,
-                                  reduction = "pcaproject",#default
+                                  query = ipsc_obj,
+                                  k.anchor = 20,
+                                  reduction = "pcaproject",
                                   normalization.method = "SCT", 
-                                  reference.assay = "SCT",
                                   query.assay = "SCT",
-                                  reference.reduction = "pca", 
-                                  dims = 1:50)
+                                  reference.assay = "SCT",
+                               
+                                  reference.neighbors = "RNA.nn",
+                                  reference.reduction = "scanvi",
+                                  dims = 1:30)
 ```
 
 ```{r}
-seurat_obj <- MapQuery(
+ipsc_obj <- MapQuery(
   anchorset = anchors_24,
-  query = seurat_obj,
+  query = ipsc_obj,
   reference = ref_24hr,
   refdata = list(
     cell_type_sub = "cell_type_sub",
@@ -258,7 +424,7 @@ seurat_obj <- MapQuery(
 ```
 
 ```{r fig.height=15, fig.width=15}
-mapped_cell_ids_plot <- DimPlot(seurat_obj_test, 
+mapped_cell_ids_plot <- DimPlot(ipsc_obj_test, 
                            reduction = "ref.umap",
                            group.by = "predicted.cell_type_broad",
                            cols=ggpubr::get_palette("rickandmorty", 69),
