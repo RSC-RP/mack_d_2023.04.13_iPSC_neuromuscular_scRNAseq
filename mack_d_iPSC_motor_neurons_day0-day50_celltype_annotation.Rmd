@@ -106,20 +106,29 @@ make_3D_umap <- function(metadata, idents_column, extra_label_cols=NULL, selecte
 ```
 
 ```{r}
-custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors, lab_size = 6, add_text = TRUE){
+custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
+                           lab_size = 6, ny = 0, custom_lab_fill = NULL,
+                           add_text = TRUE, seed = 2023){
+  
+  # define x and y column names
   x_names <- paste0(dimred_colnames, "_1")
   y_names <- paste0(dimred_colnames, "_2")
   
+  # define labels positions
   labs_df <- metadata %>%
     select(all_of(c(colorby, x_names, y_names))) %>%
     group_by(!! as.name(colorby)) %>% 
     summarise(x = mean(!! as.name(x_names)),
               y = mean(!! as.name(y_names)))
+  
+   # define point sizes based on how many total cells in data
    ncells <- nrow(metadata)
    pt_size <- case_when(
      ncells < 5e4 ~ 1,
      ncells >= 5e4 & ncells < 1e5 ~ 0.5,
      ncells >= 1e5 ~ 0.25)
+   
+   # Make the scatterplot
    plot <- ggplot(metadata, 
          aes_string(x = x_names, y = y_names, color = colorby)) +
     geom_point(size = pt_size, alpha = 0.6) +
@@ -128,25 +137,49 @@ custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors, la
     theme_classic() +
     theme(legend.position = "top")
    
+   # customize label positions
+   if(is.character(ny)){
+     y_val <-  ifelse(grepl(ny, labs_df[[colorby]]), 1.5, 0)
+   }else{
+     y_val <- ny
+   }
+   
+   if(is.null(custom_lab_fill)){
+     fill_val <-  "white"
+   }else{
+     fill_val <- custom_lab_fill
+   }
+
    if(add_text){
      plot <- plot + 
            ggrepel::geom_text_repel(data = labs_df, 
-                             mapping = aes_string(x = "x", y = "y", label = colorby),
-                             color = "black",
+                             mapping = aes_string(x = "x", y = "y",
+                                                  label = colorby, color = colorby),
+                             fill = fill_val,
+                             nudge_y = y_val,
                              segment.colour = NA,
-                             size = lab_size)
+                             label.size = 0.5, 
+                             size = lab_size,
+                             seed = seed)
    }else{
       plot <- plot + 
          ggrepel::geom_label_repel(data = labs_df, 
-                           mapping = aes_string(x = "x", y = "y", label = colorby),
-                           color = "black", 
+                           mapping = aes_string(x = "x", y = "y", 
+                                                label = colorby, color = colorby),
+                           fill = fill_val,
+                           nudge_y = y_val,
                            segment.colour = NA,
-                           size = lab_size)
+                           label.size = 0.5,
+                           size = lab_size,
+                           show.legend = FALSE,
+                           seed = seed)
    }
    
    return(plot)
 }
 ```
+
+
 
 # Parallelization 
 
@@ -391,7 +424,7 @@ names(predictions) <- ispc_adata$obs_names
 table(predictions)
 ```
 
-```{r}
+```{r fig.height=10}
 # Add predictions to the cell metadata
 ispc_adata$obs$subtype_standardized <- predictions
 
@@ -406,9 +439,7 @@ ispc_adata <- AnnData(
                 scanvi_norm = scanvi_query$get_normalized_expression()
                 )
 )
-```
 
-```{r fig.height=10, fig.width=20}
 # Examine the reduced dimension representation
 sc$pp$neighbors(ispc_adata, use_rep='X_scANVI')
 sc$tl$leiden(ispc_adata)
@@ -421,6 +452,23 @@ sc$pl$umap(
     ncols=2L,
 )
 ```
+
+```{r}
+# Update an anndata object & Add the latent representation to the adata object
+ispc_adata <- AnnData(
+  X = ispc_adata$X, 
+  obs = ispc_adata$obs,
+  uns = ispc_adata$uns,
+  obsp = ispc_adata$obsp,
+  obsm = list('X_scANVI' = ipsc_adata$obsm['X_scANVI']
+              ''  = ispc_adata$obsm['X_umap']),
+  layers = list(counts = ispc_adata$layers['counts'],
+                scanvi_norm = scanvi_query$get_normalized_expression()
+                )
+)
+anndata::write_h5ad(ispc_adata, "results/day0_day50/scanvi/iPSC_motor_neuron_day0-day50_time-course_scanvi_predictions_adata.h5ad")
+```
+
 
 ## Generate Seurat Object
 
@@ -463,6 +511,26 @@ ipsc_obj
 # saveRDS(ipsc_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS")
 ```
 
+```{r}
+ipsc_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS")
+
+subtype_labels <- ipsc_obj@meta.data %>% 
+  mutate(subtype_labels = case_when(
+    subtype_standardized == "progenitor" ~ "neuroglial\nprogenitor", 
+    subtype_standardized == "schwann" ~ "schwann cell",
+    subtype_standardized == "dl3"  ~ "dorsal layer3",
+    subtype_standardized == "dl4" ~ "dorsal layer4",
+    subtype_standardized == "opc" ~ "oligodendrocyte\nprogenitor",
+    subtype_standardized == "motorneurons" ~ "motor neuron",
+    TRUE ~ subtype_standardized)) %>% 
+  pull(subtype_labels)
+
+table(subtype_labels)
+ipsc_obj@meta.data$subtype_labels <- subtype_labels
+
+ipsc_obj
+```
+
 ```{r fig.height=10, fig.width=10}
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                dimred_colnames = "umapscanvi", 
@@ -470,23 +538,47 @@ custom_dimplot(metadata = ipsc_obj@meta.data,
                custom_colors = colors_vector)
 ```
 
+
+Also please make text and color circle big enough for all these
+three figures. please change:
+
+progenitor to neuroglial progenitor, 
+Schwann to Schwann cell,
+dl3  to dorsal layer3 
+dl4 to dorsal layer4
+opc to oligodendrocyte progenitor
+motorneuron to motor neuron
+
 ```{r}
+table(ipsc_obj@meta.data$subtype_standardized)
 length(unique(ipsc_obj@meta.data$subtype_standardized))
+
+celltypes <- unique(ipsc_obj@meta.data$subtype_labels)
+celltypes <- celltypes[order(celltypes)]
+
+ viridis::turbo(8) %>% 
+   set_names(celltypes)
 ```
 
 ```{r fig.height=10, fig.width=10}
+set.seed(2023)
+
 umap_scanvi_plot <- custom_dimplot(metadata = ipsc_obj@meta.data, 
                dimred_colnames = "umap", 
-               colorby = "subtype_standardized",
+               colorby = "subtype_labels",
                add_text = FALSE,
-               custom_colors = c(viridis::turbo(8))) +
+               ny = "oligod",
+               custom_lab_fill = c("white", rep("black",5), rep("white", 2)),
+               custom_colors = viridis::turbo(8)) +
   theme(axis.title = element_text(size=14),
         axis.text = element_text(size=14), 
         legend.title = element_blank(),
+        # legend.key = element_rect(fill=NA),
         legend.text = element_text(size = 12)) +
-  guides(color = guide_legend(ncol=8, override.aes = list(size = 4, alpha = 1)))
+  guides(color = guide_legend(ncol=4,override.aes = list(size = 4, alpha = 1)))
   
 # png("figures/day0_day50/CTMR/iPSC_day0-day50_scanvi_celltype_annots_UMAP.png", height = 10, width = 10, units = "in", res = 150)
+# pdf("figures/day0_day50/CTMR/iPSC_day0-day50_scanvi_celltype_annots_UMAP.pdf", height = 10, width = 10)
 umap_scanvi_plot
 # dev.off()
 ```
@@ -494,8 +586,6 @@ umap_scanvi_plot
 ```{r fig.height=10, fig.width=10}
 t <- 200
 p <- 120
-
-
 
 ipsc_obj$grps <- as.numeric(as.factor(ipsc_obj$subtype_standardized))
 ipsc_obj$colors <- viridis::turbo(8)[ipsc_obj$grps]
