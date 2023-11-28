@@ -68,6 +68,86 @@ colors_vector <- c(RColorBrewer::brewer.pal(12, "Paired"),
 length(colors_vector) 
 ```
 
+```{r}
+make_3D_umap <- function(metadata, idents_column, extra_label_cols=NULL, selected_colors=NULL){
+    "
+    idents_column is for labeling. ex) 'RNA_snn_res.0.7 as well as the UMAP colnames, eg UMAP_1, UMAP_2'
+    "
+    # 3D UMAP
+    plot.data <- metadata %>% 
+      select(all_of(c(idents_column)))
+    plot.data$label <- paste(rownames(plot.data))
+    if(!is.null(extra_label_cols)){
+      plot.data$label <- paste(plot.data$label, 
+                               metadata[[extra_label_cols]],
+                               sep = "\n")
+    }
+    
+    if(is.null(selected_colors)){
+      selected_colors <- c("lightseagreen", "gray50",  "darkgreen", "red4", "red", "turquoise4","black","yellow4","royalblue1","lightcyan3",
+                 "peachpuff3","lightskyblue","gray20","orange2","royalblue4","yellow3","gray80","darkorchid1","lawngreen","plum2", 
+                 "darkorange4","darkmagenta","mediumorchid1","lightslateblue","midnightblue", "tan2") #26
+    }
+
+    cnames <- colnames(plot.data)
+    formulas <- sapply(1:3, function(x) as.formula(paste0("~", grep(x, cnames, value = TRUE))))
+    fig <- plot_ly(data = plot.data, 
+        x = formulas[[1]], y = formulas[[2]], z = formulas[[3]], 
+        color = as.formula(paste0("~", idents_column[4])), 
+        colors = selected_colors, 
+        type = "scatter3d", 
+        mode = "markers", 
+        marker = list(size = 1, width=2), # controls size of points
+        text=~label, # This is that extra column we made earlier for which we will use for cell ID
+        hoverinfo="text") #When you visualize your plotly object, hovering your mouse pointer over a point shows cell names
+
+    return(fig)
+}
+```
+
+```{r}
+custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors, lab_size = 6, add_text = TRUE){
+  x_names <- paste0(dimred_colnames, "_1")
+  y_names <- paste0(dimred_colnames, "_2")
+  
+  labs_df <- metadata %>%
+    select(all_of(c(colorby, x_names, y_names))) %>%
+    group_by(!! as.name(colorby)) %>% 
+    summarise(x = mean(!! as.name(x_names)),
+              y = mean(!! as.name(y_names)))
+   ncells <- nrow(metadata)
+   pt_size <- case_when(
+     ncells < 5e4 ~ 1,
+     ncells >= 5e4 & ncells < 1e5 ~ 0.5,
+     ncells >= 1e5 ~ 0.25)
+   plot <- ggplot(metadata, 
+         aes_string(x = x_names, y = y_names, color = colorby)) +
+    geom_point(size = pt_size, alpha = 0.6) +
+    scale_color_manual(values = custom_colors) +
+    guides(color = guide_legend(override.aes = list(alpha = 1, size = 2))) +
+    theme_classic() +
+    theme(legend.position = "top")
+   
+   if(add_text){
+     plot <- plot + 
+           ggrepel::geom_text_repel(data = labs_df, 
+                             mapping = aes_string(x = "x", y = "y", label = colorby),
+                             color = "black",
+                             segment.colour = NA,
+                             size = lab_size)
+   }else{
+      plot <- plot + 
+         ggrepel::geom_label_repel(data = labs_df, 
+                           mapping = aes_string(x = "x", y = "y", label = colorby),
+                           color = "black", 
+                           segment.colour = NA,
+                           size = lab_size)
+   }
+   
+   return(plot)
+}
+```
+
 # Parallelization 
 
 ```{r}
@@ -102,6 +182,22 @@ if(!exists("scanvi_model")){
   scanvi_model <- scvi$model$SCANVI$load(dir_path = scanvi_dir, 
                                         prefix = "embryonic_adult_spinal_cord_motor_cortex_scanvi_")
 }
+```
+
+## UMAP
+
+```{r fig.height=10}
+# Look at the integrated reference
+sc$pp$neighbors(cell_ref_adata, use_rep="X_scANVI")
+sc$tl$leiden(cell_ref_adata)
+sc$tl$umap(cell_ref_adata)
+
+sc$pl$umap(
+    cell_ref_adata,
+    color=c("top_level_standardized", "subtype_standardized"),
+    frameon=TRUE,
+    ncols=1L,
+)
 ```
 
 # Read in the Seurat Object
@@ -153,7 +249,7 @@ ipsc_obj <- AddMetaData(ipsc_obj,as.data.frame(ipsc_obj@reductions$umap@cell.emb
 ```
 
 
-### Review Clustering plots
+## UMAP
 
 ```{r fig.height=10, fig.width=10}
 DimPlot(ipsc_obj, 
@@ -202,7 +298,7 @@ filt_s1
 
 ### Prepare iPSC Anndata Object 
 
-```{r}
+```{r eval=FALSE}
 # logNormalize to be consistent with the reference dataset
 DefaultAssay(ipsc_obj) <- 'RNA'
 ipsc_obj <- NormalizeData(ipsc_obj, normalization.method = "LogNormalize")
@@ -221,11 +317,11 @@ ispc_adata$obs$dataset <- "iPSC"
 ispc_adata$obs$donor <- ispc_adata$obs$orig.ident
 # ispc_adata
 
-anndata::write_h5ad(ispc_adata, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_adata_obj.RDS")
+# anndata::write_h5ad(ispc_adata, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_adata_obj.RDS")
 ```
 
-```{r}
-#these are not integer counts after processing with soupX.
+```{r eval=FALSE}
+# these are not integer counts after processing with soupX, so a warning is thinking the counts are normalized.
 quantile(ispc_adata$layers['counts'])
     #   0%      25%      50%      75%     100% 
     # 0.00     0.00     0.00     0.00 12450.19
@@ -234,36 +330,24 @@ quantile(ispc_adata$X)
 # 0.000000 0.000000 0.000000 0.000000 8.057314 
 ```
 
-### Query Data 
+### Train Query Model 
 
-```{r fig.height=10}
-# Look at the integrated reference
-sc$pp$neighbors(cell_ref_adata, use_rep="X_scANVI")
-sc$tl$leiden(cell_ref_adata)
-sc$tl$umap(cell_ref_adata)
-
-sc$pl$umap(
-    cell_ref_adata,
-    color=c("top_level_standardized", "subtype_standardized"),
-    frameon=TRUE,
-    ncols=1L,
-)
-```
-
-```{r}
+```{r eval=FALSE}
 length(colnames(ispc_adata))
 length(colnames(cell_ref_adata))
 # all 5000 most variable genes are present in the iPSC query set
 table(colnames(ispc_adata) %in% colnames(cell_ref_adata))
 ```
 
-```{r}
+weight_decay of 0.0
+ *  ensures the latent representation of  reference cells will remain exactly the same
+
+```{r eval=FALSE}
 # prepare the query dataset
 scanvi_model$prepare_query_anndata(adata = ispc_adata,
                                    reference_model =  scanvi_model)
-```
+# scanvi_model
 
-```{r}
 # create the query model 
 scanvi_query = scanvi_model$load_query_data(adata = ispc_adata, 
                                             reference_model = scanvi_model, 
@@ -273,23 +357,58 @@ scanvi_query = scanvi_model$load_query_data(adata = ispc_adata,
 scanvi_query
 # All annotation labels are set as unknown by default. 
 ispc_adata$obs$subtype_standardized %>% table()
-```
 
-weight_decay of 0.0
- *  ensures the latent representation of  reference cells will remain exactly the same
-
-```{r}
 # train the query model
 scanvi_query$train(accelerator = 'cpu',
                    devices = 'auto',
                    max_epochs=200L, 
                    plan_kwargs=list("weight_decay" = 0.0))
 
-# Add the latent representation to the adata object
-ispc_adata$obsm['X_scANVI'] = scanvi_query$get_latent_representation()
+# scanvi_query
+
+model_dir <- "results/day0_day50/scanvi"
+scanvi_query$save(dir_path = model_dir,
+                  prefix = 'iPSC_motor_neuron_day0-day50_time-course_scanvi_', 
+                  save_anndata = TRUE, overwrite=TRUE)
+```
+
+## Predictions
+
+```{r}
+model_dir <- "results/day0_day50/scanvi"
+if(!exists("scanvi_query")){
+  ispc_adata <- anndata::read_h5ad(file.path(model_dir, "/iPSC_motor_neuron_day0-day50_time-course_scanvi_adata.h5ad"))
+  scanvi_query <- scvi$model$SCANVI$load(dir_path = model_dir, 
+                                         prefix = "iPSC_motor_neuron_day0-day50_time-course_scanvi_")
+}
+scanvi_query
 ```
 
 ```{r}
+# predict the celltypes 
+predictions <- py_to_r(scanvi_query$predict())
+names(predictions) <- ispc_adata$obs_names
+table(predictions)
+```
+
+```{r}
+# Add predictions to the cell metadata
+ispc_adata$obs$subtype_standardized <- predictions
+
+# Update an anndata object & Add the latent representation to the adata object
+ispc_adata <- AnnData(
+  X = ispc_adata$X, 
+  obs = ispc_adata$obs,
+  uns = ispc_adata$uns,
+  obsm = list('X_scANVI' = scanvi_query$get_latent_representation()
+              ),
+  layers = list(counts = ispc_adata$layers['counts'],
+                scanvi_norm = scanvi_query$get_normalized_expression()
+                )
+)
+```
+
+```{r fig.height=10, fig.width=20}
 # Examine the reduced dimension representation
 sc$pp$neighbors(ispc_adata, use_rep='X_scANVI')
 sc$tl$leiden(ispc_adata)
@@ -299,9 +418,113 @@ sc$pl$umap(
     ispc_adata,
     color=c("donor", "subtype_standardized"),
     frameon=FALSE,
-    ncols=2,
+    ncols=2L,
 )
 ```
+
+## Generate Seurat Object
+
+```{r eval=FALSE}
+# create dim reduction object 
+ipsc_obj[['scanvi']] <- CreateDimReducObject(embeddings = ispc_adata$obsm[['X_scANVI']] %>% 
+                                               set_rownames(ispc_adata$obs_names),
+                                             key = "scanvi_",
+                                             assay = 'RNA')
+# create assay of the scanvi normalized data
+ipsc_obj[["SCANVI"]] <- CreateAssay5Object(data = t(ispc_adata$layers['scanvi_norm']))
+```
+
+```{r eval=FALSE}
+DefaultAssay(ipsc_obj) <- 'SCT'
+
+# Add the predictions to the seurat object 
+ipsc_obj <- AddMetaData(ipsc_obj, predictions, col.name = "subtype_standardized")
+
+# Run UMAP on the latent data
+ipsc_obj <-  RunUMAP(ipsc_obj, 
+                      dims = 1:30, 
+                      reduction.name = "umap.scanvi",
+                      reduction = "scanvi", 
+                      n.components = 3L,
+                      n.neighbors = 30,# default 30
+                      metric = "cosine",
+                      min.dist = 0.01, # default 0.3
+                      n.epochs = 500,
+                      return.model = TRUE,
+                      verbose = T) %>%
+    FindNeighbors(reduction = "scanvi",
+                  dims = 1:30, verbose = T) %>%
+    FindClusters(resolution = 0.8, verbose = T)
+
+# Add all Integration UMAPs to metadata
+ipsc_obj <- AddMetaData(ipsc_obj, as.data.frame(ipsc_obj@reductions$umap.scanvi@cell.embeddings))
+ipsc_obj
+# tail(colnames(ipsc_obj@meta.data))
+# saveRDS(ipsc_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS")
+```
+
+```{r fig.height=10, fig.width=10}
+custom_dimplot(metadata = ipsc_obj@meta.data, 
+               dimred_colnames = "umapscanvi", 
+               colorby = "subtype_standardized",
+               custom_colors = colors_vector)
+```
+
+```{r}
+length(unique(ipsc_obj@meta.data$subtype_standardized))
+```
+
+```{r fig.height=10, fig.width=10}
+umap_scanvi_plot <- custom_dimplot(metadata = ipsc_obj@meta.data, 
+               dimred_colnames = "umap", 
+               colorby = "subtype_standardized",
+               add_text = FALSE,
+               custom_colors = c(viridis::turbo(8))) +
+  theme(axis.title = element_text(size=14),
+        axis.text = element_text(size=14), 
+        legend.title = element_blank(),
+        legend.text = element_text(size = 12)) +
+  guides(color = guide_legend(ncol=8, override.aes = list(size = 4, alpha = 1)))
+  
+# png("figures/day0_day50/CTMR/iPSC_day0-day50_scanvi_celltype_annots_UMAP.png", height = 10, width = 10, units = "in", res = 150)
+umap_scanvi_plot
+# dev.off()
+```
+
+```{r fig.height=10, fig.width=10}
+t <- 200
+p <- 120
+
+
+
+ipsc_obj$grps <- as.numeric(as.factor(ipsc_obj$subtype_standardized))
+ipsc_obj$colors <- viridis::turbo(8)[ipsc_obj$grps]
+# ipsc_obj@meta.data %>% 
+#   group_by(subtype_standardized, grps, colors) %>% 
+#   dplyr::count()
+
+
+# pdf("Figures/TARGET_AML_ETS_Family_Fusions_plot3D_scatter_3D_long.pdf", height = 10, width = 12)
+plot3D::scatter3D(x=ipsc_obj$umap_1, y=ipsc_obj$umap_2, z=ipsc_obj$umap_3,
+                   bty = "b2",
+                  colvar=ipsc_obj$grps,
+                  col=unique(ipsc_obj$colors),
+                  pch=19,
+                  colkey=TRUE,
+                  # theta=t,
+                  phi=p,
+                  cex=0.1,
+                  scale = FALSE)
+```
+
+
+```{r}
+make_3D_umap(metadata = ipsc_obj@meta.data,
+             idents_column = c(paste0("umap_",1:3), "subtype_standardized"), 
+             extra_label_cols = c("subtype_standardized"), 
+             selected_colors = tail(colors_vector))
+```
+
 
 
 # Seurat Transfer Labels 
