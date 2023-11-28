@@ -206,19 +206,7 @@ make_3D_umap <- function(metadata, idents_column, extra_label_cols=NULL, selecte
         marker = list(size = 1, width=2), # controls size of points
         text=~label, # This is that extra column we made earlier for which we will use for cell ID
         hoverinfo="text") #When you visualize your plotly object, hovering your mouse pointer over a point shows cell names
-    
-    # sapply(plot.data[,1:3], range)
-    # xaxis
-    # axx <- list( nticks = 4, range = c(-10,10)) #select range of xaxis
-    # 
-    # # yaxis
-    # axy <- list(nticks = 4,  range = c(-10,10)) 
-    # 
-    # #zaxis
-    # axz <- list(nticks = 4, range = c(-10,10)) 
-    # 
-    # fig <- fig %>% plotly::layout(scene = list(xaxis=axx,yaxis=axy,zaxis=axz))
-    # fig_cube <- fig %>% plotly::layout(scene = list(xaxis=axx,yaxis=axy,zaxis=axz, aspectmode='cube')) # To maintain cubic aspect
+
     return(fig)
 }
 ```
