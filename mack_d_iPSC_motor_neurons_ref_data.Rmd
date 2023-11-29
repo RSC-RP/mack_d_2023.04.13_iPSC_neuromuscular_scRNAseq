@@ -1588,6 +1588,7 @@ importantly, the estimation of leverage scores only **requires data normalizatio
 
 ```{r eval=FALSE}
 if(!exists("merged_split_obj")){
+  # use the subset object
   merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_merged_split_normalized_seurat_obj.RDS")
 }
 
@@ -1837,7 +1838,7 @@ tr_counts_mat <- t(as.matrix(LayerData(merged_scanvi_obj, layer = "counts")))
 tr_norm_mat <- t(as.matrix(LayerData(merged_scanvi_obj, layer = "data")))
 
 # convert to anndata object
-adata <- AnnData(
+adata <- anndata::AnnData(
   X = tr_norm_mat, 
   obs = as.data.frame(merged_scanvi_obj@meta.data),
   var = as.data.frame(merged_scanvi_obj@assays$RNA@meta.features),
@@ -1934,7 +1935,8 @@ SCVI_LATENT_KEY <- "X_scVI"
 norm_cts <- model$get_normalized_expression(library_size=1e4) #should this be 1e4?
 latent <- model$get_latent_representation()
 
-# unable to assign obsm in reticulate/anndataR in the same way as `adata$layers <- matrix()`. Limitation of the package currently. 
+# unable to assign obsm in reticulate/anndataR in the same way as `adata$layers['my_data'] <- matrix()`. Limitation of the package currently. 
+# DOES NOT WORK: adata$obsm['my_dim_red'] <- pca.out.mat
 # https://github.com/theislab/zellkonverter/issues/75
 adata_update <- AnnData(
   X = tr_norm_mat[,adata$var_names], #use log-norm counts for benchmarking
@@ -2064,7 +2066,7 @@ adata_update <- AnnData(
                 )
 )
 # adata_update
-anndata::write_h5ad(adata_update, filename = file.path(scanvi_dir, "embryonic_adult_spinal_cord_motor_cortex_scanvi_benchmarking_adata.h5ad"))
+# anndata::write_h5ad(adata_update, filename = file.path(scanvi_dir, "embryonic_adult_spinal_cord_motor_cortex_scanvi_benchmarking_adata.h5ad"))
 ```
 
 ```{r eval=FALSE}
@@ -2125,7 +2127,16 @@ adata_update$obs %>%
 https://rstudio.github.io/reticulate/reference/py_save_object.html
 
 ```{r}
-#adata.X should contain a form of the data that is not integrated, but is normalized.
+scanvi_dir <- "results/integrated_ref/scanvi/"
+if(!exists("adata_update")){
+  adata_update <- anndata::read_h5ad(file.path(scanvi_dir, "embryonic_adult_spinal_cord_motor_cortex_scanvi_benchmarking_adata.h5ad"))
+}
+adata_update
+```
+
+```{r}
+# adata.X should contain a form of the data that is not integrated, but is normalized.
+# only running donor as batch since the scARCHES celltype prediction does not support 2 covs. 
 bm1 <-  scib$Benchmarker(
     adata_update,
     batch_key="donor",
@@ -2133,22 +2144,30 @@ bm1 <-  scib$Benchmarker(
     embedding_obsm_keys=c("X_pca","X_sct_pca","X_scVI","X_scANVI", "X_rpca","X_harmony"),
     n_jobs = 2L,
 )
-bm2 <-  scib$Benchmarker(
-    adata_update,
-    batch_key="dataset",
-    label_key="subtype_standardized",
-    embedding_obsm_keys=c("X_pca","X_sct_pca","X_scVI","X_scANVI", "X_rpca","X_harmony"),
-    n_jobs = 2L,
-)
+# bm2 <-  scib$Benchmarker(
+#     adata_update,
+#     batch_key="dataset",
+#     label_key="subtype_standardized",
+#     embedding_obsm_keys=c("X_pca","X_sct_pca","X_scVI","X_scANVI", "X_rpca","X_harmony"),
+#     n_jobs = 2L,
+# )
+# bm2$benchmark()
 
 bm1$benchmark()
-bm2$benchmark()
 ```
 
 ```{r}
 benchmarking_df <-  bm1$get_results(min_max_scale=FALSE) %>% 
   py_to_r() %>% 
-  as.data.frame()
+  rownames_to_column("integration_method") %>% 
+  janitor::clean_names() %>% 
+  filter(!grepl("Metric", integration_method)) %>% 
+  mutate(across(.cols = c(isolated_labels:total), 
+                .fns = unlist)) %>% 
+  mutate(across(.cols = batch_correction:total, 
+                .fns = ~round(., digits = 2))) %>%
+  select(integration_method, batch_correction:total, everything()) %>% 
+  arrange(desc(total))
 
 benchmarking_df
 # unlist(benchmarking_df$Total)
@@ -2156,16 +2175,16 @@ benchmarking_df
 
 ```{r fig.width=20}
 outdir <- "results/integrated_ref/benchmark"
-# py_save_object(bm1, filename = file.path(outdir, "scib_benchmarker_batch.donor_subtype_standardized_object.pickle"))
+write.csv(benchmarking_df, file.path(outdir, "scib_benchmarker_batch.donor_subtype_standardized.csv"), row.names = FALSE)
+py_save_object(bm1, filename = file.path(outdir, "scib_benchmarker_batch.donor_subtype_standardized_object.pickle"))
+bm1$plot_results_table(min_max_scale=FALSE, save_dir = outdir)
+file.rename(from = file.path(outdir, "scib_results.svg"), 
+            to = file.path(outdir,"scib_benchmarker_batch.donor_subtype_standardized.svg"))
+
 # py_save_object(bm2, filename = file.path(outdir, "scib_benchmarker_batch.dataset_subtype_standardized_object.pickle"))
-# 
-# bm1$plot_results_table(min_max_scale=FALSE, save_dir = outdir)
-# file.rename(from = file.path(outdir, "scib_results.svg"), to = file.path(outdir,"scib_benchmarker_batch.donor_subtype_standardized.svg"))
-# 
 # bm2$plot_results_table(min_max_scale=FALSE, save_dir = outdir)
 # file.rename(from = file.path(outdir, "scib_results.svg"), to = file.path(outdir,"scib_benchmarker_batch.dataset_subtype_standardized.svg"))
 ```
-
 
 ### Update Seurat Object
 

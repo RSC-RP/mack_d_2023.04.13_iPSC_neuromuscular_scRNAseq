@@ -110,6 +110,7 @@ make_3D_umap <- function(metadata, idents_column, extra_label_cols=NULL, selecte
 ```{r}
 custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
                            lab_size = 6, ny = 0, custom_lab_fill = NULL,
+                           color_text_grp = FALSE,
                            add_text = TRUE, seed = 2023){
   
   # define x and y column names
@@ -132,8 +133,8 @@ custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
    
    # Make the scatterplot
    plot <- ggplot(metadata, 
-         aes_string(x = x_names, y = y_names, color = colorby)) +
-    geom_point(size = pt_size, alpha = 0.6) +
+         aes_string(x = x_names, y = y_names)) +
+    geom_point(aes_string(color = colorby), size = pt_size, alpha = 0.6) +
     scale_color_manual(values = custom_colors) +
     guides(color = guide_legend(override.aes = list(alpha = 1, size = 2))) +
     theme_classic() +
@@ -151,23 +152,27 @@ custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
    }else{
      fill_val <- custom_lab_fill
    }
+   
+   if(color_text_grp){
+     mapping <- aes_string(x = "x", y = "y", label = colorby, color = colorby)
 
+   }else{
+     mapping <- aes_string(x = "x", y = "y", label = colorby)
+   }
+  
    if(add_text){
      plot <- plot + 
            ggrepel::geom_text_repel(data = labs_df, 
-                             mapping = aes_string(x = "x", y = "y",
-                                                  label = colorby, color = colorby),
-                             fill = fill_val,
+                             mapping = aes_string(x = "x", y = "y", label = colorby),
+                             color = "black",
                              nudge_y = y_val,
                              segment.colour = NA,
-                             label.size = 0.5, 
                              size = lab_size,
                              seed = seed)
    }else{
       plot <- plot + 
          ggrepel::geom_label_repel(data = labs_df, 
-                           mapping = aes_string(x = "x", y = "y", 
-                                                label = colorby, color = colorby),
+                           mapping = mapping,
                            fill = fill_val,
                            nudge_y = y_val,
                            segment.colour = NA,
@@ -379,8 +384,16 @@ options(future.rng.onMisuse="ignore")
 
 ```{r}
 ipsc_obj <- 
-  readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_ipsc_obj_v5.RDS")
+   readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS")
+  # readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_ipsc_obj_v5.RDS")
   # readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
+
+# Add metadata
+ipsc_obj$time_category <- case_when(ipsc_obj$batch == "batch1" ~ "early phase", 
+                                    ipsc_obj$batch == "batch2" ~ "intermediate phase",
+                                    ipsc_obj$batch == "batch3" ~ "late phase")
+ipsc_obj@meta.data$time_point_day <- gsub("iPSC_","", ipsc_obj@meta.data$id) %>% 
+  factor(., levels = unique(.))
 
 
 ipsc_obj
@@ -469,54 +482,84 @@ filt_s1
 
 # CTMR 
 
+## Overview 
+
 ```{r}
-ipsc_obj$time_category <- case_when(ipsc_obj$batch == "batch1" ~ "early", 
-                                    ipsc_obj$batch == "batch2" ~ "intermediate",
-                                    ipsc_obj$batch == "batch3" ~ "late")
 table(ipsc_obj$time_category)
 ```
 
 ```{r fig.height=10}
-time_cat_umap <- custom_dimplot(ipsc_obj@meta.data, 
-               dimred_colnames = "UMAP", 
+time_cat_umap <- custom_dimplot(metadata = ipsc_obj@meta.data, 
+               dimred_colnames = "umap", 
                colorby = "time_category",
                lab_size = 10,
+               add_text = FALSE,
+               color_text_grp = FALSE,
+               # custom_lab_fill = c("black","grey90","white"),
                custom_colors = ggpubr::get_palette("simpsons", 3)) +
   theme(axis.title = element_text(size=14),
         axis.text = element_text(size=14), 
-        legend.title = element_text(size = 18),
-        legend.text = element_text(size = 18))
+        legend.title = element_blank(),
+        legend.text = element_text(size = 18)) +
+  guides(color = guide_legend(ncol=3, override.aes = list(size = 6, alpha = 1)))
 
-# pdf("figures/day0_day50/CTMR/iPSC_day0-day50_time_category_UMAP.pdf", height = 12, width = 10)
-png("figures/day0_day50/CTMR/iPSC_day0-day50_time_category_UMAP.png", height = 10, width = 10, units = "in", res = 150)
+
+# pdf("figures/day0_day50/CTMR/iPSC_day0-day50_time_category_blackText_UMAP.pdf", height = 10, width = 10)
+# png("figures/day0_day50/CTMR/iPSC_day0-day50_time_category_UMAP.png", height = 10, width = 10, units = "in", res = 150)
 time_cat_umap
-dev.off()
+# dev.off()
 ```
 
-override.aes = list(size = 5)
-
 ```{r fig.height=10}
-ipsc_obj@meta.data$time_point_day <- gsub("iPSC_","", ipsc_obj@meta.data$id) %>% 
-  factor(., levels = unique(.))
-
 time_pt_umap <- custom_dimplot(ipsc_obj@meta.data, 
-               dimred_colnames = "UMAP", 
+               dimred_colnames = "umap", 
                colorby = "time_point_day",
                lab_size = 6,
                add_text = FALSE,
+               color_text_grp=TRUE,
                custom_colors = tail(colors_vector, n = 15)) +
   theme(axis.title = element_text(size=14),
         axis.text = element_text(size=14), 
         legend.title = element_blank(),
-        legend.text = element_text(size = 12)) +
-  guides(color = guide_legend(ncol=8))
+        legend.text = element_text(size = 18)) +
+  guides(color = guide_legend(ncol=8, override.aes = list(size = 6, alpha = 1)))
+
 
 # png("figures/day0_day50/CTMR/iPSC_day0-day50_time_point_day_UMAP.png", height = 10, width = 10, units = "in", res = 150)
+# pdf("figures/day0_day50/CTMR/iPSC_day0-day50_time_point_day_textColor_UMAP.pdf", height = 10, width = 10)
 time_pt_umap
 # dev.off()
 ```
 
-# Motorneuron Markers
+## Annotations 
+
+
+```{r fig.height=10, fig.width=10}
+set.seed(2023)
+
+umap_scanvi_plot <- custom_dimplot(metadata = ipsc_obj@meta.data, 
+               dimred_colnames = "umap", 
+               colorby = "subtype_labels",
+               add_text = FALSE,
+               ny = "oligod",
+               color_text_grp = TRUE,
+               custom_lab_fill = c("white", rep("black",5), rep("white", 2)),
+               custom_colors = viridis::turbo(8)) +
+  theme(axis.title = element_text(size=14),
+        axis.text = element_text(size=14), 
+        legend.title = element_blank(),
+        # legend.key = element_rect(fill=NA),
+        legend.text = element_text(size = 16)) +
+  guides(color = guide_legend(ncol=4,override.aes = list(size = 4, alpha = 1)))
+  
+# png("figures/day0_day50/CTMR/iPSC_day0-day50_scanvi_celltype_annots_UMAP.png", height = 10, width = 10, units = "in", res = 150)
+# pdf("figures/day0_day50/CTMR/iPSC_day0-day50_scanvi_celltype_annots_UMAP.pdf", height = 10, width = 10)
+umap_scanvi_plot
+# dev.off()
+```
+
+
+## Motorneuron Markers
 
 ```{r eval=FALSE}
 custom_heatmaps(seurat_obj = ipsc_obj, 
@@ -528,7 +571,6 @@ custom_heatmaps(seurat_obj = ipsc_obj,
                 genes = marker_genes_chun_list$yadav_motor_neurons,
                 annot_colors = c("SCT_snn_res.1", "time_point_day","time_category"))
 ```
-
 
 ```{r}
 # not what I really expected
@@ -542,7 +584,7 @@ FeaturePlot(ipsc_obj, features = paste0("Cluster",1:11))
 ```{r fig.height=10}
 marker_genes <- marker_genes_chun_list[c("rayon_motor_neurons", "yadav_motor_neurons")]
 
-plots <- purrr::map(names(genes), function(geneset){
+plots <- purrr::map(names(marker_genes), function(geneset){
   genes <- marker_genes[[geneset]]
   
   print(c("The assay is", DefaultAssay(ipsc_obj)))
@@ -559,29 +601,30 @@ plots <- purrr::map(names(genes), function(geneset){
   pct98 <- ipsc_obj$mean_zscore %>% quantile(., probs = 0.98)
   ipsc_obj$mean_zscore[ipsc_obj$mean_zscore >= pct98] <- pct98
   
-  plot <- ggplot(ipsc_obj@meta.data, aes(x = UMAP_1, y = UMAP_2)) +
+  plot <- ggplot(ipsc_obj@meta.data, aes(x = umap_1, y = umap_2)) +
     geom_point(aes(color = mean_zscore), size = 0.5) +
     scale_color_gradient(low = "navy", high = "red") +
     labs(title = glue("Marker Gene Expression from {gsub('_',' ',geneset)}")) +
     theme_classic() +
-    theme(plot.title = element_text(size=14),
-          axis.title = element_text(size=14),
-          axis.text = element_text(size=14), 
+    theme(plot.title = element_text(size=24),
+          axis.title = element_text(size=24),
+          axis.text = element_text(size=24), 
           legend.position = "top",
-          legend.title = element_text(size = 12),
-          legend.text = element_text(size = 12))
+          legend.title = element_text(size = 20),
+          legend.text = element_text(size = 24)) +
+    guides(color = guide_colorbar(barwidth = 15, barheight = 1.5))
 })
-names(plots) <- names(genes)
-```
+names(plots) <- names(marker_genes)
 
-```{r fig.height=10}
 # png("figures/day0_day50/CTMR/iPSC_day0-day50_rayon_motor_neurons_mean_zscore_UMAP.png", height = 10, width = 10, units = "in", res = 150)
+pdf("figures/day0_day50/CTMR/iPSC_day0-day50_rayon_motor_neurons_mean_zscore_UMAP.pdf", height = 10, width = 10)
 plots$rayon_motor_neurons
-# dev.off()
+dev.off()
 
 # png("figures/day0_day50/CTMR/iPSC_day0-day50_yadav_motor_neurons_mean_zscore_UMAP.png", height = 10, width = 10, units = "in", res = 150)
+pdf("figures/day0_day50/CTMR/iPSC_day0-day50_yadav_motor_neurons_mean_zscore_UMAP.pdf", height = 10, width = 10)
 plots$yadav_motor_neurons
-# dev.off()
+dev.off()
 ```
 
 

@@ -568,13 +568,14 @@ umap_scanvi_plot <- custom_dimplot(metadata = ipsc_obj@meta.data,
                colorby = "subtype_labels",
                add_text = FALSE,
                ny = "oligod",
+               color_text_grp = TRUE,
                custom_lab_fill = c("white", rep("black",5), rep("white", 2)),
                custom_colors = viridis::turbo(8)) +
   theme(axis.title = element_text(size=14),
         axis.text = element_text(size=14), 
         legend.title = element_blank(),
         # legend.key = element_rect(fill=NA),
-        legend.text = element_text(size = 12)) +
+        legend.text = element_text(size = 16)) +
   guides(color = guide_legend(ncol=4,override.aes = list(size = 4, alpha = 1)))
   
 # png("figures/day0_day50/CTMR/iPSC_day0-day50_scanvi_celltype_annots_UMAP.png", height = 10, width = 10, units = "in", res = 150)
