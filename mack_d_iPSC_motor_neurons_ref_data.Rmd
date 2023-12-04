@@ -2286,11 +2286,14 @@ merged_split_obj <- PrepSCTFindMarkers(merged_split_obj)
 ```{r}
 Idents(merged_split_obj) <- merged_split_obj$subtype_standardized
 marker_genes <- FindAllMarkers(merged_split_obj,
-                               test.use = "negbinom", 
+                               test.use = "wilcox", 
                                min.pct = 0.2,
+                               min.diff.pct = 0.1,
+                               min.cells.group = 20,
                                return.thresh = 0.001,
-                               min.cells.feature = 40)
+                               min.cells.feature = 20)
 ```
+
 
 # Figures
 
@@ -2350,14 +2353,26 @@ scanvi2_3d <- make_3D_umap(metadata = merged_split_obj@meta.data,
              selected_colors = colors_vector)
 
 # scanvi2_3d
-htmlwidgets::saveWidget(rpca_3d, "figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_rpca_UMAP.html")
-htmlwidgets::saveWidget(scanvi_3d, "figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_scanvi_UMAP.html")
-htmlwidgets::saveWidget(scanvi2_3d, "figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_scanvi_2covs_UMAP.html")
+# htmlwidgets::saveWidget(rpca_3d, "figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_rpca_UMAP.html")
+# htmlwidgets::saveWidget(scanvi_3d, "figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_scanvi_UMAP.html")
+# htmlwidgets::saveWidget(scanvi2_3d, "figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_scanvi_2covs_UMAP.html")
 
 ```
 
 
 ## Motor Neurons and subsets
+
+```{r}
+# motor neuron curated marker genes by changho
+mn_subtype_markers_incl <- mn_subtype_markers %>% 
+  filter(gene_name %in% rownames(merged_split_obj))
+
+mn_marker_list <- purrr::map(unique(mn_subtype_markers_incl$celltype) %>% set_names(., value = .), function(x){
+  mn_subtype_markers_incl %>% 
+    filter(celltype == x) %>% 
+    pull(gene_name)
+})
+```
 
 ```{r}
 Idents(merged_split_obj) <- merged_split_obj$subtype_standardized
@@ -2391,18 +2406,6 @@ mn_markers_plots <- purrr::map(names(mn_marker_list), function(x){
 ## Marker Gene Expression
 
 ```{r}
-# motor neuron curated marker genes by changho
-mn_subtype_markers_incl <- mn_subtype_markers %>% 
-  filter(gene_name %in% rownames(merged_split_obj))
-
-mn_marker_list <- purrr::map(unique(mn_subtype_markers_incl$celltype) %>% set_names(., value = .), function(x){
-  mn_subtype_markers_incl %>% 
-    filter(celltype == x) %>% 
-    pull(gene_name)
-})
-```
-
-```{r}
 sel_markers <- names(rayon_marker_gene_list) %>%  grep("pMN|MN|_V[0-9]|rayon_Oligodendrocyte_NA", ., value = T)
 sel_markers
 ```
@@ -2414,7 +2417,7 @@ Idents(subset_common_types) <- subset_common_types$subtype_standardized
 ```
 
 ```{r fig.height=15, fig.width=15,message=FALSE, warning=FALSE}
-plots <- purrr::map(names(marker_genes_chun_list), function(x){
+plots1 <- purrr::map(names(marker_genes_chun_list), function(x){
     fp <- FeaturePlot(merged_split_obj,
             features = marker_genes_chun_list[[x]],
             reduction = "umap.scanvi",
@@ -2425,9 +2428,26 @@ plots <- purrr::map(names(marker_genes_chun_list), function(x){
       patchwork::plot_annotation(title = x)
     
     outname <- glue("figures/cell_refs/allen_yadav_rayon_integrated/subset/marker_genes/integrated_cell_ref_scanvi_{x}_UMAP.pdf")
-    # pdf(outname)
+    pdf(outname, height = 25, width = 25)
     print(fp)
-    # dev.off()
+    dev.off()
+})
+
+plots2 <- purrr::map(names(marker_genes_chun_list), function(x){
+    print(x)
+    fp <- FeaturePlot(subset_common_types,
+            features = marker_genes_chun_list[[x]],
+            reduction = "umap.scanvi",
+            label.size = 2,
+            label = TRUE,
+            repel = TRUE) +
+      theme(legend.position = "bottom") +
+      patchwork::plot_annotation(title = x)
+    
+    outname <- glue("figures/cell_refs/allen_yadav_rayon_integrated/subset/marker_genes/integrated_cell_ref_scanvi_subset_{x}_UMAP.pdf")
+    pdf(outname, height = 25, width = 25)
+    print(fp)
+    dev.off()
 })
 ```
 
