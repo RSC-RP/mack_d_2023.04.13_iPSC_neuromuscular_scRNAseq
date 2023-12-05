@@ -335,7 +335,7 @@ idmap <- read.csv("resources/Homo_sapiens.GRCh38.98_gene_ids_alias.csv") %>%
   janitor::clean_names() %>% 
   select(geneid = gene_stable_id, everything())
 
-# head(idmap)
+head(idmap)
 # dim(idmap)
 ```
 
@@ -2277,13 +2277,11 @@ if(!exists("merged_split_obj")){
 merged_split_obj
 ```
 
-```{r}
+```{r eval=FALSE}
 DefaultAssay(merged_split_obj) <- 'SCT'
 # Found 13 SCT models. Recorrecting SCT counts using minimum median counts: 2408
 merged_split_obj <- PrepSCTFindMarkers(merged_split_obj)
-```
 
-```{r}
 Idents(merged_split_obj) <- merged_split_obj$subtype_standardized
 marker_genes <- FindAllMarkers(merged_split_obj,
                                test.use = "wilcox", 
@@ -2292,6 +2290,55 @@ marker_genes <- FindAllMarkers(merged_split_obj,
                                min.cells.group = 20,
                                return.thresh = 0.001,
                                min.cells.feature = 20)
+
+# write.csv(marker_genes, "results/integrated_ref/celltypes_vs_allothers_FindAllMarkers_degs.csv", row.names = FALSE)
+```
+
+```{r}
+marker_genes <- read.csv("results/integrated_ref/celltypes_vs_allothers_FindAllMarkers_degs.csv")
+```
+
+```{r}
+mg <- unique(marker_genes$gene)
+df <- data.frame(found_in_genename = mg %in% unique(idmap$gene_name), 
+                 found_in_genealias = mg %in% unique(idmap$gene_synonym))
+table(df)
+```
+
+```{r}
+top_marker_genes <- marker_genes %>% 
+  group_by(cluster) %>% 
+  dplyr::top_n(n = 10, wt = avg_log2FC) %>% 
+  ungroup()
+
+# View(top_marker_genes)
+head(top_marker_genes)
+# table(top_marker_genes$cluster) %>% length() #30 
+# length(unique(merged_split_obj$subtype_standardized)) #30
+```
+
+```{r fig.height=10, fig.width=10}
+plots2 <- purrr::map(unique(top_marker_genes$cluster), function(x){
+    print(x)
+  
+    features <- top_marker_genes %>% 
+      filter(cluster == x) %>% 
+      pull(gene)
+    
+    fp <- FeaturePlot(merged_split_obj,
+            features = features,
+            reduction = "umap.scanvi",
+            label.size = 2,
+            label = TRUE,
+            repel = TRUE) +
+      theme(legend.position = "bottom") +
+      patchwork::plot_annotation(title = glue("top 10 DEGs in {x}"))
+    
+    outname <- glue("figures/cell_refs/allen_yadav_rayon_integrated/subset/find_all_marker_genes/integrated_cell_ref_scanvi_subset_{x}_UMAP.pdf")
+    # pdf(outname, height = 15, width = 20)
+    print(fp)
+    # dev.off()
+})
 ```
 
 
