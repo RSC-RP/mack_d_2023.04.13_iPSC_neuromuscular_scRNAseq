@@ -269,10 +269,6 @@ options(future.globals.maxSize = 60000 * 1024^2)
 # Genomic References 
 
 ```{r}
-
-```
-
-```{r}
 changho_refs_file <- "references/changho_updated_marker_genes_MN_IN_annotation.xlsx"
 marker_genes_chun <- purrr::map_dfr(openxlsx::getSheetNames(changho_refs_file)[2:4], function(x){
   openxlsx::read.xlsx(changho_refs_file, sheet = x)
@@ -580,6 +576,10 @@ ipsc_obj <- AddModuleScore(ipsc_obj,
 
 FeaturePlot(ipsc_obj, features = paste0("Cluster",1:11))
 ```
+
+scale.data stores the pearson residuals - these are good for downstream clustering/PCA/UMAP/integration/transfer.
+
+data stores the corrected counts - these should be used for visualization/DE. Hope this helps!
 
 ```{r fig.height=10}
 marker_genes <- marker_genes_chun_list[c("rayon_motor_neurons", "yadav_motor_neurons")]

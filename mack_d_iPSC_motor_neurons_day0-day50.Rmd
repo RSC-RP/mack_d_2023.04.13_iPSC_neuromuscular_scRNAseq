@@ -33,13 +33,13 @@ library(plotly)
 library(RColorBrewer)
 
 library(Seurat)
-library(SeuratDisk)
-library(SeuratObject)
-library(SeuratWrappers)
-library(Matrix)
-library(SeuratObject)
-library(SeuratData)
-library(SeuratWrappers)
+# library(SeuratDisk)
+# library(SeuratObject)
+# library(SeuratWrappers)
+# library(Matrix)
+# library(SeuratObject)
+# library(SeuratData)
+# library(SeuratWrappers)
 
 library(scDblFinder)
 library(SoupX)
@@ -53,13 +53,10 @@ conflicted::conflict_prefer("saveRDS","base")
 
 # Parallelization 
 
-```{r}
+```{r eval=FALSE}
 library(future)
 # check the current active plan
 plan()
-```
-
-```{r}
 plan("multisession", workers = 16)
 plan()
 options(future.globals.maxSize = 60000 * 1024^2)
@@ -136,41 +133,61 @@ subcutaneous fat should be trimmed off.
 
 See https://support.10xgenomics.com/single-cell-gene-expression/software/pipelines/latest/output/gex-metrics
 
+
 ```{r}
-expn_mats <- dir("resources", pattern = "filtered_feature_bc.+h5|filtered_feature_bc_matrix.h5", recursive = TRUE, full.names = TRUE) %>% 
+sample_manifest <- read.csv("samples/mack_d_iPSC_motor_neurons_sample_manifest_v3.csv")
+
+head(sample_manifest)
+```
+
+### Define Manifest 
+
+```{r eval=FALSE}
+expn_mats <- dir("resources", pattern = "filtered_feature_bc.+h5|filtered_feature_bc_matrix.h5", 
+                 recursive = TRUE, full.names = TRUE) %>% 
   grep("too few", ., value=TRUE, invert = TRUE)
 
-raw_mats <- dir("resources", pattern = "raw_feature_bc", recursive = TRUE, full.names = TRUE) 
-
-summaries <- dir("resources", pattern = "^metrics_summary.csv", recursive = TRUE, full.names = TRUE) %>% 
-  grep("too few", ., value=TRUE, invert = TRUE)
+raw_mats <- dir("resources", pattern = "raw_feature_bc", 
+                recursive = TRUE, full.names = TRUE) 
 
 length(expn_mats)
 length(raw_mats)
-length(summaries)
+
+summaries <- dir("resources/summary_csv", 
+                 pattern = "*.csv", 
+                 recursive = FALSE, full.names = TRUE) %>% 
+  grep("too few", ., value=TRUE, invert = TRUE)
+
+length(summaries) 
 ```
 
-```{r}
+```{r eval=FALSE, warning=FALSE}
 sample_manifest <- data.frame(expression_matrix_path = expn_mats, 
-                              raw_matrix_path = raw_mats,
-                              summary_path=summaries) %>%
+                              raw_matrix_path = raw_mats, 
+                              summary_path = summaries ) %>%
   mutate(time_point=str_split_fixed(expression_matrix_path, pattern="/", n=3)[,2]) %>% 
   mutate(sample_id=paste0("iPSC_", tolower(time_point)), 
          organism="human", 
          tissue="motor_neuron", 
          cell_type="iPSC") %>% 
-  mutate(time_point=gsub("Day", "", time_point) %>% gsub("iPSC", 0, .) %>% as.numeric(.)) %>% 
+  mutate(time_point=gsub("Day|Rerun_Day", "", time_point) %>% gsub("iPSC", 0, .) %>% as.numeric(.)) %>% 
   mutate(batch=case_when(
     time_point < 15 ~ "batch1",
     time_point >= 15 & time_point < 30 ~ "batch2",
-    time_point >= 30 & time_point <= 50 ~ "batch3"
+    grepl("\\/Day(30|35|40|45|50)", expression_matrix_path) ~ "batch3",
+    grepl("Rerun_Day(35|40|45|50)", expression_matrix_path) ~ "batch4"
+    # time_point >= 30 & time_point <= 50 ~ "batch3"
   )) %>% 
   arrange(time_point) %>% 
-  filter(!grepl("too few cells", expression_matrix_path)) %>% 
   select(sample_id, time_point,batch, organism:cell_type, everything())
 
+# sample_manifest
+dim(sample_manifest)
+table(sample_manifest$batch)
+
 qc_data <- purrr::map_dfr(1:nrow(sample_manifest), function(i){
-    read.csv(sample_manifest[i,'summary_path']) %>% 
+  p <- sample_manifest[i,'summary_path']
+  read.csv(p) %>% 
       janitor::clean_names() %>% 
       mutate(sample_id=sample_manifest[i,'sample_id']) %>% 
       mutate_all(~as.character(.)) %>% 
@@ -185,10 +202,7 @@ sample_manifest <- sample_manifest %>%
   mutate(across(.cols = matches("_percent$"),
                 .fns =  ~as.numeric(gsub("\\%","", .x))))
 
-# sample_manifest
-dim(sample_manifest)
 # any(duplicated(sample_manifest$sample_id))
-# write.csv(sample_manifest, "samples/mack_d_iPSC_motor_neurons_sample_manifest_v2.csv", row.names = FALSE)
 ```
 
 ### CellRanger Summary Plots
@@ -210,7 +224,7 @@ length(colors) #35
 
 ```{r}
 qc_plots_data <- sample_manifest %>% 
-  select(sample_id, batch, 
+  select(sample_id, batch, time_point,
          estimated_number_of_cells,
          median_genes_per_cell, 
          number_of_reads,
@@ -219,7 +233,7 @@ qc_plots_data <- sample_manifest %>%
          reads_mapped_confidently_to_genome_percent,
          reads_mapped_confidently_to_transcriptome_percent, 
          total_genes_detected) %>% 
-  pivot_longer(cols = -c(sample_id,batch),
+  pivot_longer(cols = -c(sample_id,batch, time_point),
                names_to = "stat", 
                values_to = "value") %>% 
   mutate(sample_id=factor(sample_id, levels=unique(sample_id)))
@@ -233,15 +247,13 @@ p1 <- ggplot(qc_plots_data, aes(x = stat, y=value)) +
   geom_point(aes(color=sample_id), position = position_jitter(width = 0.2), 
              size=1.5) +
   facet_wrap(~stat, scales = 'free') +
-  scale_color_manual(values=c(brewer.pal(8, "Set1"), 
-                              ggpubr::get_palette(7, palette = "jco")[-1], 
-                              "darkseagreen2")) +
+  scale_color_manual(values=colors) +
   theme_classic() +
   theme(legend.position = 'top', 
         text = element_text(size=8))
 
 # pdf("figures/day0_day50/cellranger_qc_metrics_boxplots.pdf", height = 10, width = 10)
-# p1
+p1
 # dev.off()
 ```
 
@@ -250,19 +262,18 @@ p1 <- ggplot(qc_plots_data, aes(x = stat, y=value)) +
 p2 <- ggplot(qc_plots_data, aes(x = batch, y=value, fill=batch)) +
   geom_boxplot(outlier.color = NA, alpha=0.25) +
   geom_point(aes(color=sample_id), 
-             position = position_jitter(width = 0.2, height = 0), 
+             position = position_jitter(width = 0.2, height = 0, seed = 2023), 
              size=1.5) +
   facet_wrap(~stat, scales = 'free') +
-  scale_fill_manual(values=c("seashell3", "paleturquoise3", "pink")) +
-  scale_color_manual(values=c(brewer.pal(8, "Set1"), 
-                              ggpubr::get_palette(7, palette = "jco")[-1], 
-                              "darkseagreen2")) +
+  scale_fill_manual(values=c("seashell3", "paleturquoise3", "pink","dodgerblue1")) +
+  scale_color_manual(values=colors) +
+  ggrepel::geom_text_repel(aes(label = time_point), size = 3, position = position_jitter(width = 0.2, height = 0, seed = 2023)) +
   theme_classic() +
   theme(legend.position = 'top', 
         text = element_text(size=8))
 
 # pdf("figures/day0_day50/cellranger_qc_metrics_byBatch_boxplots.pdf", height = 10, width = 10)
-# p2
+p2
 # dev.off()
 ```
 
@@ -285,11 +296,8 @@ db <- ensDbFromGtf(gtf = "/gpfs/shared_data/10X/cellranger-7.0.0/refdata-gex-GRC
 edb <- ensembldb::EnsDb("resources/genome/Homo_sapiens.GRCh38.98.sqlite")
 
 # edb
-```
 
-```{r}
 gids <- ensembldb::keys(edb, keytype = "GENEID")
-
 idmap <- AnnotationDbi::select(edb, keytype="GENEID", 
                       keys = gids, 
                       columns = c("GENEID","GENEBIOTYPE","GENENAME","SYMBOL")) %>% 
@@ -297,14 +305,6 @@ idmap <- AnnotationDbi::select(edb, keytype="GENEID",
 
 # head(idmap)
 # dim(idmap) #36601
-```
-
-```{r}
-marker_genes_mc <- read.csv("resources/cell_refs/allen_institute/allen_institute_azimuth_marker_gene_list.csv") %>% 
-  mutate(Label = gsub("\\s{1,}|\\/|-","_", Label)) %>% 
-  pull(Markers , name = Label) %>% 
-  as.list() %>% 
-  sapply(.,  function(x) str_split(gsub("\\.","-",x), pattern = ", "))
 ```
 
 ```{r}
@@ -325,11 +325,10 @@ marker_genes_chun_list <- purrr::map(unique(marker_genes_chun$group), function(x
     pull(specific_markers_for_each_type_of_neuron)
 }) %>% 
   set_names(unique(marker_genes_chun$group))
-marker_genes_chun_list[["pan_neuronal_markers"]] <- str_split(marker_genes_chun[1,"pan_neuronal_markers"],pattern = ", ", n=3)[[1]]
+marker_genes_chun_list[["pan_neuronal_markers"]] <- str_split(marker_genes_chun[1,"pan_neuronal_markers"], pattern = ", ", n=3)[[1]]
 
 # marker_genes_chun_list
 ```
-
 
 ```{r}
 # https://github.com/regan-hamel/h-iPSCs-MNI/blob/master/R%20workflow_iMNs_LThiry_2020.Rmd
@@ -341,62 +340,112 @@ marker_genes_iPSC <- list(MNPCs = c("CHAT", "ISL1", "ISL2", "MNX1", "OLIG2", "NE
                 iPSCs = c("NANOG", "POU5F1"))
 ```
 
+```{r warning=FALSE}
+rayon_marker_genes <- openxlsx::read.xlsx(xlsxFile = "resources/cell_refs/Rayon_2021/TableS2.xlsx") %>% 
+  janitor::clean_names() %>% 
+  mutate(id = paste("rayon", type, neural_pop, sep="_") %>% 
+           gsub("\\s", "_", .)) %>% 
+  mutate(description = case_when(
+    grepl("FP", id) ~ gsub("FP","floor plate", id),
+    grepl("RP", id) ~ gsub("RP","roof plate", id),
+    grepl("dp", id) ~ gsub("dp[0-9]", "dorsal interneuron progenitors", id),
+    grepl("p[0-2]", id) ~ gsub("p[0-2]", "intermediate interneuron progenitors", id),
+    grepl("p3", id) ~ gsub("p3","ventral interneuron progenitors p3", id), 
+    grepl("V[0-3]", id) ~ gsub("V[0-9].?", "ventral neurons", id),
+    grepl("MN", id) ~ gsub(".?MN","motor neuron", id),
+    grepl("dl[0-6]", id) ~ gsub("dl[0-9]", "dorsal Interneuron", id),
+    grepl("LTMR|LMTR", id) ~ gsub("C?-{0,1}(LTMR|LMTR).{0,}", "mechanoreceptor", id),
+    grepl("Proprioceptor|nociceptor", id) ~ gsub("Peripheral","PNS Peripheral",id),
+    grepl("Mesoderm|Eryt|Blood|Hema|Myoblast|Oligo", id) ~ paste("rayon",str_split_fixed(id, "_", n=3)[,2]),
+    TRUE ~ id
+  ) %>% gsub("_"," ", .) %>% gsub("rayon ","", .))
+
+
+# View(rayon_marker_genes)
+# head(rayon_marker_genes)
+
+rayon_marker_genes_long <- rayon_marker_genes %>% 
+  separate(genes_map_step1, into = paste0("gene",1:5), sep=", ") %>% 
+  separate(genes_map_step2, into = paste0("gene",5:20), sep = ", ") %>% 
+  pivot_longer(cols = matches("^gene"),
+               names_to = "colname",
+               values_to = "genes") %>% 
+  filter(!is.na(genes)) 
+
+# rayon_marker_genes_long
+
+rayon_marker_gene_list <-  purrr::map(unique(rayon_marker_genes_long$id), function(x){
+  rayon_marker_genes_long %>% 
+    filter(id == x) %>% 
+    pull(genes) %>% 
+    unique()
+})
+names(rayon_marker_gene_list) <- unique(rayon_marker_genes_long$id)
+# rayon_marker_gene_list
+```
+
 ```{r}
-marker_genes_endoderm <- c("CXCR4", "KRT12", "SOX17", "KLF8", "MYCT1", "DKK4", "GATA4", "GATA6","SOX7", "EOMES","KRT19","CLDN6","FOXA1","FOXA2")
+rayon_degs <- openxlsx::read.xlsx("resources/cell_refs/Yadav_2023/1-s2.0-S0896627323000314-mmc5.xlsx", sheet = 1, check.names = FALSE, sep.names = " ") %>% 
+  pivot_longer(cols = everything(),
+               names_to = "subtype_annotation", 
+               values_to = "degs") %>% 
+  mutate(names = gsub("-[0-9]{1,2}$","", subtype_annotation) %>% 
+           gsub(".+\\s(.+)$", "\\1", .) %>% 
+           gsub("\\/|-","_", .))
 
-length(marker_genes_endoderm)
+esc_celltypes <- unique(rayon_degs$names)
+rayon_deg_gene_list <-  purrr::map(esc_celltypes, function(x){
+  rayon_degs %>%
+    filter(names == x) %>%
+    pull(degs) %>%
+    unique()
+})
+names(rayon_deg_gene_list) <- esc_celltypes
 ```
 
-```{r eval=FALSE}
-ref_expn <- read.delim("resources/human_protein_atlas/rna_single_cell_type.tsv") %>% 
-  janitor::clean_names()
-
-# head(ref_expn)
-```
-
-```
-wget https://storage.googleapis.com/gtex_analysis_v8/annotations/GTEx_Analysis_v8_Annotations_SampleAttributesDS.txt
-wget https://storage.googleapis.com/gtex_analysis_v8/rna_seq_data/GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz
-```
-https://gtexportal.org/home/tissue/Cells_Cultured_fibroblasts?tissueSelect=Cells_Cultured_fibroblasts
-
-```{r eval=FALSE}
-gtex_samples <- read.delim("resources/GTEX/GTEx_Analysis_v8_Annotations_SampleAttributesDS.txt")
-
-# head(gtex_samples)
-
-gtex_fibroblast_genes <- read.delim("resources/GTEX/GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct", comment.char = "#", skip = 2) %>% 
-  janitor::clean_names() %>% 
-  select(name:description, matches("fibroblast")) %>% 
-  arrange(desc(cells_cultured_fibroblasts)) %>% 
-  filter(!grepl("^MT-|^GAPDH|^RP[LS]", description)) %>% 
-  dplyr::slice(1:10)
-
-# head(gtex_fibroblast_genes)
-```
-
-```{r eval=FALSE}
-HB_genes <- RCurl::getURI(url = "https://www.genenames.org/cgi-bin/genegroup/download?id=940&type=node") %>% 
-  str_split(., "\n") %>% 
-  lapply(., function(x) str_split_fixed(x, pattern = "\t", n=13)) %>% 
-  as.data.frame() %>% 
-  set_colnames(.[1,]) %>% 
-  janitor::clean_names() %>% 
-  filter(!grepl("Approved symbol|^$", approved_symbol))
-
-# head(HB_genes)
+```{r}
+mn_subtype_markers <- openxlsx::read.xlsx("references/11122023_Alpha_Gamma_MNs_consolidated marker list.xlsx", sheet = 2)
+head(mn_subtype_markers)
+# table(mn_subtype_markers$celltype)
 ```
 
 
 # Read in iPSC Object
 
 ```{r}
+current_path <- file.path("results/day0_day50/seurat")
+current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS" #v5 Seurat Object
+  # "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj_v3.RDS" #v3 Seurat object
+  # "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj.RDS"
+preprocess_merge_obj <- "iPSC_motor_neuron_day0-day50_time-course_SCT_UMAP_LeidenClust_Seurat_obj.RDS"
+
+if(!exists("merged_obj") & !is.null(current_obj)){
+  message(glue("Loading the merged object {current_obj}"))
+  if(grepl("normalized", current_obj)){
+      merged_norm_obj <- readRDS(file.path(current_path, current_obj))
+      merged_norm_obj$id <- factor(merged_norm_obj$orig.ident, levels = c(unique(merged_norm_obj$orig.ident)))
+  }else{
+    merged_filt_obj <- readRDS(file.path(current_path, current_obj))
+  }
+
+}else if(!exists("merged_obj") & is.null(current_obj) ){
+  message(glue("Loading the preprocessed merged object {preprocess_merge_obj}"))
+  merged_obj <- readRDS(file.path(current_path, preprocess_merge_obj))
+}
+```
+
+
+# Generate iPSC Seurat Object 
+
+```{r}
 filtered_matrices <- sample_manifest %>% 
   pull(expression_matrix_path, name = sample_id)
 
 length(filtered_matrices)
-# temp <- Read10X_h5(filtered_matrices[3])
-# head(temp)
+
+
+# temp <- Read10X_h5(filtered_matrices[19])
+# head(temp[,1:5])
 # head(rownames(temp)) #gene symbols
 # grep("^MT-", rownames(temp), value = TRUE) #OK
 ```
@@ -436,12 +485,12 @@ if(!exists("seurat_objs")){
   seurat_objs <- readRDS("results/day0_day50/seurat/individual_objs/mack_iPSC_motor_neuron_day0-day50_seurat_obj_list.RDS")
 }
 
-length(seurat_objs) #15
+length(seurat_objs) #19
 names(seurat_objs)
 # sapply(seurat_objs, dim)
 
 # missing 1,630 - need to map these. 
-table(rownames(seurat_objs$iPSC_ipsc@assays$RNA@meta.features) %in% idmap$genename) 
+table(rownames(seurat_objs$iPSC_ipsc@assays$RNA) %in% idmap$genename) 
 
 merged_obj <- merge(x = seurat_objs$iPSC_ipsc,
                     y = seurat_objs[grep("iPSC_ipsc", names(seurat_objs), invert = TRUE)],
@@ -457,33 +506,10 @@ merged_obj
 
 if(exists("merged_obj")) {
   job::job({
-      saveRDS(merged_obj,"results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_Seurat_obj.RDS")
+      saveRDS(merged_obj,"results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_merged_seurat_obj.RDS")
   }, import = c("merged_obj"))
 }
 ```
-
-```{r}
-current_path <- file.path("results/day0_day50/seurat")
-current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS" #v5 Seurat Object
-  # "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj_v3.RDS" #v3 Seurat object
-  # "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj.RDS"
-preprocess_merge_obj <- "iPSC_motor_neuron_day0-day50_time-course_SCT_UMAP_LeidenClust_Seurat_obj.RDS"
-
-if(!exists("merged_obj") & !is.null(current_obj)){
-  message(glue("Loading the merged object {current_obj}"))
-  if(grepl("normalized", current_obj)){
-      merged_norm_obj <- readRDS(file.path(current_path, current_obj))
-      merged_norm_obj$id <- factor(merged_norm_obj$orig.ident, levels = c(unique(merged_norm_obj$orig.ident)))
-  }else{
-    merged_filt_obj <- readRDS(file.path(current_path, current_obj))
-  }
-
-}else if(!exists("merged_obj") & is.null(current_obj) ){
-  message(glue("Loading the preprocessed merged object {preprocess_merge_obj}"))
-  merged_obj <- readRDS(file.path(current_path, preprocess_merge_obj))
-}
-```
-
 
 ## QC Plots
 
@@ -513,9 +539,13 @@ https://satijalab.org/seurat/articles/sctransform_vignette.html
 https://nbisweden.github.io/workshop-scRNAseq/labs/compiled/seurat/seurat_01_qc.html#MitoRibo_filtering
 
 ```{r eval=FALSE}
+if(!exists("merged_obj")) {
+  merged_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_merged_seurat_obj.RDS")
+}
+
 merged_obj <- SCTransform(merged_obj, vst.flavor = "v2", verbose = T) %>%
     RunPCA(npcs = 50, verbose = T) %>%
-    RunUMAP(reduction = "pca", dims = 1:50, verbose = T) %>%
+    RunUMAP(n.components = 3L, reduction = "pca", dims = 1:50, verbose = T) %>%
     FindNeighbors(reduction = "pca", dims = 1:50, verbose = T) %>%
     FindClusters(resolution = 0.8, verbose = T)
 
@@ -527,9 +557,8 @@ new_meta <- merged_obj@meta.data %>%
 
 merged_obj <- AddMetaData(merged_obj,metadata = new_meta)
 merged_obj@meta.data %>% head()
-# merged_obj@reductions$umap # Number of dimensions: 2 
 
-# saveRDS(merged_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_SCT_UMAP_LeidenClust_Seurat_obj.RDS")
+saveRDS(merged_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_SCT_UMAP_Seurat_obj.RDS")
 ```
 
 ```{r fig.height=10, fig.width=10, eval=FALSE}
