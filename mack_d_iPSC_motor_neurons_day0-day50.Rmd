@@ -51,6 +51,23 @@ conflicted::conflict_prefer("filter","dplyr")
 conflicted::conflict_prefer("saveRDS","base")
 ```
 
+```{r}
+colors_vector <- c(RColorBrewer::brewer.pal(12, "Paired"), 
+            "blue1", "darkslategray3", "burlywood3", "#984EA3",
+            "seagreen1", "yellow2", "orchid", "darkblue", 
+            "lightsalmon2","slateblue1","lightskyblue4",
+            "azure2", "chartreuse1",  "lemonchiffon2",
+            "deeppink", "darkslategray1", "green4", "navajowhite", 
+            "brown4", "darkgoldenrod2", "deepskyblue1", "lightpink") %>% 
+  c(., ggpubr::get_palette("jco", 5)) %>% 
+  c("mediumpurple4","magenta", "peru") %>% 
+  c(ggsci::pal_igv()(51))
+
+length(colors_vector) 
+```
+
+
+
 # Parallelization 
 
 ```{r eval=FALSE}
@@ -208,21 +225,6 @@ sample_manifest <- sample_manifest %>%
 ### CellRanger Summary Plots
 
 ```{r}
-colors <- c("#E41A1C", "#377EB8", "#4DAF4A", "#F781BF", 
-            "blue1", "darkslategray3", "burlywood3", "#984EA3", 
-            "#FF7F00", "seagreen1", "maroon", "orchid", "darkblue", 
-            "azure2", "chartreuse1", "orange1", 
-            "deeppink", "darkslategray1", "green4", "navajowhite2", 
-            "brown3", "darkgoldenrod4", "deepskyblue1", "lightcoral") %>% 
-  c(., ggpubr::get_palette("jco", 4),
-    ggpubr::get_palette("npg", 4)) %>% 
-  c("darkorchid1","magenta", "peru") %>% 
-  c(ggsci::pal_igv()(51))
-
-length(colors) #35
-```
-
-```{r}
 qc_plots_data <- sample_manifest %>% 
   select(sample_id, batch, time_point,
          estimated_number_of_cells,
@@ -247,7 +249,7 @@ p1 <- ggplot(qc_plots_data, aes(x = stat, y=value)) +
   geom_point(aes(color=sample_id), position = position_jitter(width = 0.2), 
              size=1.5) +
   facet_wrap(~stat, scales = 'free') +
-  scale_color_manual(values=colors) +
+  scale_color_manual(values=colors_vector) +
   theme_classic() +
   theme(legend.position = 'top', 
         text = element_text(size=8))
@@ -266,7 +268,7 @@ p2 <- ggplot(qc_plots_data, aes(x = batch, y=value, fill=batch)) +
              size=1.5) +
   facet_wrap(~stat, scales = 'free') +
   scale_fill_manual(values=c("seashell3", "paleturquoise3", "pink","dodgerblue1")) +
-  scale_color_manual(values=colors) +
+  scale_color_manual(values=colors_vector) +
   ggrepel::geom_text_repel(aes(label = time_point), size = 3, position = position_jitter(width = 0.2, height = 0, seed = 2023)) +
   theme_classic() +
   theme(legend.position = 'top', 
@@ -558,15 +560,31 @@ new_meta <- merged_obj@meta.data %>%
 merged_obj <- AddMetaData(merged_obj,metadata = new_meta)
 merged_obj@meta.data %>% head()
 
-saveRDS(merged_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_SCT_UMAP_Seurat_obj.RDS")
+# saveRDS(merged_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_SCT_UMAP_Seurat_obj.RDS")
+```
+
+```{r eval=FALSE}
+# include RNA lognormalized counts for certain data processing steps that require it. 
+DefaultAssay(merged_obj) <- "RNA"
+merged_obj <- NormalizeData(merged_obj, normalization.method = "LogNormalize")
+merged_obj <- FindVariableFeatures(merged_obj, nfeatures = 3000)
+```
+
+```{r}
+# Cannot visualize the 3000 var genes in SCT with layers.
+# Instead Extract the individual var feature dataframes per individual sample. 
+DefaultAssay(merged_obj) <- "SCT"
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(merged_obj), 10)
+var_feats_df <- SCTResults(merged_obj, slot = "feature.attributes")
 ```
 
 ```{r fig.height=10, fig.width=10, eval=FALSE}
-# pdf("figures/day0_day50/iPSC_MN_seurat_UMAP_noFilter.pdf", height = 15, width = 15)
+pdf("figures/day0_day50/iPSC_MN_seurat_UMAP_noFilter.pdf", height = 15, width = 15)
 DimPlot(merged_obj, label = T, repel = T, label.size = 7) + 
-  scale_color_manual(values = colors) +
+  scale_color_manual(values = colors_vector) +
   ggtitle("Unsupervised clustering")
-# dev.off()
+dev.off()
 
 merged_obj$time_point_day <- factor(paste0("day_",merged_obj$time_point),
                                     levels=unique(paste0("day_",merged_obj$time_point)))
@@ -578,44 +596,32 @@ d1 <- DimPlot(merged_obj,
         label = T, 
         repel = T,
         label.size = 7) + 
-  scale_color_manual(values = colors)
+  scale_color_manual(values = colors_vector)
 
-# pdf("figures/day0_day50/iPSC_MN_seurat_UMAP_batch_day_noFilter.pdf", height = 15, width = 20)
+pdf("figures/day0_day50/iPSC_MN_seurat_UMAP_batch_day_noFilter.pdf", height = 15, width = 20)
 d1
-# dev.off()
+dev.off()
 
-# pdf("figures/day0_day50/iPSC_MN_seurat_PCA_elbow_noFilter.pdf", height = 5, width = 10)
-# ElbowPlot(merged_obj,ndims = 50)
-# dev.off()
-# 
-# pdf("figures/day0_day50/iPSC_MN_seurat_PCA_loadings_noFilter.pdf", height = 10, width = 10)
-# VizDimLoadings(merged_obj, dims = 1:4, reduction = "pca")
-# dev.off()
-# 
-# # Identify the 10 most highly variable genes
-# top10 <- head(VariableFeatures(merged_obj), 10)
-# 
-# # plot variable features with and without labels
-# plot1 <- VariableFeaturePlot(merged_obj)
-# plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
-# 
-# pdf("figures/day0_day50/iPSC_MN_seurat_topVarFeatures_noFilter.pdf", height = 5, width = 10)
-# plot2
-# dev.off()
+pdf("figures/day0_day50/iPSC_MN_seurat_PCA_elbow_noFilter.pdf", height = 5, width = 10)
+ElbowPlot(merged_obj,ndims = 50)
+dev.off()
 
+pdf("figures/day0_day50/iPSC_MN_seurat_PCA_loadings_noFilter.pdf", height = 10, width = 10)
+VizDimLoadings(merged_obj, dims = 1:4, reduction = "pca")
+dev.off()
 
 n_cells_barplot <- merged_obj@meta.data %>% 
   mutate(id=factor(orig.ident, levels=unique(orig.ident))) %>% 
 
   ggplot(., aes(x=id,fill=id)) +
   geom_bar() +
-  scale_fill_manual(values=colors) +
+  scale_fill_manual(values=colors_vector) +
   theme_classic() +
   theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
 
-# png("figures/day0_day50/iPSC_MN_seurat_number_cells_per_day_noFilter.png", height = 5, width = 8, units = "in", res = 150)
+png("figures/day0_day50/iPSC_MN_seurat_number_cells_per_day_noFilter.png", height = 5, width = 8, units = "in", res = 150)
 n_cells_barplot
-# dev.off()
+dev.off()
 
 median_umis <- merged_obj@meta.data %>% 
   mutate(id=factor(orig.ident, levels=unique(orig.ident))) %>% 
@@ -626,9 +632,9 @@ median_umis <- merged_obj@meta.data %>%
   geom_col() +
   theme_classic()
 
-# png("figures/day0_day50/cellranger_qc_metrics_byBatch_median_UMIs.png", height = 8, width = 7, units = "in",res = 150)
+png("figures/day0_day50/cellranger_qc_metrics_byBatch_median_UMIs.png", height = 8, width = 7, units = "in",res = 150)
 median_umis
-# dev.off()
+dev.off()
 ```
 
 # Doublet Scores
@@ -660,6 +666,11 @@ if(!exists("seurat_objs")){
   seurat_objs <- readRDS("results/individual_objs/mack_iPSC_motor_neuron_day0-day50_seurat_obj_list.RDS")
 }
 
+# only run for new samples. outputs for previous data are on gpfs not local. 
+seurat_objs_all <- seurat_objs
+seurat_objs <- seurat_objs[grep("rerun_", names(seurat_objs))]
+print(length(seurat_objs))
+
 job::job({
   
   doublet_scores <- purrr::map_dfr(names(seurat_objs), function(x){
@@ -670,7 +681,7 @@ job::job({
           
           print(glue("Processing {x}"))
           # normalize
-          obj <- SCTransform(seurat_objs[[x]], method = "glmGamPoi")  
+          obj <- SCTransform(seurat_objs[[x]], method = "glmGamPoi")
           
           # cluster
           obj <- obj %>%
@@ -681,7 +692,7 @@ job::job({
             FindClusters(resolution = 0.8, verbose = F)
           
           print(glue("SCE to doublet finder {x}"))
-          sce <- Seurat::as.SingleCellExperiment(obj)
+          sce <- Seurat::as.SingleCellExperiment(obj, assay = "SCT")
           doublets <- computeDoubletDensity(sce,  
                                             k = 50, #default
                                             subset.row = VariableFeatures(obj))
@@ -708,19 +719,27 @@ job::job({
         return(meta)
       })
   # save the results in a csv file
-  write.csv(doublet_scores, "results/doublet_scores/mack_iPSC_MN_day0-day50_scDblFinder_scores.csv", row.names = TRUE)
+  write.csv(doublet_scores, "results/doublet_scores/mack_iPSC_MN_day0-day50_rerun_scDblFinder_scores.csv", row.names = TRUE)
 }, import = c("seurat_objs"))
 ```
 
 ```{r}
-doublet_scores <- read.csv("results/doublet_scores/mack_iPSC_MN_day0-day50_scDblFinder_scores.csv") %>% 
+doublet_scores <- purrr::map_dfr(dir("results/doublet_scores", full.names = TRUE), function(x){
+  read.csv(x) %>%
   mutate(id=factor(orig.ident, levels=unique(orig.ident)),
-         barcode=X) %>%
+         barcode=X)
+}) %>%
   left_join(., sample_manifest, by=c("orig.ident"="sample_id")) %>%
-  rename_at(vars(cluster,SCT_snn_res.0.8, seurat_clusters), ~paste0(.,"_per_sample"))
+  rename_at(vars(cluster,SCT_snn_res.0.8, seurat_clusters), ~paste0(.,"_per_sample")) %>%
+  arrange(time_point, orig.ident) %>% 
+  mutate(sample_id=factor(orig.ident, levels=unique(orig.ident))) %>% 
+  arrange(sample_id) %>%
+  select(sample_id, barcode, everything(), -X)
 
-# head(doublet_scores)
-dim(doublet_scores) #61518    69 
+head(doublet_scores)
+dim(doublet_scores) #98532    76
+# table(doublet_scores$batch)
+# table(doublet_scores$sample_id)
 ```
 
 ```{r eval=FALSE}
@@ -740,7 +759,7 @@ purrr::map(unique(doublet_scores$orig.ident), function(x){
   
   p1 <- ggplot(chk, aes(x=umap_1, y=umap_2, color = as.factor(seurat_clusters_per_sample))) +
       geom_point(alpha=0.7) +
-      scale_color_manual(values=colors) +
+      scale_color_manual(values=colors_vector) +
       theme_classic()
 
   p2 <-  ggplot(chk, aes(x=umap_1, y=umap_2, color = doublet_score)) +
@@ -771,16 +790,16 @@ purrr::map(unique(doublet_scores$orig.ident), function(x){
   print(p1 + p4 + p5 + patchwork::plot_layout(guides = 'collect') + patchwork::plot_annotation(title = x))
   dev.off()
 
-}) 
+})
 ```
 
 ```{r}
 # pdf("figures/day0_day50/doublets/iPSC_MN_doublet_scores_scDblFinder_barplot.pdf", height = 7, width = 12)
 doublet_scores %>% 
   mutate(class=factor(class, levels=rev(c("doublet","singlet")))) %>% 
-ggplot(., aes(x=id, fill=class)) +
+ggplot(., aes(x=sample_id, fill=class)) +
   geom_bar() +
-  scale_fill_manual(values=colors) +
+  scale_fill_manual(values=colors_vector) +
   labs(y="number of cells",x="") +
   theme_classic() +
   theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
@@ -790,17 +809,17 @@ ggplot(., aes(x=id, fill=class)) +
 
 ```{r fig.height=5, fig.width=10, eval=FALSE}
 # pdf("figures/day0_day50/doublets/iPSC_MN_scDblFinder_noFilter_ridgePlot.pdf", height = 10, width = 10)
-ggplot(doublet_scores, aes(y=id, x=score, fill=id)) +
+ggplot(doublet_scores, aes(y=sample_id, x=score, fill=id)) +
   ggridges::stat_density_ridges(quantile_lines = TRUE, 
                                 quantiles = 0.5, alpha=0.75, 
                                 scale = 0.9) +
-  geom_point(aes(color=id), 
+  geom_point(aes(color=sample_id), 
              shape="|",
              size=2,
              alpha=0.7,
              position = position_nudge(y=-0.15)) +
-  scale_fill_manual(values=colors) +
-  scale_color_manual(values=colors) +
+  scale_fill_manual(values=colors_vector) +
+  scale_color_manual(values=colors_vector) +
   theme_classic()
 # dev.off()
 ```
@@ -914,7 +933,7 @@ ggplot(threshold_summary, aes(x=batch, y=mito_th, fill=batch)) +
              size=2,
              position = position_jitter(width = 0.2, seed=2023)) +
   scale_fill_brewer(palette = "Blues") +
-  scale_color_manual(values = colors) +
+  scale_color_manual(values = colors_vector) +
   ggrepel::geom_text_repel(aes(label=id)) +
   labs(x="",y="Mitochondrial Reads Threshold (%)") +
   guides(color="none") +
@@ -1132,7 +1151,7 @@ est_df_subset <- estimates_df %>%
 
 est_plot <- ggplot(est_df_subset, aes(x =  id, y=rho, fill = id)) +
   geom_col() +
-  scale_fill_manual(values = colors) +
+  scale_fill_manual(values = colors_vector) +
   geom_hline(yintercept = 0.05, linetype="dashed") +
   labs(title="SoupX Ambient DNA Contamination Estimates", y="contamination fraction", x="") +
   theme_classic() +
@@ -1350,7 +1369,7 @@ DimPlot(merged_norm_obj,
         label.size = 8,
         repel = TRUE,
         dims = c(1,2)) +
-  scale_color_manual(values = colors) +
+  scale_color_manual(values = colors_vector) +
   theme(legend.position = 'bottom')
 # dev.off()
 
@@ -1363,7 +1382,7 @@ DimPlot(merged_norm_obj,
         label.size = 10,
         repel = TRUE,
         dims = c(1,2)) +
-  scale_color_manual(values = colors) +
+  scale_color_manual(values = colors_vector) +
   theme(legend.position = 'bottom')
 # dev.off()
 ```
@@ -1374,7 +1393,7 @@ filt_d1 <- DimPlot(merged_norm_obj,
         label = T, 
         repel = T,
         label.size = 7) + 
-  scale_color_manual(values = colors)
+  scale_color_manual(values = colors_vector)
 
 # png("figures/day0_day50/filtered_merged_results/iPSC_MN_seurat_UMAPv2_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
 filt_d1
@@ -1386,7 +1405,7 @@ filt_s1 <- DimPlot(merged_norm_obj,
         label = T, 
         repel = T,
         label.size = 7) + 
-  scale_color_manual(values = colors)
+  scale_color_manual(values = colors_vector)
 
 # png("figures/day0_day50/filtered_merged_results/iPSC_MN_seurat_UMAPv2_splitBy_batch_day_filtered.png",  height = 15, width = 25, units = "in", res = 150)
 filt_s1
@@ -1398,7 +1417,7 @@ filt_s1
 fig <- plot_ly(merged_norm_obj@meta.data,
                x = ~umap_1, y = ~umap_2, z = ~umap_3, 
                color = ~id,
-               colors = colors)
+               colors_vector = colors_vector)
 fig <- fig %>%
   add_markers(
     marker = list(size = 1),
@@ -1695,7 +1714,7 @@ merged_norm_batchcorr
 # 
 # pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_byLouvainCluster_sct_UMAP.pdf",height = 10, width= 17)
 # DimPlot(merged_norm_batchcorr, dims = c(1,2)) +
-#   scale_color_manual(values = colors)
+#   scale_color_manual(values = colors_vector)
 # dev.off()
 ```
 
@@ -1705,7 +1724,7 @@ bc_d1 <- DimPlot(merged_norm_batchcorr,
         label = T, 
         repel = T,
         label.size = 7) + 
-  scale_color_manual(values = colors)
+  scale_color_manual(values = colors_vector)
 
 # png("figures/day0_day50/filtered_merged_batchcorrected/filtered_merged_results_iPSC_MN_seurat_batchcorrected_UMAP_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
 bc_d1
@@ -1717,7 +1736,7 @@ bc_s1 <- DimPlot(merged_norm_batchcorr,
         label = T, 
         repel = T,
         label.size = 7) + 
-  scale_color_manual(values = colors)
+  scale_color_manual(values = colors_vector)
 
 # png("figures/day0_day50/filtered_merged_batchcorrected/filtered_merged_results_iPSC_MN_seurat_batchcorrected_UMAP_splitBy_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
 bc_s1
@@ -1729,7 +1748,7 @@ bc_s1
 fig_batchcorr <- plot_ly(merged_norm_batchcorr@meta.data,
                x = ~umap_1, y = ~umap_2, z = ~umap_3, 
                color = ~id,
-               colors = colors)
+               colors_vector = colors_vector)
 fig_batchcorr <- fig_batchcorr %>% 
   add_markers( 
     marker = list(size = 1), 
@@ -1864,7 +1883,7 @@ VizDimLoadings(merged_harmony_obj_batch, dims = 1:4, reduction = "pca")
 DimPlot(merged_harmony_obj_batch,
         reduction = "umap",
         dims = c(1,2)) +
-  scale_color_manual(values = colors)
+  scale_color_manual(values = colors_vector)
 # dev.off()
 ```
 
@@ -1875,7 +1894,7 @@ filt_harmony_d1 <- DimPlot(merged_harmony_obj_batch,
         label = T, 
         repel = T,
         label.size = 7) + 
-  scale_color_manual(values = colors)
+  scale_color_manual(values = colors_vector)
 
 # 
 # filt_harmony_d2 <- DimPlot(merged_harmony_obj, 
@@ -1884,7 +1903,7 @@ filt_harmony_d1 <- DimPlot(merged_harmony_obj_batch,
 #         label = T, 
 #         repel = T,
 #         label.size = 7) + 
-#   scale_color_manual(values = colors)
+#   scale_color_manual(values = colors_vector)
 
 # png("figures/day0_day50/harmony/merged_harmony_obj_batch_iPSC_MN_seurat_UMAP_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
 filt_harmony_d1
@@ -1929,7 +1948,7 @@ VlnPlot(merged_harmony_obj_batch,
 fig2 <- plot_ly(merged_harmony_obj_batch@meta.data,
                x = ~umapharmony_1, y = ~umapharmony_2, z = ~umapharmony_3, 
                color = ~id,
-               colors = colors)
+               colors_vector = colors_vector)
 fig2 <- fig2 %>%
   add_markers(
     marker = list(size = 1),

@@ -579,7 +579,9 @@ FeaturePlot(ipsc_obj, features = paste0("Cluster",1:11))
 
 scale.data stores the pearson residuals - these are good for downstream clustering/PCA/UMAP/integration/transfer.
 
-data stores the corrected counts - these should be used for visualization/DE. Hope this helps!
+data stores the corrected counts - these should be used for visualization/DE.
+
+https://github.com/satijalab/seurat/issues/2503
 
 ```{r fig.height=10}
 marker_genes <- marker_genes_chun_list[c("rayon_motor_neurons", "yadav_motor_neurons")]
