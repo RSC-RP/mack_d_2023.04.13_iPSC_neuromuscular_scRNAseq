@@ -18,6 +18,7 @@ knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80),
 options(stringsAsFactors = FALSE, max.print = 100)
 options(Seurat.object.assay.version = 'v5')
 table = function (..., useNA = 'ifany') base::table(..., useNA = useNA)
+getwd()
 ```
 
 ```{r message=FALSE,warning=FALSE}
@@ -59,14 +60,28 @@ colors_vector <- c(RColorBrewer::brewer.pal(12, "Paired"),
             "azure2", "chartreuse1",  "lemonchiffon2",
             "deeppink", "darkslategray1", "green4", "navajowhite", 
             "brown4", "darkgoldenrod2", "deepskyblue1", "lightpink") %>% 
-  c(., ggpubr::get_palette("jco", 5)) %>% 
+  # c(., ggpubr::get_palette("jco", 5)) %>% 
   c("mediumpurple4","magenta", "peru") %>% 
   c(ggsci::pal_igv()(51))
 
 length(colors_vector) 
 ```
 
+------------------ CMAKE NOT FOUND --------------------
 
+CMake was not found on the PATH. Please install CMake:
+
+ - sudo yum install cmake          (Fedora/CentOS; inside a terminal)
+ - sudo apt install cmake          (Debian/Ubuntu; inside a terminal).
+ - sudo pacman -S cmake            (Arch Linux; inside a terminal).
+ - sudo brew install cmake         (MacOS; inside a terminal with Homebrew)
+ - sudo port install cmake         (MacOS; inside a terminal with MacPorts)
+
+Alternatively install CMake from: <https://cmake.org/>
+
+-------------------------------------------------------
+ERROR: configuration failed for package ‘nloptr’
+* removing ‘/home/jsmi26/R/x86_64-pc-linux-gnu-library/4.3/nloptr’
 
 # Parallelization 
 
@@ -294,7 +309,7 @@ db <- ensDbFromGtf(gtf = "/gpfs/shared_data/10X/cellranger-7.0.0/refdata-gex-GRC
                    version = 98)
 ```
 
-```{r}
+```{r, eval=FALSE}
 edb <- ensembldb::EnsDb("resources/genome/Homo_sapiens.GRCh38.98.sqlite")
 
 # edb
@@ -1384,7 +1399,7 @@ merged_filt_obj <-  merge(x = soupx_objs$iPSC_ipsc,
 # 33538 features across 87870 samples within 1 assay 
 # Active assay: RNA (33538 features, 0 variable features)
 merged_filt_obj 
-saveRDS(merged_filt_obj,glue("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj_{VERSION}.RDS"))
+# saveRDS(merged_filt_obj,glue("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj_{VERSION}.RDS"))
 ```
 
 
@@ -1403,21 +1418,43 @@ The FindClusters() function implements this procedure, and contains a resolution
 
 We find that setting this parameter between 0.4-1.2 typically returns good results for single-cell datasets of around 3K cells. Optimal resolution often increases for larger datasets. 
 
+https://satijalab.org/seurat/articles/seurat5_essential_commands#create-seurat-or-assay-objects
+* convert a v5 assay to a v3 assay
+`pbmc3k[["RNA3"]] <- as(object = pbmc3k[["RNA"]], Class = "Assay")`
+
+* convert a v3 assay to a v5 assay
+`pbmc3k[["RNA5"]] <- as(object = pbmc3k[["RNA3"]], Class = "Assay5")`
+
+
 ```{r eval=FALSE}
+if(!exists("merged_filt_obj")){
+  merged_filt_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj_v5.RDS")
+}
+
+merged_filt_obj
+
 versions = c("v5","v3")
 
 for(VERSION in versions){
   options(Seurat.object.assay.version = VERSION)
+  print(glue("The seurat object version is set to: {options()$Seurat.object.assay.version}"))
 
   # remove MT genes
   temp <- merged_filt_obj[grep("^MT-", rownames(merged_filt_obj), invert = TRUE), ]
+  
   # object version 
   seurat_class <- class(temp[['RNA']])
-  if(seurat_class == VERSION){
+  
+  # convert if necessary
+  if( seurat_class == "Assay5" & VERSION == "v3" ){
     temp <- JoinLayers(temp)
     temp[["RNA"]] <- as(object = temp[["RNA"]], Class = "Assay")
   }
-  print(glue())
+  if( seurat_class == "Assay" & VERSION == "v5" ){
+     temp[["RNA"]] <- as(object = temp[["RNA"]], Class = "Assay5")
+  }
+  print(glue("The object class is set as {class(temp[['RNA']])}"))
+  
   #regularized negative binomial regression to normalize UMI count data
   #Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures().
   merged_norm_obj <- SCTransform(temp,
@@ -1437,7 +1474,7 @@ for(VERSION in versions){
                 n.components = 3,
                 n.neighbors = 30,# default 30
                 metric = "cosine",
-                min.dist = 0.2, # default 0.3
+                min.dist = 0.1, # default 0.3
                 return.model = TRUE,
                 verbose = T)
   
@@ -1448,15 +1485,11 @@ for(VERSION in versions){
                       nn.method = "annoy",
                       annoy.metric = "cosine",
                       n.trees = 100,
+                      n.epochs = 500,
                       verbose = T)
   
     merged_norm_obj <- merged_norm_obj %>%
-        FindClusters(resolution = 1.0,
-                     algorithm = 2,
-                     verbose = T)
-  
-    merged_norm_obj <- merged_norm_obj %>%
-        FindClusters(resolution = 1.5,
+        FindClusters(resolution = c(0.5, 1.0, 1.5),
                      algorithm = 2,
                      verbose = T)
   
@@ -1464,11 +1497,14 @@ for(VERSION in versions){
                                    as.data.frame(merged_norm_obj@reductions$umap@cell.embeddings))
     
     saveRDS(merged_norm_obj, glue("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_{VERSION}.RDS"))
-  
 }
+rm(merged_norm_obj)
 ```
 
+
 ```{r}
+merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
+
 # Add metadata and idents
 merged_norm_obj$id <- factor(merged_norm_obj$orig.ident, levels=unique(merged_norm_obj$orig.ident))
 merged_norm_obj$seurat_clusters <- merged_norm_obj$SCT_snn_res.1
@@ -1485,7 +1521,9 @@ n.neighbors
 This determines the number of neighboring points used in local approximations of manifold structure. Larger values will result in more global structure being preserved at the loss of detailed local structure. In general this parameter should often be in the range 5 to 50.
 
 ```{r fig.height=10}
-merged_norm_obj <- merged_norm_obj %>% 
+redo_umap = FALSE
+if(redo_umap){
+  merged_norm_obj <- merged_norm_obj %>% 
           RunUMAP(reduction = "pca",
                 dims = 1:30,
                 # features = VariableFeatures(merged_norm_obj),
@@ -1498,7 +1536,8 @@ merged_norm_obj <- merged_norm_obj %>%
                 return.model = TRUE,
                 verbose = T)
 
-merged_norm_obj <- AddMetaData(merged_norm_obj,as.data.frame(merged_norm_obj@reductions$umap@cell.embeddings))
+  merged_norm_obj <- AddMetaData(merged_norm_obj,as.data.frame(merged_norm_obj@reductions$umap@cell.embeddings))
+}
 
 # pdf("figures/day0_day50/filtered_merged_results/sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
 # ElbowPlot(merged_norm_obj,ndims = 50, reduction = "pca")
@@ -1508,7 +1547,7 @@ merged_norm_obj <- AddMetaData(merged_norm_obj,as.data.frame(merged_norm_obj@red
 # VizDimLoadings(merged_norm_obj, dims = 1:4, reduction = "pca")
 # dev.off()
 
-# pdf("figures/day0_day50/filtered_merged_results/day0-day50_time-course_filtered_merged_byTimePoint_sct_UMAP.pdf",height = 15, width= 17)
+# png("figures/day0_day50/filtered_merged_results/day0-day50_time-course_filtered_merged_byTimePoint_sct_UMAP.png",res = 150, units = "in", height = 15, width= 17)
 DimPlot(merged_norm_obj, 
         reduction = "umap",
         label = TRUE,
@@ -1520,7 +1559,7 @@ DimPlot(merged_norm_obj,
 # dev.off()
 
 
-# pdf("figures/day0_day50/filtered_merged_results/day0-day50_time-course_filtered_merged_byLouvainCluster_sct_UMAP.pdf",height = 15, width= 17)
+# png("figures/day0_day50/filtered_merged_results/day0-day50_time-course_filtered_merged_byLouvainCluster_sct_UMAP.pdf", res = 150, units = "in",height = 15, width= 17)
 DimPlot(merged_norm_obj, 
         reduction = "umap",
         group.by = 'seurat_clusters',
@@ -1541,7 +1580,7 @@ filt_d1 <- DimPlot(merged_norm_obj,
         label.size = 7) + 
   scale_color_manual(values = colors_vector)
 
-# png("figures/day0_day50/filtered_merged_results/iPSC_MN_seurat_UMAPv2_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
+# png("figures/day0_day50/filtered_merged_results/iPSC_MN_seurat_UMAP_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
 filt_d1
 # dev.off()
 
@@ -1553,7 +1592,7 @@ filt_s1 <- DimPlot(merged_norm_obj,
         label.size = 7) + 
   scale_color_manual(values = colors_vector)
 
-# png("figures/day0_day50/filtered_merged_results/iPSC_MN_seurat_UMAPv2_splitBy_batch_day_filtered.png",  height = 15, width = 25, units = "in", res = 150)
+# png("figures/day0_day50/filtered_merged_results/iPSC_MN_seurat_UMAP_splitBy_batch_day_filtered.png",  height = 15, width = 25, units = "in", res = 150)
 filt_s1
 # dev.off()
 ```
@@ -1646,6 +1685,7 @@ most_var_genes_per_sample <- SCTResults(merged_norm_obj, slot = "feature.attribu
 top10 <- head(VariableFeatures(merged_norm_obj), 10)
 
 # plot variable features with and without labels
+# not possible to plot with SCT norm within layers
 plot1 <- VariableFeaturePlot(merged_norm_obj)
 plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
 
@@ -1654,8 +1694,6 @@ plot2
 # dev.off()
 ```
 
-
-
 nFeature_RNA is the number of genes detected in each cell. 
 * Low nFeature_RNA for a cell indicates that it may be dead/dying or an empty droplet.
 
@@ -1663,17 +1701,22 @@ nCount_RNA is the total number of molecules (UMI) detected within a cell.
 
 https://github.com/satijalab/seurat/issues/2101
 nFeatures counts any gene with at least 1 UMI count
-
 nFeature_RNA column reports the total number of genes in each cell that have at least one UMI count.
+- seems inaccurate, should be > 0 UMI count?
 
 https://www.bioinformatics.babraham.ac.uk/training/10XRNASeq/seurat_workflow.html
-nFeature_RNA the number of observed genes (anything with a nonzero count)
+nFeature_RNA the number of observed genes (anything with **a nonzero count**)
+
+https://bioconductor.org/books/3.18/OSCA.basic/quality-control.html
+The number of expressed features in each cell is defined as the number of endogenous genes with **non-zero counts** for that cell.
+
+### Genes Detected After Filtering 
 
 ```{r}
 genes_detected <- merged_norm_obj@meta.data %>% 
   mutate(time_point_day = paste0("day", time_point)) %>% 
   # filter(grepl("day35|day40|day45|day50", time_point_day)) %>% 
-  group_by(time_point_day, time_point) %>% 
+  group_by(orig.ident, time_point_day, time_point) %>% 
   summarize(num_cells = n(),
             mean_num_genes_detected_RNA = mean(nFeature_RNA), 
             median_num_genes_detected_RNA = median(nFeature_RNA)) %>% 
@@ -1689,31 +1732,38 @@ merged_norm_obj@meta.data %>%
 ```
 
 ```{r fig.height=10}
-pdf("iPSC_MN_seurat_nFeature_UMAP.pdf", height = 10, width = 12)
-ggplot(merged_norm_obj@meta.data, aes(x=UMAP_1, y=UMAP_2, color = nFeature_RNA)) +
-  geom_point() +
-  scale_color_gradient2(low = 'azure', high = 'red') +
+meta <- merged_norm_obj@meta.data %>% 
+  mutate(nCount_RNA_lims = ifelse(nCount_RNA > quantile(nCount_RNA, probs = c(0.95)), quantile(nCount_RNA, probs = c(0.95)), nCount_RNA))
+
+# png("figures/day0_day50/filtered_merged_results/iPSC_MN_seurat_nFeature_UMAP.png", height = 10, width = 12, units = "in", res = 125)
+ggplot(meta, 
+       aes(x=umap_1, y=umap_2, color = nFeature_RNA)) +
+  geom_point(alpha = 0.5) +
+  scale_color_gradient(low = 'azure2', high = 'red') +
   theme_classic()
-dev.off()
+# dev.off()
+
+# png("figures/day0_day50/filtered_merged_results/iPSC_MN_seurat_nCount_RNA_UMAP.png", height = 10, width = 12, units = "in", res = 125)
+ggplot(meta, 
+       aes(x=umap_1, y=umap_2, color = log2(nCount_RNA))) +
+  geom_point(alpha = 0.5) +
+  scale_color_gradient(low = 'azure2', high = 'red') +
+  theme_classic()
+# dev.off()
 ```
 
-```{r}
-cell_color_codes <- c(brewer.pal(8, "Set1"), 
-                              ggpubr::get_palette(7, palette = "jco")[-1], 
-                              "darkseagreen2")
-length(cell_color_codes)
-```
+
 
 ```{r fig.width=7}
-pdf("iPSC_MN_seurat_nFeature_barplot.pdf", height = 7, width = 12)
-
-ggplot(genes_detected, aes(x=time_point_day, y=mean_num_genes_detected_RNA, fill=time_point_day)) +
-  geom_col() +
-  scale_fill_manual(values=cell_color_codes) +
+# pdf("figures/day0_day50/filtered_merged_results/iPSC_MN_seurat_nFeature_barplot.pdf", height = 8, width = 15)
+ggplot(genes_detected, aes(x=time_point_day, 
+                           y=mean_num_genes_detected_RNA,
+                           fill=orig.ident)) +
+  geom_col(position = position_dodge()) +
+  scale_fill_manual(values=colors_vector) +
   scale_y_continuous(breaks=seq(0,6500, by=500)) +
   theme_classic()
-
-dev.off()
+# dev.off()
 ```
 
 
