@@ -2295,18 +2295,30 @@ marker_genes <- FindAllMarkers(merged_split_obj,
 ```
 
 ```{r}
-marker_genes <- read.csv("results/integrated_ref/celltypes_vs_allothers_FindAllMarkers_degs.csv")
+marker_genes <- read.csv("results/integrated_ref/celltypes_vs_allothers_FindAllMarkers_degs.csv") 
+
+head(marker_genes)
+dim(marker_genes)
+# quantile(marker_genes$p_val_adj)
 ```
 
 ```{r}
 mg <- unique(marker_genes$gene)
-df <- data.frame(found_in_genename = mg %in% unique(idmap$gene_name), 
+df <- data.frame(gene_name = mg, 
+                 found_in_genename = mg %in% unique(idmap$gene_name), 
                  found_in_genealias = mg %in% unique(idmap$gene_synonym))
-table(df)
+table(df[,2:3])
+
+# df %>% 
+#   filter(!found_in_genename, !found_in_genealias)
+# 
+# df %>% 
+#   filter(grepl("AOPEP",gene_name))
 ```
 
 ```{r}
 top_marker_genes <- marker_genes %>% 
+  filter(p_val_adj < 0.001) %>% 
   group_by(cluster) %>% 
   dplyr::top_n(n = 10, wt = avg_log2FC) %>% 
   ungroup()
@@ -2403,8 +2415,106 @@ scanvi2_3d <- make_3D_umap(metadata = merged_split_obj@meta.data,
 # htmlwidgets::saveWidget(rpca_3d, "figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_rpca_UMAP.html")
 # htmlwidgets::saveWidget(scanvi_3d, "figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_scanvi_UMAP.html")
 # htmlwidgets::saveWidget(scanvi2_3d, "figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_scanvi_2covs_UMAP.html")
-
 ```
+
+```{r}
+library(plot3D)
+```
+
+for_3d_plot <- merged_split_obj@meta.data %>% 
+  select(barcode, subtype_standardized, top_level_standardized, matches("umapscanvi_"))
+  
+```{r}
+make_alpha <- function(color, percent=100){
+  # https://www.dataanalytics.org.uk/make-transparent-colors-in-r/
+  ## Get RGB values for named color
+  rgb.val <- col2rgb(color)
+  
+  ## Make new color using input color as base and alpha set by transparency
+  t.col <- rgb(rgb.val[1], rgb.val[2], rgb.val[3],
+               max = 255,
+               alpha = (100 - percent) * 255 / 100)
+
+}
+```
+
+```{r}
+celltypes <- unique(merged_split_obj@meta.data$subtype_standardized)
+n_types <- length(celltypes)
+cc_subtypes <- colors_vector[1:n_types] %>% 
+  set_names(celltypes)
+cc_subtypes <- cc_subtypes[order(names(cc_subtypes))]
+cc_subtypes['Inh_Dorsal'] <- cc_subtypes['motorneurons']
+cc_subtypes['motorneurons'] <- "red"
+
+
+par(mar = c(15, 4, 4, 2) + 0.1)
+barplot(rep(1, n_types), col = cc_subtypes,names.arg = names(cc_subtypes), las = 2)
+```
+
+
+```{r}
+colors_3d_other <- merged_split_obj@meta.data %>% 
+  select(barcode, subtype_standardized, top_level_standardized, matches("umapscanvi_")) %>% 
+  left_join(., data.frame(color=cc_subtypes) %>% 
+              rownames_to_column("subtype_standardized"),
+            by="subtype_standardized") %>% 
+  mutate_at(vars(color), ~sapply(., make_alpha, percent=70)) %>%
+  mutate(subtype_standardized = as.factor(subtype_standardized)) %>% 
+  arrange(subtype_standardized) 
+
+ 
+colors_3d_mn <- colors_3d_other %>% 
+  filter(grepl("motorneuron",subtype_standardized))
+
+colors_3d_other <- colors_3d_other %>% 
+  filter(!grepl("motorneuron",subtype_standardized))
+
+n1 <- length(as.numeric(as.factor(colors_3d_other$subtype_standardized)))
+head(colors_3d_other)
+```
+
+theta gives the azimuthal direction 
+phi the colatitude.
+
+theta rotates around the Z-axis 
+phi rotates around the X-axis, 
+
+```{r fig.height=12, fig.width=12}
+t <- 100
+p <- 120
+
+# pdf("Figures/TARGET_AML_ETS_Family_Fusions_plot3D_scatter_3D_long.pdf", height = 10, width = 12)
+plot3D::scatter3D(x=colors_3d_other$umapscanvi_1, 
+                  y=colors_3d_other$umapscanvi_2,
+                  z=colors_3d_other$umapscanvi_3,
+                  bty = "b2",
+                  colvar=as.numeric(colors_3d_other$subtype_standardized),
+                  col=unique(colors_3d_other$color),
+                  pch=19, colkey=FALSE,
+                  theta=t,
+                  phi=p,
+                  cex=0.25,
+                  scale = FALSE)
+
+plot3D::scatter3D(x=colors_3d_mn$umapscanvi_1, 
+                  y=colors_3d_mn$umapscanvi_2,
+                  z=colors_3d_mn$umapscanvi_3,
+                  bty = "b2",
+                  colvar=as.numeric(colors_3d_mn$subtype_standardized),
+                  col=unique(colors_3d_mn$color),
+                  labels = colors_3d_mn$subtype_standardized,
+                  pch=19, colkey=FALSE,
+                  theta=t,
+                  phi=p,
+                  cex=0.25,
+                  scale = FALSE, 
+                  add = TRUE)
+
+# dev.off()
+```
+
+
 
 
 ## Motor Neurons and subsets
