@@ -421,7 +421,7 @@ scanvi_query
 # predict the celltypes 
 predictions <- py_to_r(scanvi_query$predict())
 names(predictions) <- ispc_adata$obs_names
-table(predictions)
+table(predictions) %>% write.csv(., "p")
 ```
 
 ```{r fig.height=10}
@@ -512,7 +512,7 @@ ipsc_obj
 ```
 
 ```{r}
-ipsc_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS")
+ipsc_obj <- readRDS("00_archive/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS")
 
 subtype_labels <- ipsc_obj@meta.data %>% 
   mutate(subtype_labels = case_when(
@@ -527,8 +527,14 @@ subtype_labels <- ipsc_obj@meta.data %>%
 
 table(subtype_labels)
 ipsc_obj@meta.data$subtype_labels <- subtype_labels
-
 ipsc_obj
+```
+
+```{r}
+ipsc_obj@meta.data %>% 
+  group_by(subtype_standardized) %>% 
+  dplyr::count() 
+  # write.csv(., "results/day0_day50/celltype_annotation_by_integrated_ref_summary_table.csv", row.names = FALSE)
 ```
 
 ```{r fig.height=10, fig.width=10}

@@ -2365,7 +2365,8 @@ cell_type_table <- merged_split_obj@meta.data %>%
   pivot_wider(names_from = dataset, values_from = n) %>% 
   mutate(across(Allen_M1:yadav_2023, ~ifelse(is.na(.), 0,.)))
 
-View(cell_type_table)
+# View(cell_type_table)
+# write.csv(cell_type_table, "results/integrated_ref/Allen_Rayon_Yadav_integrated_cell_ref_subtype_standardized_table.csv", row.names = FALSE)
 ```
 
 ```{r}
@@ -2447,10 +2448,17 @@ cc_subtypes <- cc_subtypes[order(names(cc_subtypes))]
 cc_subtypes['Inh_Dorsal'] <- cc_subtypes['motorneurons']
 cc_subtypes['motorneurons'] <- "red"
 
-
+# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/color_legend_subtype_standardized_3D_UMAP.pdf", height = 5, width = 10)
 par(mar = c(15, 4, 4, 2) + 0.1)
 barplot(rep(1, n_types), col = cc_subtypes,names.arg = names(cc_subtypes), las = 2)
+# dev.off()
 ```
+
+theta gives the azimuthal direction 
+phi the colatitude.
+
+theta rotates around the Z-axis 
+phi rotates around the X-axis, 
 
 
 ```{r}
@@ -2471,20 +2479,16 @@ colors_3d_other <- colors_3d_other %>%
   filter(!grepl("motorneuron",subtype_standardized))
 
 n1 <- length(as.numeric(as.factor(colors_3d_other$subtype_standardized)))
-head(colors_3d_other)
+# head(colors_3d_other)
 ```
 
-theta gives the azimuthal direction 
-phi the colatitude.
-
-theta rotates around the Z-axis 
-phi rotates around the X-axis, 
 
 ```{r fig.height=12, fig.width=12}
 t <- 100
 p <- 120
 
-# pdf("Figures/TARGET_AML_ETS_Family_Fusions_plot3D_scatter_3D_long.pdf", height = 10, width = 12)
+# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_spinal_cord_motor_cortex_scanvi_integrated_subtype_standardized_plot3D_UMAP.pdf", height = 15, width = 15)
+# png("figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_spinal_cord_motor_cortex_scanvi_integrated_subtype_standardized_plot3D_UMAP.png", height = 15, width = 15, units = "in", res = 150)
 plot3D::scatter3D(x=colors_3d_other$umapscanvi_1, 
                   y=colors_3d_other$umapscanvi_2,
                   z=colors_3d_other$umapscanvi_3,
@@ -2513,8 +2517,6 @@ plot3D::scatter3D(x=colors_3d_mn$umapscanvi_1,
 
 # dev.off()
 ```
-
-
 
 
 ## Motor Neurons and subsets
