@@ -36,7 +36,7 @@ library(plotly)
 library(RColorBrewer)
 
 library(Seurat)
-library(SeuratDisk)
+# library(SeuratDisk)
 library(ontologyIndex)
 library(reticulate)
 
@@ -44,14 +44,24 @@ library(sceasy)
 library(anndata)
 ```
 
+ImportError: /usr/lib/x86_64-linux-gnu/libssl.so.3: version `OPENSSL_3.2.0' not found (required by /home/jsmi26/miniforge3/envs/scanvi_scib/lib/python3.10/site-packages/h5py/../../.././libcurl.so.4)
+
 ```{r message=FALSE, warning=FALSE}
 # python modules
-reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "opt/mambaforge/envs/scanvi_scib"))
-sc <- import("scanpy", convert = FALSE)
+if( Sys.info()[["nodename"]] == "pdlposit-0" ) {
+  print(Sys.getenv("LD_LIBRARY_PATH"))
+  mamba_path <- "/miniforge3/envs/scanvi_scib"
+  Sys.setenv(LD_LIBRARY_PATH="/home/jsmi26/miniforge3/envs/scanvi_scib/lib")
+}else{
+  mamba_path <- "opt/mambaforge/envs/scanvi_scib"
+}
+print(Sys.getenv("LD_LIBRARY_PATH"))
+
+reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), mamba_path))
 scvi <- import("scvi", convert = FALSE)
+sc <- import("scanpy", convert = FALSE)
 scib <- import("scib_metrics.benchmark", convert = FALSE)
 ```
-
 ```{r}
 # address common function name conflicts
 conflicted::conflict_prefer("select", "dplyr")
