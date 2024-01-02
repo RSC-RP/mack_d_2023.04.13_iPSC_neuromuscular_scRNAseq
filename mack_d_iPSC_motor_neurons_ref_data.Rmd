@@ -145,19 +145,20 @@ clean_standardize_annots <- function(seurat_obj){
         grepl("Micro", top_level_annotation) ~ "microglia",
   
         grepl("Oligo", top_level_annotation) ~ "oligodendrocytes",
-        # grepl("N[Uu][Ll]", subtype_annotation) ~ "esc_neuron",
         grepl("Neuro", top_level_annotation) & !grepl("Moto|^MN", subtype_annotation) ~ "neuron", 
-        # grepl("Neuro", top_level_annotation) & grepl("IEG", subtype_annotation) ~ "IEG_neuron",
-        # grepl("Neuro", top_level_annotation) & !grepl("Moto|^MN", subtype_annotation) ~ paste0("sc_",gsub("^.+(dorsal|ventral|mid).+", "\\1", description),"_neuron"),
-        grepl("Neuro", top_level_annotation) & grepl("Moto|^MN", subtype_annotation) ~ "motorneurons",
         grepl("DRG_Progenitor", top_level_annotation) ~ "progenitor",
+        
+        grepl("Neuro", top_level_annotation) & grepl("Moto|^MN", subtype_annotation) ~ "motorneurons",
         TRUE ~ tolower(top_level_annotation)
       ), 
       
       subtype_standardized = case_when(
         grepl("pMN", subtype_annotation) ~ "pMN",
-        grepl("Neuro", top_level_annotation) & !grepl("Moto|^MN", subtype_annotation) ~ gsub("-[0-9]{1,2}$","", subtype_annotation) %>% 
-                                                                                                  gsub(".+\\s(.+)$", "\\1", .) %>% gsub("\\/|-","_", .),
+        grepl("Neuro", top_level_annotation) &
+          !grepl("Moto|^MN", subtype_annotation) ~ gsub("-[0-9]{1,2}$","", subtype_annotation) %>% 
+                                                    gsub(".+\\s(.+)$", "\\1", .) %>% gsub("\\/|-","_", .),
+        # grepl("Neuro", top_level_annotation) & grepl("Moto|^MN", subtype_annotation) & dataset == "Rayon" ~ "esc_mn",
+        # grepl("Neuro", top_level_annotation) & grepl("Moto|^MN", subtype_annotation) & dataset == "Yadav" ~ "adult_mn",
         TRUE ~ top_level_standardized)) %>% 
     select(matches("standardized"))
   
@@ -1481,6 +1482,7 @@ celltype_annots <- read.csv("references/Allen_Rayon_Yadav_integrated_celltype_la
   mutate(standardized_top_level_annotation = gsub("\\s{1,}", "_", standardized_top_level_annotation)) %>% 
   mutate_at(vars(standardized_top_level_annotation), ~case_when(
     dataset == "yadav_2023" & top_level_annotation == "Neurons" ~ top_level_annotation,
+    dataset == "Allen_M1" & top_level_annotation == "Micro-PVM" ~ 'Microglia',
     TRUE ~ .))
 
 celltypes_to_retain <- celltype_annots %>% 
@@ -1488,8 +1490,11 @@ celltypes_to_retain <- celltype_annots %>%
          !grepl("Ery", top_level_annotation), 
          !grepl("Null", subtype_annotation)) %>% 
   mutate_at(vars(standardized_subtype_annotation), ~gsub("\\s{1,}","_", .) %>%
-              # gsub("(Neuron)s","\\1",.) %>% 
-              ifelse(grepl("Not|Rem", .), standardized_top_level_annotation, .))
+              ifelse(grepl("Not|Rem", .), standardized_top_level_annotation, .)) %>% 
+  mutate_at(vars(standardized_class_label), ~case_when(
+    . == "Remove" & grepl("Neurons", top_level_annotation) ~ "Neuron",
+    . == "Remove" & grepl("Micro-PVM", top_level_annotation) ~ "Glia",
+    TRUE ~ gsub(" cells", "", .)))
 
 # head(celltypes_to_retain)
 dim(celltypes_to_retain)
