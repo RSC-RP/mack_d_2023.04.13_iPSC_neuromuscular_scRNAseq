@@ -104,10 +104,10 @@ make_3D_umap <- function(metadata, idents_column, extra_label_cols=NULL, selecte
     return(fig)
 }
 ```
-
 ```{r}
 custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
                            lab_size = 6, ny = 0, custom_lab_fill = NULL,
+                           color_text_grp = FALSE,
                            add_text = TRUE, seed = 2023){
   
   # define x and y column names
@@ -130,8 +130,8 @@ custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
    
    # Make the scatterplot
    plot <- ggplot(metadata, 
-         aes_string(x = x_names, y = y_names, color = colorby)) +
-    geom_point(size = pt_size, alpha = 0.6) +
+         aes_string(x = x_names, y = y_names)) +
+    geom_point(aes_string(color = colorby), size = pt_size, alpha = 0.6) +
     scale_color_manual(values = custom_colors) +
     guides(color = guide_legend(override.aes = list(alpha = 1, size = 2))) +
     theme_classic() +
@@ -149,23 +149,27 @@ custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
    }else{
      fill_val <- custom_lab_fill
    }
+   
+   if(color_text_grp){
+     mapping <- aes_string(x = "x", y = "y", label = colorby, color = colorby)
 
+   }else{
+     mapping <- aes_string(x = "x", y = "y", label = colorby)
+   }
+  
    if(add_text){
      plot <- plot + 
            ggrepel::geom_text_repel(data = labs_df, 
-                             mapping = aes_string(x = "x", y = "y",
-                                                  label = colorby, color = colorby),
-                             fill = fill_val,
+                             mapping = aes_string(x = "x", y = "y", label = colorby),
+                             color = "black",
                              nudge_y = y_val,
                              segment.colour = NA,
-                             label.size = 0.5, 
                              size = lab_size,
                              seed = seed)
    }else{
       plot <- plot + 
          ggrepel::geom_label_repel(data = labs_df, 
-                           mapping = aes_string(x = "x", y = "y", 
-                                                label = colorby, color = colorby),
+                           mapping = mapping,
                            fill = fill_val,
                            nudge_y = y_val,
                            segment.colour = NA,
@@ -176,6 +180,71 @@ custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
    }
    
    return(plot)
+}
+```
+
+```{r}
+custom_heatmaps <- function(seurat_obj, genes,columns = NULL, annot_colors = NULL, celltype="ALL"){
+  
+  if(celltype == "ALL"){
+    cell_ids <- colnames(seurat_obj)
+  }else{
+    cell_ids <- CellsByIdentities(seurat_obj, idents = celltype) %>%  unlist()
+  }
+  
+  print(c("The assay is", DefaultAssay(seurat_obj)))
+  genes <- intersect(genes,rownames(seurat_obj))
+  seurat_obj <- ScaleData(seurat_obj, features = genes)
+  
+  print("Extracting expression data")
+  norm_counts <- LayerData(seurat_obj[[DefaultAssay(seurat_obj)]], 
+                           layer = 'scale.data', 
+                           features = genes, 
+                           cells = cell_ids)
+  
+  col_annots <- seurat_obj@meta.data %>% 
+    select(-all_of("barcode")) %>% 
+    rownames_to_column("barcode") %>% 
+    filter(barcode %in% colnames(norm_counts)) %>% 
+    as.data.frame() %>%
+    set_rownames(.$barcode) %>%
+    select(all_of(columns))
+  
+  # row_annots <- temp %>% 
+  #   set_rownames(.$coords) %>% 
+  #   select(gene_name, p_val, p_val_adj) 
+  
+  x <- nrow(norm_counts)
+  fontsize_rows <- case_when(
+    x < 50 ~ 10,
+    x >= 50 & x < 100 ~ 8, 
+    x >= 100 & x < 200 ~ 6, 
+    x >= 200 ~ 4)
+
+
+  len <- 299
+  colors <- colorRampPalette(viridis::viridis(10))(len)
+  colors_list <- lapply(columns, function(x){
+          grps <- unique(pull(col_annots, all_of(x)))
+          n <- length(grps)
+          colors <- annot_colors[1:n] %>% 
+            set_names(grps)
+          return(colors)
+    })
+  names(colors_list) <- columns
+  
+
+  pheatmap::pheatmap(mat=as.matrix(norm_counts), 
+                     scale = "none", 
+                     color = colors,
+                     fontsize_row = fontsize_rows,
+                     # main = glue::glue("{celltype}: DA Peaks p<0.05 & FC >= {th}"),
+                     annotation_col = col_annots,
+                     annotation_colors = colors_list,
+                     # annotation_row = row_annots[,-1],
+                     labels_row = rownames(norm_counts),
+                     clustering_method = 'ward.D2',
+                     show_colnames = FALSE)
 }
 ```
 

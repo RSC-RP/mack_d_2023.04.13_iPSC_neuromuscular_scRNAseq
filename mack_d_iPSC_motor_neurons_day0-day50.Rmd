@@ -83,6 +83,192 @@ Alternatively install CMake from: <https://cmake.org/>
 ERROR: configuration failed for package ‘nloptr’
 * removing ‘/home/jsmi26/R/x86_64-pc-linux-gnu-library/4.3/nloptr’
 
+# Define Functions
+
+```{r}
+make_3D_umap <- function(metadata, idents_column, extra_label_cols=NULL, selected_colors=NULL){
+    "
+    idents_column is for labeling. ex) 'RNA_snn_res.0.7 as well as the UMAP colnames, eg UMAP_1, UMAP_2'
+    "
+    # 3D UMAP
+    plot.data <- metadata %>% 
+      select(all_of(c(idents_column)))
+    plot.data$label <- paste(rownames(plot.data))
+    if(!is.null(extra_label_cols)){
+      plot.data$label <- paste(plot.data$label, 
+                               metadata[[extra_label_cols]],
+                               sep = "\n")
+    }
+    
+    if(is.null(selected_colors)){
+      selected_colors <- c("lightseagreen", "gray50",  "darkgreen", "red4", "red", "turquoise4","black","yellow4","royalblue1","lightcyan3",
+                 "peachpuff3","lightskyblue","gray20","orange2","royalblue4","yellow3","gray80","darkorchid1","lawngreen","plum2", 
+                 "darkorange4","darkmagenta","mediumorchid1","lightslateblue","midnightblue", "tan2") #26
+    }
+
+    cnames <- colnames(plot.data)
+    formulas <- sapply(1:3, function(x) as.formula(paste0("~", grep(x, cnames, value = TRUE))))
+    fig <- plot_ly(data = plot.data, 
+        x = formulas[[1]], y = formulas[[2]], z = formulas[[3]], 
+        color = as.formula(paste0("~", idents_column[4])), 
+        colors = selected_colors, 
+        type = "scatter3d", 
+        mode = "markers", 
+        marker = list(size = 1, width=2), # controls size of points
+        text=~label, # This is that extra column we made earlier for which we will use for cell ID
+        hoverinfo="text") #When you visualize your plotly object, hovering your mouse pointer over a point shows cell names
+
+    return(fig)
+}
+```
+
+```{r}
+custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
+                           lab_size = 6, ny = 0, custom_lab_fill = NULL,
+                           color_text_grp = FALSE,
+                           add_text = TRUE, seed = 2023){
+  
+  # define x and y column names
+  x_names <- paste0(dimred_colnames, "_1")
+  y_names <- paste0(dimred_colnames, "_2")
+  
+  # define labels positions
+  labs_df <- metadata %>%
+    select(all_of(c(colorby, x_names, y_names))) %>%
+    group_by(!! as.name(colorby)) %>% 
+    summarise(x = mean(!! as.name(x_names)),
+              y = mean(!! as.name(y_names)))
+  
+   # define point sizes based on how many total cells in data
+   ncells <- nrow(metadata)
+   pt_size <- case_when(
+     ncells < 5e4 ~ 1,
+     ncells >= 5e4 & ncells < 1e5 ~ 0.5,
+     ncells >= 1e5 ~ 0.25)
+   
+   # Make the scatterplot
+   plot <- ggplot(metadata, 
+         aes_string(x = x_names, y = y_names)) +
+    geom_point(aes_string(color = colorby),
+               size = pt_size, alpha = 0.4) +
+    scale_color_manual(values = custom_colors) +
+    guides(color = guide_legend(override.aes = list(alpha = 1, size = 2))) +
+    theme_classic() +
+    theme(legend.position = "top")
+   
+   # customize label positions
+   if(is.character(ny)){
+     y_val <-  ifelse(grepl(ny, labs_df[[colorby]]), 1.5, 0)
+   }else{
+     y_val <- ny
+   }
+   
+   if(is.null(custom_lab_fill)){
+     fill_val <-  "white"
+   }else{
+     fill_val <- custom_lab_fill
+   }
+   
+   if(color_text_grp){
+     mapping <- aes_string(x = "x", y = "y", label = colorby, color = colorby)
+
+   }else{
+     mapping <- aes_string(x = "x", y = "y", label = colorby)
+   }
+  
+   if(add_text){
+     plot <- plot + 
+           ggrepel::geom_text_repel(data = labs_df, 
+                             mapping = aes_string(x = "x", y = "y", label = colorby),
+                             color = "black",
+                             nudge_y = y_val,
+                             segment.colour = NA,
+                             size = lab_size,
+                             seed = seed)
+   }else{
+      plot <- plot + 
+         ggrepel::geom_label_repel(data = labs_df, 
+                           mapping = mapping,
+                           fill = fill_val,
+                           nudge_y = y_val,
+                           segment.colour = NA,
+                           label.size = 0.5,
+                           size = lab_size,
+                           show.legend = FALSE,
+                           seed = seed)
+   }
+   
+   return(plot)
+}
+```
+
+```{r}
+custom_heatmaps <- function(seurat_obj, genes,columns = NULL, annot_colors = NULL, celltype="ALL"){
+  
+  if(celltype == "ALL"){
+    cell_ids <- colnames(seurat_obj)
+  }else{
+    cell_ids <- CellsByIdentities(seurat_obj, idents = celltype) %>%  unlist()
+  }
+  
+  print(c("The assay is", DefaultAssay(seurat_obj)))
+  genes <- intersect(genes,rownames(seurat_obj))
+  seurat_obj <- ScaleData(seurat_obj, features = genes)
+  
+  print("Extracting expression data")
+  norm_counts <- LayerData(seurat_obj[[DefaultAssay(seurat_obj)]], 
+                           layer = 'scale.data', 
+                           features = genes, 
+                           cells = cell_ids)
+  
+  col_annots <- seurat_obj@meta.data %>% 
+    select(-all_of("barcode")) %>% 
+    rownames_to_column("barcode") %>% 
+    filter(barcode %in% colnames(norm_counts)) %>% 
+    as.data.frame() %>%
+    set_rownames(.$barcode) %>%
+    select(all_of(columns))
+  
+  # row_annots <- temp %>% 
+  #   set_rownames(.$coords) %>% 
+  #   select(gene_name, p_val, p_val_adj) 
+  
+  x <- nrow(norm_counts)
+  fontsize_rows <- case_when(
+    x < 50 ~ 10,
+    x >= 50 & x < 100 ~ 8, 
+    x >= 100 & x < 200 ~ 6, 
+    x >= 200 ~ 4)
+
+
+  len <- 299
+  colors <- colorRampPalette(viridis::viridis(10))(len)
+  colors_list <- lapply(columns, function(x){
+          grps <- unique(pull(col_annots, all_of(x)))
+          n <- length(grps)
+          colors <- annot_colors[1:n] %>% 
+            set_names(grps)
+          return(colors)
+    })
+  names(colors_list) <- columns
+  
+
+  pheatmap::pheatmap(mat=as.matrix(norm_counts), 
+                     scale = "none", 
+                     color = colors,
+                     fontsize_row = fontsize_rows,
+                     # main = glue::glue("{celltype}: DA Peaks p<0.05 & FC >= {th}"),
+                     annotation_col = col_annots,
+                     annotation_colors = colors_list,
+                     # annotation_row = row_annots[,-1],
+                     labels_row = rownames(norm_counts),
+                     clustering_method = 'ward.D2',
+                     show_colnames = FALSE)
+}
+```
+
+
+
 # Parallelization 
 
 ```{r eval=FALSE}
@@ -164,7 +350,6 @@ subcutaneous fat should be trimmed off.
 # Sample Manifest
 
 See https://support.10xgenomics.com/single-cell-gene-expression/software/pipelines/latest/output/gex-metrics
-
 
 ```{r}
 sample_manifest <- read.csv("samples/mack_d_iPSC_motor_neurons_sample_manifest_v3.csv")
@@ -348,6 +533,14 @@ marker_genes_chun_list[["pan_neuronal_markers"]] <- str_split(marker_genes_chun[
 ```
 
 ```{r}
+marker_genes_endoderm <- c("CXCR4", "HDE1", "HDE2", "SOX17", "KLF8", "MYCT1", "DKK4",
+                           "CLDN6","KRT19","EOMES", "FABP1", "FABP2","GATA4","GSC",
+                           "KRT12","FOXA1","FOXA2","TGFB1","SOX7","SOX17", "HNF1B")
+
+length(marker_genes_endoderm)
+```
+
+```{r}
 # https://github.com/regan-hamel/h-iPSCs-MNI/blob/master/R%20workflow_iMNs_LThiry_2020.Rmd
 marker_genes_iPSC <- list(MNPCs = c("CHAT", "ISL1", "ISL2", "MNX1", "OLIG2", "NEUROG2"),
                 INs = c("PAX3", "VSX2", "GATA3", "SOX14", "SIM1", "LBX1", "TLX3"),
@@ -432,6 +625,8 @@ head(mn_subtype_markers)
 ```{r}
 current_path <- file.path("results/day0_day50/seurat")
 current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS" #v5 Seurat Object
+
+merged_norm_obj <- readRDS(file.path(current_path, current_obj))
 ```
 
 
@@ -1501,9 +1696,10 @@ for(VERSION in versions){
 rm(merged_norm_obj)
 ```
 
-
 ```{r}
-merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
+if(!exists("merged_norm_obj")){
+  merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
+}
 
 # Add metadata and idents
 merged_norm_obj$id <- factor(merged_norm_obj$orig.ident, levels=unique(merged_norm_obj$orig.ident))
@@ -1539,14 +1735,6 @@ if(redo_umap){
   merged_norm_obj <- AddMetaData(merged_norm_obj,as.data.frame(merged_norm_obj@reductions$umap@cell.embeddings))
 }
 
-# pdf("figures/day0_day50/filtered_merged_results/sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
-# ElbowPlot(merged_norm_obj,ndims = 50, reduction = "pca")
-# dev.off()
-
-# pdf("figures/day0_day50/filtered_merged_results/transform_1-4PCs_loadings.pdf", height = 10, width=7)
-# VizDimLoadings(merged_norm_obj, dims = 1:4, reduction = "pca")
-# dev.off()
-
 # png("figures/day0_day50/filtered_merged_results/day0-day50_time-course_filtered_merged_byTimePoint_sct_UMAP.png",res = 150, units = "in", height = 15, width= 17)
 DimPlot(merged_norm_obj, 
         reduction = "umap",
@@ -1572,48 +1760,66 @@ DimPlot(merged_norm_obj,
 # dev.off()
 ```
 
-```{r fig.height=10}
-filt_d1 <- DimPlot(merged_norm_obj, 
-        group.by = c("batch","id"),
-        label = T, 
-        repel = T,
-        label.size = 7) + 
-  scale_color_manual(values = colors_vector)
+```{r fig.height=10, warning=FALSE}
+# filt_d1 <- DimPlot(merged_norm_obj, 
+#         group.by = c("batch","id"),
+#         label = T, 
+#         repel = T,
+#         label.size = 7) + 
+#   scale_color_manual(values = colors_vector)
+# 
+# filt_s1 <- DimPlot(merged_norm_obj,
+#         group.by = c("id"),
+#         split.by = "batch",
+#         label = T,
+#         repel = T,
+#         label.size = 7) +
+#   scale_color_manual(values = colors_vector)
 
-# png("figures/day0_day50/filtered_merged_results/iPSC_MN_seurat_UMAP_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
-filt_d1
+
+
+# pdf("figures/day0_day50/filtered_merged_results/sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
+ElbowPlot(merged_norm_obj,ndims = 50, reduction = "pca")
 # dev.off()
 
-filt_s1 <- DimPlot(merged_norm_obj, 
-        group.by = c("id"),
-        split.by = "batch",
-        label = T, 
-        repel = T,
-        label.size = 7) + 
-  scale_color_manual(values = colors_vector)
+# pdf("figures/day0_day50/filtered_merged_results/transform_1-4PCs_loadings.pdf", height = 10, width=7)
+VizDimLoadings(merged_norm_obj, dims = 1:4, reduction = "pca")
+# dev.off()
+
+filt_batch <- custom_dimplot(metadata = merged_norm_obj@meta.data,
+                         colorby = "batch", 
+                         dimred_colnames = "umap", 
+                         custom_colors = ggsci::pal_jco()(4))
+                           
+# filt_batch
+
+
+filt_id <- custom_dimplot(metadata = merged_norm_obj@meta.data,
+                         colorby = "id", 
+                         dimred_colnames = "umap", 
+                         custom_colors = colors_vector)
+                           
+# filt_id
+
+png("figures/day0_day50/filtered_merged_results/iPSC_MN_seurat_UMAP_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
+filt_id
+dev.off()
+
+filt_b34_id <- custom_dimplot(metadata = merged_norm_obj@meta.data %>% 
+                            filter(grepl("batch3|batch4", batch)),
+                         colorby = "id", 
+                         add_text = FALSE,
+                         dimred_colnames = "umap", 
+                         custom_colors = colors_vector)
 
 # png("figures/day0_day50/filtered_merged_results/iPSC_MN_seurat_UMAP_splitBy_batch_day_filtered.png",  height = 15, width = 25, units = "in", res = 150)
-filt_s1
+filt_b34_id + 
+  facet_wrap(~time_point)
 # dev.off()
-```
 
-
-```{r fig.height=10}
-fig <- plot_ly(merged_norm_obj@meta.data,
-               x = ~umap_1, y = ~umap_2, z = ~umap_3, 
-               color = ~id,
-               colors_vector = colors_vector)
-fig <- fig %>%
-  add_markers(
-    marker = list(size = 1),
-    text = pull(merged_norm_obj@meta.data, orig.ident, name = barcode),
-    hoverinfo = 'text')
-
-# fig <- fig %>% plotly::layout(scene = list(xaxis = list(title = 'PC1'),
-#                      yaxis = list(title = 'PC2'),
-#                      zaxis = list(title = 'PC3')))
-
-fig
+# png("figures/day0_day50/filtered_merged_results/iPSC_MN_seurat_UMAP_batch_filtered.png",  height = 15, width = 25, units = "in", res = 150)
+filt_batch
+# dev.off()
 ```
 
 ```{r eval=FALSE}
@@ -1660,17 +1866,19 @@ print(VlnPlot(merged_norm_obj,
 })
 ```
 
-
 ```{r fig.height=10, fig.width=10}
+marker_genes_endoderm2 <- marker_genes_endoderm[marker_genes_endoderm %in% rownames(merged_norm_obj)]
 Idents(merged_norm_obj) <- merged_norm_obj$orig.ident
-# png("figures/day0_day50/filtered_merged_results/filtered_merged_results_iPSC_MN_seurat_endoderm_markers_p1.png", height = 10, width = 12, res = 100, units="in")
+
+
+# png("figures/day0_day50/filtered_merged_results/filtered_merged_results_iPSC_MN_seurat_endoderm_markers_p1.png", height = 12, width = 18, res = 100, units="in")
 VlnPlot(merged_norm_obj,
-        features = marker_genes_endoderm[1:7])
+        features = marker_genes_endoderm2[1:9])
 # dev.off()
 
-# png("figures/day0_day50/filtered_merged_results/filtered_merged_results_iPSC_MN_seurat_endoderm_markers_p2.png", height = 10, width = 12, res = 100, units="in")
+# png("figures/day0_day50/filtered_merged_results/filtered_merged_results_iPSC_MN_seurat_endoderm_markers_p2.png", height = 12, width = 18, res = 100, units="in")
 VlnPlot(merged_norm_obj,
-        features = marker_genes_endoderm[8:14])
+        features = marker_genes_endoderm2[10:18])
 # dev.off()
 ```
 
@@ -1823,18 +2031,25 @@ https://github.com/satijalab/seurat/issues/3657
 
 ```{r eval=FALSE}
 if(!exists("merged_filt_obj_v3")){
-  merged_filt_obj_v3 <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj_v3.RDS")
+  obj_path <- "results/day0_day50/seurat/intermediate_objects/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v3.RDS"
+  merged_filt_obj_v3 <- readRDS(obj_path)
+  DefaultAssay(merged_filt_obj_v3) <- "RNA"
+  merged_filt_obj_v3 <- DietSeurat(object = merged_filt_obj_v3,
+                                   assays = "RNA")
+                                   
 }
-
-merged_filt_obj_v3
-# class(merged_filt_obj_v3[["RNA"]]) #v3
+# merged_filt_obj_v3
+class(merged_filt_obj_v3[["RNA"]]) #v3
+quantile(merged_filt_obj_v3$percent.mt)
 table(merged_filt_obj_v3$batch)
 ```
 
 ```{r eval=FALSE}
-options(Seurat.object.assay.version = 'v3')
+  # options(Seurat.object.assay.version = 'v3')
   #regularized negative binomial regression to normalize UMI count data
   #Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures().
+
+  DefaultAssay(merged_filt_obj_v3) <- "RNA"
   temp <- merged_filt_obj_v3[grep("^MT-", rownames(merged_filt_obj_v3), invert = TRUE), ]
   temp$batch <- as.factor(merged_filt_obj_v3$batch)
   
@@ -1869,23 +2084,20 @@ options(Seurat.object.assay.version = 'v3')
                     verbose = T)
   
   merged_norm_batchcorr <- merged_norm_batchcorr %>% 
-      FindClusters(resolution = 1.0, 
+      FindClusters(resolution = c(0.8, 1.0, 1.5), 
                    algorithm = 2, 
                    verbose = T) 
   
-  merged_norm_batchcorr <- merged_norm_batchcorr %>% 
-      FindClusters(resolution = 1.5, 
-                   algorithm = 2, 
-                   verbose = T)
-  
   merged_norm_batchcorr <- AddMetaData(merged_norm_batchcorr,
                                  as.data.frame(merged_norm_batchcorr@reductions$umap@cell.embeddings))
-  
-  # saveRDS(merged_norm_batchcorr, 
-  #       "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_batchcorrected_seurat_obj_v3.RDS")
+
+job::job({
+  saveRDS(merged_norm_batchcorr,
+        "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_batchcorrected_seurat_obj_v3.RDS")
+}, import = c("merged_norm_batchcorr"))
 ```
 
-```{r}
+```{r fig.height=10}
 if(!exists("merged_norm_batchcorr")){
   merged_norm_batchcorr <- readRDS(file.path(current_path, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_batchcorrected_seurat_obj_v3.RDS"))
 }
@@ -1897,20 +2109,18 @@ merged_norm_batchcorr$seurat_clusters <- merged_norm_batchcorr$SCT_snn_res.1
 Idents(merged_norm_batchcorr) <- merged_norm_batchcorr$SCT_snn_res.1
 
 merged_norm_batchcorr
-```
 
-```{r fig.height=10}
 # pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
-# ElbowPlot(merged_norm_batchcorr,ndims = 50, reduction = "pca")
+ElbowPlot(merged_norm_batchcorr,ndims = 50, reduction = "pca")
 # dev.off()
-# 
+
 # pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_transform_1-4PCs_loadings.pdf", height = 10, width=7)
-# VizDimLoadings(merged_norm_batchcorr, dims = 1:4, reduction = "pca")
+VizDimLoadings(merged_norm_batchcorr, dims = 1:4, reduction = "pca")
 # dev.off()
-# 
+
 # pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_byLouvainCluster_sct_UMAP.pdf",height = 10, width= 17)
-# DimPlot(merged_norm_batchcorr, dims = c(1,2)) +
-#   scale_color_manual(values = colors_vector)
+DimPlot(merged_norm_batchcorr, dims = c(1,2)) +
+  scale_color_manual(values = colors_vector)
 # dev.off()
 ```
 
@@ -1937,27 +2147,7 @@ bc_s1 <- DimPlot(merged_norm_batchcorr,
 # png("figures/day0_day50/filtered_merged_batchcorrected/filtered_merged_results_iPSC_MN_seurat_batchcorrected_UMAP_splitBy_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
 bc_s1
 # dev.off()
-```
-
-
-```{r fig.height=10}
-fig_batchcorr <- plot_ly(merged_norm_batchcorr@meta.data,
-               x = ~umap_1, y = ~umap_2, z = ~umap_3, 
-               color = ~id,
-               colors_vector = colors_vector)
-fig_batchcorr <- fig_batchcorr %>% 
-  add_markers( 
-    marker = list(size = 1), 
-    text = merged_norm_batchcorr@meta.data$orig.ident,
-      hoverinfo = 'text')
-
-# fig <- fig %>% plotly::layout(scene = list(xaxis = list(title = 'PC1'),
-#                      yaxis = list(title = 'PC2'),
-#                      zaxis = list(title = 'PC3')))
-
-fig
-```
-
+``` 
 
 ```{r}
 Idents(merged_norm_batchcorr) <- merged_norm_batchcorr$orig.ident
@@ -1990,101 +2180,168 @@ plot2
 # dev.off()
 ```
 
+## RPCA
+
+```{r eval=FALSE}
+VERSION = 'v5'
+if(!exists("merged_norm_obj")){
+  merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
+}
+
+# Layers(merged_norm_obj, assay = "RNA")
+# names(merged_norm_obj@assays$SCT@SCTModel.list)
+
+# defaults to Layers which are the sample IDs in this case
+merged_rpca_obj <- IntegrateLayers(
+    object = merged_norm_obj,
+    method = RPCAIntegration,
+    orig.reduction = "pca",
+    new.reduction = "rpca",
+    normalization.method = 'SCT', #why is this required?
+    assay = "SCT",
+    k.anchor = 5, # default
+    preserve.order = TRUE, #keep time-course samples in order day3 into day0. Then Day8 into Day0/3 obj 
+    verbose = TRUE ) %>%
+    FindNeighbors(reduction = "rpca",
+                 dims = 1:50)
+
+merged_rpca_obj <- merged_rpca_obj %>% 
+   FindClusters(resolution = c(0.8, 1.0, 1.5),
+                algorithm = 2)
+
+merged_rpca_obj <- merged_rpca_obj %>% 
+   RunUMAP(reduction = "rpca",
+           n.components = 3,
+           dims = 1:50,
+           reduction.name = "umap.rpca")
+  
+merged_rpca_obj$id <- factor(merged_rpca_obj$orig.ident,
+                                levels=unique(merged_rpca_obj$orig.ident))
+merged_rpca_obj <- AddMetaData(merged_rpca_obj,
+                                  merged_rpca_obj@reductions$umap.rpca@cell.embeddings)
+
+job::job({
+  saveRDS(merged_rpca_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_RPCAIntegration_seurat_obj_v5.RDS")
+}, import = c("merged_rpca_obj"))
+```
+
+```{r fig.height=10, warning=FALSE}
+# pdf("figures/day0_day50/filtered_merged_rpca/merged_rpca_sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
+ElbowPlot(merged_rpca_obj, ndims = 50, reduction = "pca")
+# dev.off()
+
+# pdf("figures/day0_day50/filtered_merged_rpca/merged_rpca_transform_1-4PCs_loadings.pdf", height = 10, width=7)
+VizDimLoadings(merged_rpca_obj, dims = 1:4, reduction = "pca")
+# dev.off()
+
+filt_batch <- custom_dimplot(metadata = merged_rpca_obj@meta.data,
+                         colorby = "batch", 
+                         dimred_colnames = "umap", 
+                         custom_colors = ggsci::pal_jco()(4))
+                           
+# filt_batch
+filt_id <- custom_dimplot(metadata = merged_rpca_obj@meta.data,
+                         colorby = "id", 
+                         dimred_colnames = "umap", 
+                         custom_colors = colors_vector)
+                          
+
+# png("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_rpca_UMAP_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
+filt_id
+# dev.off()
+
+filt_b34_id <- custom_dimplot(metadata = merged_rpca_obj@meta.data %>% 
+                            filter(grepl("batch3|batch4", batch)),
+                         colorby = "id", 
+                         add_text = FALSE,
+                         dimred_colnames = "umap", 
+                         custom_colors = colors_vector)
+
+# png("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_rpca_UMAP_splitBy_batch_day_filtered.png",  height = 15, width = 25, units = "in", res = 150)
+filt_b34_id + 
+  facet_wrap(~time_point)
+# dev.off()
+
+# png("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_rpca_UMAP_batch_filtered.png",  height = 15, width = 25, units = "in", res = 150)
+filt_batch
+# dev.off()
+```
+
+```{r eval=FALSE}
+Idents(merged_rpca_obj) <- merged_rpca_obj$orig.ident
+
+purrr::map(names(marker_genes_iPSC), function(type){
+ 
+   h <- ifelse(length(marker_genes_iPSC[[type]]) <= 4, 12, 20)
+  outfile <- glue("figures/day0_day50/filtered_merged_rpca/merged_rpca_obj_batch_iPSC_MN_expression_{type}_marker_genes.png")
+  
+  png(outfile, height = h, width = 20, units = "in", res = 100)
+  print(FeaturePlot(merged_rpca_obj, 
+                    features = marker_genes_iPSC[[type]],
+                    label = TRUE) +
+          patchwork::plot_annotation(title = glue("{type} marker genes")))
+  dev.off()
+})
+```
+
 
 ## Harmony 
 
-```{r}
+```{r eval=FALSE}
 VERSION = 'v5'
-```
-
-```{r eval=FALSE}
-if VERSION == 'v3'{
-  merged_harmony_obj <- merged_filt_obj
-
-  merged_harmony_obj[["RNA"]] <- split(merged_harmony_obj[["RNA"]],
-                                       f = merged_harmony_obj$sample)
-  merged_harmony_obj
+if(!exists("merged_norm_obj")){
+  merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
 }
-```
 
-Warning: Groups are set automatically by model when integrating SCT assaysWarning: Quick-TRANSfer stage steps exceeded maximum (= 2694850)Harmony 1/10
-
-```{r eval=FALSE}
-merged_harmony_obj_batch <- IntegrateLayers(
-  object = merged_norm_obj,
-  group.by = "batch",
-  method = HarmonyIntegration,
-  orig.reduction = "pca",
-  new.reduction = "harmony",
-  verbose = TRUE ) %>%
- FindNeighbors(reduction = "harmony",
-               dims = 1:50)
-
-merged_harmony_obj_batch <- merged_harmony_obj_batch %>% 
- FindClusters(resolution = 1.0,
-              cluster.name = "harmony_clusters") %>% 
-    RunUMAP(reduction = "harmony",
-            reduction.name = "umap.harmony",
-            dims = 1:50, 
-            n.components = 3,
-            n.neighbors = 30,# default 30
-            metric = "cosine",
-            min.dist = 0.2, # default 0.3
-            return.model = TRUE,
-            verbose = T) 
-
-merged_harmony_obj_batch$id <- factor(merged_harmony_obj_batch$orig.ident, levels=unique(merged_harmony_obj_batch$orig.ident))
-# saveRDS(merged_harmony_obj_batch, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_harmonyPerBatch_seurat_obj_v5.RDS")
-
-# class(merged_harmony_obj_batch[["RNA"]])
-```
-
-```{r eval=FALSE}
 # defaults to Layers which are the sample IDs in this case
 merged_harmony_obj <- IntegrateLayers(
     object = merged_norm_obj,
     method = HarmonyIntegration,
     orig.reduction = "pca",
     new.reduction = "harmony",
+    assay = "SCT",
     verbose = TRUE ) %>%
    FindNeighbors(reduction = "harmony",
                  dims = 1:50)
-  
+
 merged_harmony_obj <- merged_harmony_obj %>% 
-   FindClusters(resolution = 1.0,
-                cluster.name = "harmony_clusters") %>% 
+   FindClusters(graph.name = "SCT_snn",
+                resolution = c(0.8, 1.0, 1.5),
+                algorithm = 2)
+
+merged_harmony_obj <- merged_harmony_obj %>% 
    RunUMAP(reduction = "harmony",
-           dims = 1:50, 
+           n.components = 3,
+           dims = 1:50,
            reduction.name = "umap.harmony")
   
-merged_harmony_obj$id <- factor(merged_harmony_obj$orig.ident, levels=unique(merged_harmony_obj$orig.ident))
-# saveRDS(merged_harmony_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_harmonyPerSample_seurat_obj_v5.RDS")
-```
+merged_harmony_obj$id <- factor(merged_harmony_obj$orig.ident,
+                                levels=unique(merged_harmony_obj$orig.ident))
+merged_harmony_obj <- AddMetaData(merged_harmony_obj,
+                                  merged_harmony_obj@reductions$umap.harmony@cell.embeddings)
 
-```{r}
-merged_harmony_obj_batch <- AddMetaData(merged_harmony_obj_batch,
-                                        merged_harmony_obj_batch@reductions$umap.harmony@cell.embeddings)
+job::job({
+  saveRDS(merged_harmony_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_harmonyIntegration_seurat_obj_v5.RDS")
+}, import = c("merged_harmony_obj"))
 ```
 
 ```{r fig.height=10}
 # pdf("figures/day0_day50/harmony/merged_harmony_obj_batch_sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
-ElbowPlot(merged_harmony_obj_batch,ndims = 50, reduction = "pca")
+ElbowPlot(merged_harmony_obj,ndims = 50, reduction = "pca")
 # dev.off()
 
 # pdf("figures/day0_day50/harmony/merged_harmony_obj_batch_transform_1-4PCs_loadings.pdf", height = 10, width=7)
-VizDimLoadings(merged_harmony_obj_batch, dims = 1:4, reduction = "pca")
+VizDimLoadings(merged_harmony_obj, dims = 1:4, reduction = "pca")
 # dev.off()
 
 # pdf("figures/day0_day50/harmony/merged_harmony_obj_batch_byLouvainCluster_sct_UMAP.pdf",height = 10, width= 17)
-DimPlot(merged_harmony_obj_batch,
+DimPlot(merged_harmony_obj,
         reduction = "umap",
         dims = c(1,2)) +
   scale_color_manual(values = colors_vector)
 # dev.off()
-```
 
-```{r fig.height=10}
-filt_harmony_d1 <- DimPlot(merged_harmony_obj_batch, 
+filt_harmony_d1 <- DimPlot(merged_harmony_obj, 
         group.by = c("batch","id"),
         reduction = "umap.harmony", 
         label = T, 
@@ -2092,7 +2349,7 @@ filt_harmony_d1 <- DimPlot(merged_harmony_obj_batch,
         label.size = 7) + 
   scale_color_manual(values = colors_vector)
 
-# 
+
 # filt_harmony_d2 <- DimPlot(merged_harmony_obj, 
 #         group.by = c("batch","id"),
 #         reduction = "umap.harmony",
@@ -2104,18 +2361,17 @@ filt_harmony_d1 <- DimPlot(merged_harmony_obj_batch,
 # png("figures/day0_day50/harmony/merged_harmony_obj_batch_iPSC_MN_seurat_UMAP_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
 filt_harmony_d1
 # dev.off()
-
 ```
 
 ```{r eval=FALSE}
-Idents(merged_harmony_obj_batch) <- merged_harmony_obj_batch$orig.ident
+Idents(merged_harmony_obj) <- merged_harmony_obj$orig.ident
 purrr::map(names(marker_genes_iPSC), function(type){
  
    h <- ifelse(length(marker_genes_iPSC[[type]]) <= 4, 12, 20)
   outfile <- glue("figures/day0_day50/harmony/merged_harmony_obj_batch_iPSC_MN_expression_{type}_marker_genes.png")
   
   png(outfile, height = h, width = 20, units = "in", res = 100)
-  print(FeaturePlot(merged_harmony_obj_batch, 
+  print(FeaturePlot(merged_harmony_obj, 
                     features = marker_genes_iPSC[[type]],
                     label = TRUE) +
           patchwork::plot_annotation(title = glue("{type} marker genes")))
@@ -2123,36 +2379,44 @@ purrr::map(names(marker_genes_iPSC), function(type){
 })
 ```
 
+Claudin-6
+Cytokeratin 19
+EOMES
+FABP1/L-FABP
+FABP2/I-FABP
+GATA-4
+Goosecoid
+HNF-3 alpha/FoxA1
+HNF-3 beta/FoxA2
+SOX7
+SOX17
+TCF-2/HNF-1 beta
+
 ```{r}
-merged_harmony_obj_batch
-Idents(merged_harmony_obj_batch) <- merged_harmony_obj_batch$orig.ident
+# table(marker_genes_endoderm %in% rownames(merged_harmony_obj))
+# marker_genes_endoderm[!marker_genes_endoderm %in% rownames(merged_harmony_obj)]
+# "HDE1"  "HDE2"  "FABP2" "TNF" 
+
+marker_genes_endoderm3 <- marker_genes_endoderm[marker_genes_endoderm %in% rownames(merged_harmony_obj)]
+marker_genes_endoderm3 <- marker_genes_endoderm3[order(marker_genes_endoderm3)]
+length(marker_genes_endoderm3)
 ```
+
 
 ```{r fig.height=10, fig.width=10}
-# png("figures/day0_day50/harmony/merged_harmony_obj_batch_iPSC_MN_seurat_endoderm_markers_p1.png", height = 10, width = 12, res = 100, units="in")
-VlnPlot(merged_harmony_obj_batch,
-        features = marker_genes_endoderm[1:7])
+Idents(merged_harmony_obj) <- merged_harmony_obj$orig.ident
+
+# png("figures/day0_day50/harmony/merged_harmony_obj_batch_iPSC_MN_seurat_endoderm_markers_p1.png", height = 12, width = 18, res = 100, units="in")
+VlnPlot(merged_harmony_obj,
+        features = marker_genes_endoderm[1:9])
 # dev.off()
 
-# png("figures/day0_day50/harmony/merged_harmony_obj_batch_iPSC_MN_seurat_endoderm_markers_p2.png", height = 10, width = 12, res = 100, units="in")
-VlnPlot(merged_harmony_obj_batch,
-        features = marker_genes_endoderm[8:14])
+# png("figures/day0_day50/harmony/merged_harmony_obj_batch_iPSC_MN_seurat_endoderm_markers_p2.png", height = 12, width = 18, res = 100, units="in")
+VlnPlot(merged_harmony_obj,
+        features = marker_genes_endoderm[10:18])
 # dev.off()
 ```
 
-```{r}
-fig2 <- plot_ly(merged_harmony_obj_batch@meta.data,
-               x = ~umapharmony_1, y = ~umapharmony_2, z = ~umapharmony_3, 
-               color = ~id,
-               colors_vector = colors_vector)
-fig2 <- fig2 %>%
-  add_markers(
-    marker = list(size = 1),
-    text = pull(merged_harmony_obj_batch@meta.data, orig.ident, name = barcode),
-    hoverinfo = 'text')
-
-fig2
-```
 
 # Session Info
 
