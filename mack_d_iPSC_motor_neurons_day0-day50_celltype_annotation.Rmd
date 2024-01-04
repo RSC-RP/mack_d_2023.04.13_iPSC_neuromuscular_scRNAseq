@@ -39,7 +39,15 @@ library(anndata)
 
 ```{r message=FALSE, warning=FALSE}
 # python modules
-reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "opt/mambaforge/envs/scanvi_scib"))
+if( Sys.info()[["nodename"]] == "pdlposit-0" ) {
+  print(Sys.getenv("LD_LIBRARY_PATH"))
+  mamba_path <- "/miniforge3/envs/scanvi_scib"
+  Sys.setenv(LD_LIBRARY_PATH="/home/jsmi26/miniforge3/envs/scanvi_scib/lib")
+}else{
+  mamba_path <- "opt/mambaforge/envs/scanvi_scib"
+}
+
+reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), mamba_path))
 sc <- import("scanpy", convert = FALSE)
 scvi <- import("scvi", convert = FALSE)
 scib <- import("scib_metrics.benchmark", convert = FALSE)
@@ -208,13 +216,13 @@ options(future.globals.maxSize = 60000 * 1024^2)
 
 # Celltype Reference 
 
-```{r}
+```{r eval=FALSE}
 cell_ref_adata <- anndata::read_h5ad("results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_scanvi_benchmarking_adata.h5ad")
 
 # cell_ref_adata
 ```
 
-```{r}
+```{r eval=FALSE}
 scanvi_dir <- "results/integrated_ref/scanvi/"
 if(!exists("scanvi_model")){
   scanvi_model <- scvi$model$SCANVI$load(dir_path = scanvi_dir, 
@@ -232,7 +240,7 @@ sc$tl$umap(cell_ref_adata)
 
 sc$pl$umap(
     cell_ref_adata,
-    color=c("top_level_standardized", "subtype_standardized"),
+    color=c("top_level_standardized", "subtype_standardized", "donor"),
     frameon=TRUE,
     ncols=1L,
 )
@@ -246,9 +254,13 @@ options(future.rng.onMisuse="ignore")
 ```
 
 ```{r}
-ipsc_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_ipsc_obj_v5.RDS")
+ipsc_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_harmonyIntegration_seurat_obj_v5.RDS")
 
 ipsc_obj
+# Add metadata and idents
+ipsc_obj$id <- factor(ipsc_obj$orig.ident, levels=unique(ipsc_obj$orig.ident))
+ipsc_obj$seurat_clusters <- ipsc_obj$SCT_snn_res.1
+Idents(ipsc_obj) <- ipsc_obj$orig.ident
 ```
 
 ## Update Data Dimension Reduction 
@@ -260,11 +272,6 @@ n.neighbors
 This determines the number of neighboring points used in local approximations of manifold structure. Larger values will result in more global structure being preserved at the loss of detailed local structure. In general this parameter should often be in the range 5 to 50.
 
 ```{r eval=FALSE}
-# Add metadata and idents
-ipsc_obj$id <- factor(ipsc_obj$orig.ident, levels=unique(ipsc_obj$orig.ident))
-ipsc_obj$seurat_clusters <- ipsc_obj$SCT_snn_res.1
-Idents(ipsc_obj) <- ipsc_obj$orig.ident
-
 # ipsc_obj
 class(ipsc_obj[["RNA"]]) #v5
 
@@ -291,17 +298,17 @@ ipsc_obj <- AddMetaData(ipsc_obj,as.data.frame(ipsc_obj@reductions$umap@cell.emb
 
 ```{r fig.height=10, fig.width=10}
 DimPlot(ipsc_obj, 
-        reduction = "umap",
-        label = TRUE,
-        label.size = 8,
-        repel = TRUE,
+        reduction = "umap.harmony",
+        label = FALSE,
+        label.size = 2,
+        repel = FALSE,
         dims = c(1,2)) +
   scale_color_manual(values = colors_vector) +
   theme(legend.position = 'bottom')
 
 
 DimPlot(ipsc_obj, 
-        reduction = "umap",
+        reduction = "umap.harmony",
         group.by = 'seurat_clusters',
         label = TRUE,
         label.size = 10,
@@ -347,15 +354,14 @@ ipsc_obj[["RNA"]] <- JoinLayers(ipsc_obj[["RNA"]])
 ispc_adata <- AnnData(
   X = t(as.matrix(LayerData(ipsc_obj,assay = 'RNA', layer = "data"))), 
   obs = as.data.frame(ipsc_obj@meta.data),
-  layers = list(counts = t(as.matrix(LayerData(ipsc_obj,assay = 'RNA', layer = "counts")))
-                )
+  layers = list(counts = t(as.matrix(LayerData(ipsc_obj,assay = 'RNA', layer = "counts"))))
 )
 # Add matching columns for the celltype annotation from reference dataset
 ispc_adata$obs$dataset <- "iPSC"
 ispc_adata$obs$donor <- ispc_adata$obs$orig.ident
 # ispc_adata
 
-# anndata::write_h5ad(ispc_adata, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_adata_obj.RDS")
+anndata::write_h5ad(ispc_adata, "results/day0_day50/scanvi/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_adata_obj.h5ad")
 ```
 
 ```{r eval=FALSE}
@@ -408,28 +414,24 @@ model_dir <- "results/day0_day50/scanvi"
 scanvi_query$save(dir_path = model_dir,
                   prefix = 'iPSC_motor_neuron_day0-day50_time-course_scanvi_', 
                   save_anndata = TRUE, overwrite=TRUE)
+
 ```
 
-## Predictions
-
 ```{r}
+## Predictions
 model_dir <- "results/day0_day50/scanvi"
 if(!exists("scanvi_query")){
   ispc_adata <- anndata::read_h5ad(file.path(model_dir, "/iPSC_motor_neuron_day0-day50_time-course_scanvi_adata.h5ad"))
   scanvi_query <- scvi$model$SCANVI$load(dir_path = model_dir, 
                                          prefix = "iPSC_motor_neuron_day0-day50_time-course_scanvi_")
 }
-scanvi_query
-```
+# scanvi_query
 
-```{r}
 # predict the celltypes 
 predictions <- py_to_r(scanvi_query$predict())
 names(predictions) <- ispc_adata$obs_names
 table(predictions)
-```
 
-```{r fig.height=10}
 # Add predictions to the cell metadata
 ispc_adata$obs$subtype_standardized <- predictions
 
@@ -456,26 +458,32 @@ sc$pl$umap(
     frameon=FALSE,
     ncols=2L,
 )
-```
 
-```{r}
-# Update an anndata object & Add the latent representation to the adata object
-ispc_adata <- AnnData(
-  X = ispc_adata$X, 
-  obs = ispc_adata$obs,
-  uns = ispc_adata$uns,
-  obsp = ispc_adata$obsp,
-  obsm = list('X_scANVI' = ipsc_adata$obsm['X_scANVI']
-              ''  = ispc_adata$obsm['X_umap']),
-  layers = list(counts = ispc_adata$layers['counts'],
-                scanvi_norm = scanvi_query$get_normalized_expression()
-                )
-)
 anndata::write_h5ad(ispc_adata, "results/day0_day50/scanvi/iPSC_motor_neuron_day0-day50_time-course_scanvi_predictions_adata.h5ad")
+
+
+# Update an anndata object & Add the latent representation to the adata object
+# ispc_adata2 <- AnnData(
+#   X = ispc_adata$X, 
+#   obs = ispc_adata$obs,
+#   uns = ispc_adata$uns,
+#   obsp = ispc_adata$obsp,
+#   obsm = list(X_scANVI = ipsc_adata$obsm['X_scANVI'])
+#               # X_umap = ispc_adata$obsm['X_umap'])
+#   # layers = list(counts = ispc_adata$layers['counts'],
+#   #               scanvi_norm = scanvi_query$get_normalized_expression())
+# )
 ```
 
 
 ## Generate Seurat Object
+
+```{r}
+if(!exists("ispc_adata")){
+  ispc_adata <- anndata::read_h5ad("results/day0_day50/scanvi/iPSC_motor_neuron_day0-day50_time-course_scanvi_predictions_adata.h5ad")
+}
+ispc_adata
+```
 
 ```{r eval=FALSE}
 # create dim reduction object 
@@ -511,20 +519,13 @@ ipsc_obj <-  RunUMAP(ipsc_obj,
 
 # Add all Integration UMAPs to metadata
 ipsc_obj <- AddMetaData(ipsc_obj, as.data.frame(ipsc_obj@reductions$umap.scanvi@cell.embeddings))
-ipsc_obj
-# tail(colnames(ipsc_obj@meta.data))
-# saveRDS(ipsc_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS")
-```
-
-```{r}
-ipsc_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS")
-
+# 
 subtype_labels <- ipsc_obj@meta.data %>% 
   mutate(subtype_labels = case_when(
     subtype_standardized == "progenitor" ~ "neuroglial\nprogenitor", 
     subtype_standardized == "schwann" ~ "schwann cell",
-    subtype_standardized == "dl3"  ~ "dorsal layer3",
-    subtype_standardized == "dl4" ~ "dorsal layer4",
+    subtype_standardized == "dl3"  ~ "dorsal\ninterneuron 3",
+    subtype_standardized == "dl4" ~ "dorsal\ninterneuron 4",
     subtype_standardized == "opc" ~ "oligodendrocyte\nprogenitor",
     subtype_standardized == "motorneurons" ~ "motor neuron",
     TRUE ~ subtype_standardized)) %>% 
@@ -534,25 +535,32 @@ table(subtype_labels)
 ipsc_obj@meta.data$subtype_labels <- subtype_labels
 
 ipsc_obj
+# tail(colnames(ipsc_obj@meta.data))
+
+job::job({
+  saveRDS(ipsc_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS")
+}, import = c("ipsc_obj"))
+
 ```
 
-```{r fig.height=10, fig.width=10}
-custom_dimplot(metadata = ipsc_obj@meta.data, 
-               dimred_colnames = "umapscanvi", 
-               colorby = "subtype_standardized",
-               custom_colors = colors_vector)
+```{r}
+if(!exists("ipsc_obj")){
+  ipsc_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS")
+}
+
+ipsc_obj
 ```
 
+```{r}
+ct_count_table <- ipsc_obj@meta.data %>% 
+  group_by(subtype_standardized) %>% 
+  dplyr::count()
 
-Also please make text and color circle big enough for all these
-three figures. please change:
+ct_count_table
+# write.csv(ct_count_table, "results/day0_day50/celltype_annotation_batches1234_by_integrated_ref_summary_table.csv", row.names = FALSE)
+```
 
-progenitor to neuroglial progenitor, 
-Schwann to Schwann cell,
-dl3  to dorsal layer3 
-dl4 to dorsal layer4
-opc to oligodendrocyte progenitor
-motorneuron to motor neuron
+# Visualization 
 
 ```{r}
 table(ipsc_obj@meta.data$subtype_standardized)
@@ -564,6 +572,80 @@ celltypes <- celltypes[order(celltypes)]
  viridis::turbo(8) %>% 
    set_names(celltypes)
 ```
+
+```{r fig.height=10, fig.width=10}
+pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_scanvi_UMAP.pdf", height = 15, width = 15)
+custom_dimplot(metadata = ipsc_obj@meta.data, 
+               dimred_colnames = "umapscanvi", 
+               colorby = "subtype_standardized",
+               custom_colors = colors_vector)
+dev.off()
+
+pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_sampleID_scanvi_UMAP.pdf", height = 15, width = 15)
+custom_dimplot(metadata = ipsc_obj@meta.data, 
+               dimred_colnames = "umapscanvi", 
+               colorby = "id",
+               label_samples = FALSE,
+               custom_colors = colors_vector)
+dev.off()
+
+pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_batch_scanvi_UMAP.pdf", height = 15, width = 15)
+custom_dimplot(metadata = ipsc_obj@meta.data, 
+               dimred_colnames = "umapscanvi", 
+               colorby = "batch",
+               custom_colors = colors_vector)
+dev.off()
+
+pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_batch_split_scanvi_UMAP.pdf", height = 15, width = 15)
+custom_dimplot(metadata = ipsc_obj@meta.data %>% 
+                 filter(time_point > 30), 
+               dimred_colnames = "umapscanvi", 
+               colorby = "id",
+               label_samples = FALSE,
+               custom_colors = colors_vector[10:20]) +
+  facet_wrap(~time_point)
+dev.off()
+```
+
+```{r}
+p1 <- make_3D_umap(metadata = ipsc_obj@meta.data,
+             idents_column = c(paste0("umap_",1:3)), 
+             label_cols = c("subtype_standardized","id","batch"), 
+             selected_colors =  viridis::turbo(8))
+
+p2 <- make_3D_umap(metadata = ipsc_obj@meta.data,
+             idents_column = c(paste0("umapharmony_",1:3)), 
+             label_cols = c("subtype_standardized","id","batch"), 
+             selected_colors =  viridis::turbo(8))
+
+p3 <- make_3D_umap(metadata = ipsc_obj@meta.data,
+             idents_column = c(paste0("umapscanvi_",1:3)), 
+             label_cols = c("subtype_standardized","id","batch"), 
+             selected_colors =  viridis::turbo(8))
+
+
+htmlwidgets::saveWidget(p1, "figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_default_UMAP.html")
+htmlwidgets::saveWidget(p2, "figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_harmony_UMAP.html")
+htmlwidgets::saveWidget(p3, "figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_scanvi_UMAP.html")
+```
+
+```{r}
+make_3D_umap(metadata = ipsc_obj@meta.data,
+             idents_column = c(paste0("umap_",1:3)), 
+             label_cols = c("batch", "subtype_standardized","id"), 
+             selected_colors =  viridis::turbo(8))
+
+make_3D_umap(metadata = ipsc_obj@meta.data,
+             idents_column = c(paste0("umapharmony_",1:3)), 
+             label_cols = c("batch", "subtype_standardized","id"), 
+             selected_colors =  viridis::turbo(8))
+
+make_3D_umap(metadata = ipsc_obj@meta.data,
+             idents_column = c(paste0("umapscanvi_",1:3)), 
+             label_cols = c("batch","subtype_standardized","id"), 
+             selected_colors =  viridis::turbo(8))
+```
+
 
 ```{r fig.height=10, fig.width=10}
 set.seed(2023)
@@ -614,12 +696,6 @@ plot3D::scatter3D(x=ipsc_obj$umap_1, y=ipsc_obj$umap_2, z=ipsc_obj$umap_3,
 ```
 
 
-```{r}
-make_3D_umap(metadata = ipsc_obj@meta.data,
-             idents_column = c(paste0("umap_",1:3), "subtype_standardized"), 
-             extra_label_cols = c("subtype_standardized"), 
-             selected_colors = tail(colors_vector))
-```
 
 
 

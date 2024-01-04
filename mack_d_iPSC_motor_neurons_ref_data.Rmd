@@ -1561,7 +1561,7 @@ celltypes_to_retain <- celltype_annots %>%
 # head(celltypes_to_retain)
 dim(celltypes_to_retain)
 
-sum(celltypes_to_retain$number_of_cells) # 87,603
+sum(celltypes_to_retain$number_of_cells) #
 # table(celltypes_to_retain$standardized_top_level_annotation)
 ```
 
