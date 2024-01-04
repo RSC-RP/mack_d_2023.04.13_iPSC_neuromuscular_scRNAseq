@@ -1815,7 +1815,7 @@ filt_id
 dev.off()
 
 filt_b34_id <- custom_dimplot(metadata = merged_norm_obj@meta.data %>% 
-                            filter(grepl("batch3|batch4", batch)),
+                            filter(time_point > 30),
                          colorby = "id", 
                          add_text = FALSE,
                          dimred_colnames = "umap", 
@@ -1829,6 +1829,15 @@ filt_b34_id +
 # png("figures/day0_day50/filtered_merged_results/iPSC_MN_seurat_UMAP_batch_filtered.png",  height = 15, width = 25, units = "in", res = 150)
 filt_batch
 # dev.off()
+```
+
+```{r}
+merged_3d <- make_3D_umap(metadata = merged_norm_obj@meta.data, 
+             idents_column = c(paste0("umap_",1:3)), 
+             label_cols = c("id","batch"), 
+             selected_colors = colors_vector)
+
+merged_3d
 ```
 
 ```{r eval=FALSE}
@@ -2220,96 +2229,113 @@ if(!exists("merged_norm_obj")){
   merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
 }
 
-# Layers(merged_norm_obj, assay = "RNA")
-# names(merged_norm_obj@assays$SCT@SCTModel.list)
-
 # defaults to Layers which are the sample IDs in this case
 merged_rpca_obj <- IntegrateLayers(
     object = merged_norm_obj,
     method = RPCAIntegration,
     orig.reduction = "pca",
-    new.reduction = "rpca",
+    new.reduction = "rpcaorder",
     normalization.method = 'SCT', #why is this required?
     assay = "SCT",
-    k.anchor = 5, 
+    k.anchor = 5,
     preserve.order = TRUE, #keep time-course samples in order day3 into day0. Then Day8 into Day0/3 obj
-    verbose = TRUE)
+    verbose = TRUE) 
 
-merged_rpca_obj <- merged_rpca_obj %>% 
-   RunUMAP(reduction = "rpca",
-           n.components = 3,
-           dims = 1:30,
-           n.neighbors = 30,# default 30
-           metric = "cosine",
-           min.dist = 0.01, # default 0.3
-           n.epochs = 500,
-           reduction.name = "umap.rpca")
+dims <- 1:30
+merged_rpca_obj <-  IntegrateLayers(
+      method = RPCAIntegration,
+      orig.reduction = "pca",
+      new.reduction = "rpca",
+      normalization.method = 'SCT', #why is this required?
+      assay = "SCT",
+      k.anchor = 5,
+      preserve.order = FALSE, # merge by largest sized dataset
+      verbose = TRUE)
+  
+  merged_rpca_obj <- merged_rpca_obj %>% 
+     RunUMAP(reduction = "rpca",
+             n.components = 3,
+             dims = dims,
+             n.neighbors = 30,# default 30
+             metric = "cosine",
+             min.dist = 0.01, # default 0.3
+             n.epochs = 500,
+             reduction.name = "umap.rpca") %>% 
+       RunUMAP(reduction = "rpcaorder",
+             n.components = 3,
+             dims = dims,
+             n.neighbors = 30,# default 30
+             metric = "cosine",
+             min.dist = 0.01, # default 0.3
+             n.epochs = 500,
+             reduction.name = "umap.rpcaorder")
+  
+  merged_rpca_obj <- merged_rpca_obj %>%
+     FindNeighbors(graph.name = c("rpca_nn","rpca_snn"),
+                   reduction = "rpca",
+                   dims = dims) %>% 
+     FindNeighbors(graph.name = c("rpcaorder_nn","rpcaorder_snn"),
+                   reduction = "rpca",
+                   dims = dims) 
+     # FindClusters(resolution = c(0.8, 1.0, 1.5),
+     #              algorithm = 2)
+  
+  merged_rpca_obj$id <- factor(merged_rpca_obj$orig.ident,
+                                  levels=unique(merged_rpca_obj$orig.ident))
+  merged_rpca_obj <- AddMetaData(merged_rpca_obj,
+                                    merged_rpca_obj@reductions$umap.rpca@cell.embeddings)
+  merged_rpca_obj <- AddMetaData(merged_rpca_obj,
+                                    merged_rpca_obj@reductions$umap.rpcaorder@cell.embeddings)
+  
+  job::job({
+    saveRDS(merged_rpca_obj, glue("results/day0_day50/seurat/iPSC_MN_time-course_filtered_merged_soupX_normalized_RPCAIntegration_seurat_obj_v5.RDS"))
+  }, import = c("merged_rpca_obj"))
 
-merged_rpca_obj <- merged_rpca_obj %>%
-   FindNeighbors(reduction = "rpca",
-                 dims = 1:30) %>% 
-   FindClusters(resolution = c(0.8, 1.0, 1.5),
-                algorithm = 2)
-
-merged_rpca_obj$id <- factor(merged_rpca_obj$orig.ident,
-                                levels=unique(merged_rpca_obj$orig.ident))
-merged_rpca_obj <- AddMetaData(merged_rpca_obj,
-                                  merged_rpca_obj@reductions$umap.rpca@cell.embeddings)
-
-# job::job({
-#   saveRDS(merged_rpca_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_RPCAIntegration_seurat_obj_v5.RDS")
-# }, import = c("merged_rpca_obj"))
-```
-
-```{r fig.height=10, fig.width=10}
-# pdf("figures/day0_day50/filtered_merged_rpca/merged_rpca_sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
+# pdf(glue("figures/day0_day50/filtered_merged_rpca/merged_rpca_sct_transform_100PCs_elbow_plot.pdf"), height = 7, width=10)
 # ElbowPlot(merged_rpca_obj, ndims = 50, reduction = "pca")
 # dev.off()
 # 
 # pdf("figures/day0_day50/filtered_merged_rpca/merged_rpca_transform_1-4PCs_loadings.pdf", height = 10, width=7)
 # VizDimLoadings(merged_rpca_obj, dims = 1:4, reduction = "pca")
 # dev.off()
+  
+purrr::map(c("umaprpca","umaprpcaorder"), function(x){
+  rpcafilt_batch <- custom_dimplot(metadata = merged_rpca_obj@meta.data,
+                           colorby = "batch", 
+                           dimred_colnames = x, 
+                           custom_colors = ggsci::pal_jco()(4))
+                             
+  rpcafilt_id <- custom_dimplot(metadata = merged_rpca_obj@meta.data,
+                           colorby = "id", 
+                           dimred_colnames = x, 
+                           custom_colors = sample_id_colors)
+  
+  rpcafilt_b34_id <- custom_dimplot(metadata = merged_rpca_obj@meta.data %>% 
+                              filter(time_point > 30),
+                           colorby = "id", 
+                           label_samples = FALSE,
+                           dimred_colnames = x, 
+                           custom_colors = colors_vector)          
+  
+  png(glue("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_{x}_UMAP_day_filtered.png"), height = 15, width = 25, units = "in", res = 150)
+  rpcafilt_id
+  dev.off()
+  
+  png(glue("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_{x}_UMAP_splitBy_batch_day_filtered.png"),  height = 15, width = 25, units = "in", res = 150)
+  rpcafilt_b34_id + 
+    facet_wrap(~time_point)
+  dev.off()
+  
+  png("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_{x}_UMAP_batch_filtered.png",  height = 15, width = 25, units = "in", res = 150)
+  rpcafilt_batch
+  dev.off()
 
-rpcafilt_batch <- custom_dimplot(metadata = merged_rpca_obj@meta.data,
-                         colorby = "batch", 
-                         dimred_colnames = "umaprpca", 
-                         custom_colors = ggsci::pal_jco()(4))
-                           
-rpcafilt_id <- custom_dimplot(metadata = merged_rpca_obj@meta.data,
-                         colorby = "id", 
-                         dimred_colnames = "umaprpca", 
-                         custom_colors = sample_id_colors)
-                          
-
-# png("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_rpca_UMAP_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
-rpcafilt_id
-# dev.off()
-
-rpcafilt_b34_id <- custom_dimplot(metadata = merged_rpca_obj@meta.data %>% 
-                            filter(time_point > 30),
-                         colorby = "id", 
-                         label_samples = FALSE,
-                         dimred_colnames = "umaprpca", 
-                         custom_colors = colors_vector)
-
-# png("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_rpca_UMAP_splitBy_batch_day_filtered.png",  height = 15, width = 25, units = "in", res = 150)
-rpcafilt_b34_id + 
-  facet_wrap(~time_point)
-# dev.off()
-
-# png("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_rpca_UMAP_batch_filtered.png",  height = 15, width = 25, units = "in", res = 150)
-rpcafilt_batch
-# dev.off()
-```
-
-```{r fig.height=10, fig.width=10}
-# rpcafilt_id +
-#   facet_wrap(~batch)
-
-rpca_3d <- make_3D_umap(metadata = merged_rpca_obj@meta.data, 
+  rpca_3d <- make_3D_umap(metadata = merged_rpca_obj@meta.data, 
              idents_column = c(paste0("umaprpca_",1:3)), 
              label_cols = c("id","batch"), 
              selected_colors = colors_vector)
+  htmlwidgets::saveWidget(rpca_3d, "figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_{x}_UMAP.html")
+})
 ```
 
 ```{r eval=FALSE}
@@ -2437,6 +2463,15 @@ filt_id
 # png("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_iPSC_MN_seurat_UMAP_batch_filtered.png", height = 15, width = 25, units = "in", res = 150)
 filt_batch
 # dev.off()
+```
+
+```{r fig.height=10}
+harmony_3d <- make_3D_umap(metadata = merged_harmony_obj@meta.data, 
+             idents_column = c(paste0("umapharmony_",1:3)), 
+             label_cols = c("id","batch"), 
+             selected_colors = colors_vector)
+
+harmony_3d
 ```
 
 ```{r eval=FALSE}
