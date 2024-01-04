@@ -1044,8 +1044,8 @@ seurat_objs_dbls <- dir("results/individual_objs",
 length(seurat_objs_dbls) # 19
 ```
 
-```{r eval=FALSE}
-job::job({
+```{r eval=TRUE}
+# job::job({
   # loop through each sample and create dynamic filting thresholds
   filter_objs <- purrr::map(names(seurat_objs_dbls), function(x){
     
@@ -1058,18 +1058,25 @@ job::job({
           print(glue("Processing {x}"))
           mito_outlier <- scuttle::isOutlier(input$percent.mt, type="higher")
           rb_outlier <- scuttle::isOutlier(input$percent.ribo, type="lower")
-          ncount_outlier <- scuttle::isOutlier(input$nCount_RNA, type="higher")
-          nfeat_outlier <- scuttle::isOutlier(input$nFeature_RNA, type="higher")
+          ncount_outlier <- scuttle::isOutlier(input$nCount_RNA, type="both")
+          nfeat_outlier <- scuttle::isOutlier(input$nFeature_RNA, type="both")
           
           
           mito_th <- attr(mito_outlier,which = "thresholds")["higher"]
           rb_th <- attr(rb_outlier,which = "thresholds")["lower"]
-          ncount_th <- attr(ncount_outlier,which = "thresholds")["higher"]
-          nfeat_th <- attr(nfeat_outlier,which = "thresholds")["higher"]
+          
+          ncount_upl <- attr(ncount_outlier,which = "thresholds")["higher"]
+          ncount_lowl <- attr(ncount_outlier,which = "thresholds")["lower"]
+          
+          nfeat_upl <- attr(nfeat_outlier,which = "thresholds")["higher"]
+          nfeat_lowl <- attr(nfeat_outlier,which = "thresholds")["lower"]
           
           to_retain <- WhichCells(input, 
                                   expression = 
                                     nFeature_RNA > 200 & #at least 200 genes assayed per cell
+                                    nFeature_RNA < nfeat_upl &
+                                    nCount_RNA > 500 & # at least 500 reads per cells
+                                    nCount_RNA < ncount_upl &
                                     percent.ribo > rb_th &
                                     percent.mt < mito_th &
                                     class == "singlet")
@@ -1100,8 +1107,12 @@ job::job({
           ths <-  data.frame(sample=x,
                            mito_th=mito_th,
                            rb_th=rb_th,
-                           ncount_th=ncount_th,
-                           nfeat_th=nfeat_th,
+                           ncount_rna_th=500,
+                           nfeat_rna_th=200,
+                           ncount_rna_upl=ncount_upl,
+                           ncount_rna_lowl=ncount_lowl,
+                           nfeat_rna_upl=nfeat_upl,
+                           nfeat_rna_lowl=nfeat_lowl,
                            input_number_cells=ncol(input),
                            output_number_cells=ncol(sub_filt_obj))
           write.csv(ths,out_summary, row.names = FALSE)
@@ -1114,7 +1125,7 @@ job::job({
       })
   names(filter_objs) <- paste0("iPSC_", names(seurat_objs_dbls))
   
-}, import = c("seurat_objs_dbls"))
+# }, import = c("seurat_objs_dbls"))
 ```
 
 ```{r}
@@ -1207,12 +1218,10 @@ mean_th # 7.429377
 
 Move the original files to a seperate subdirectory for later, if needed. 
 
-```bash
+```{bash}
 cd results/individual_objs
+mkdir -p first_pass_filter
 mv mack_day{5,8}_* first_pass_filter/
-```
-```{r}
-names(filter_objs)
 ```
 
 ```{r}
@@ -1250,7 +1259,7 @@ threshold_summary_update <- threshold_summary %>%
   mutate(percent = round(output_number_cells/input_number_cells * 100, digits = 1))
 
 threshold_summary_update
-# write.csv(threshold_summary_update, "results/day0_day50/seurat/filtering_stats/mack_iPSC_MN_day0-day50_cell_filtering_final_threshold_summary.csv", row.names = FALSE)
+write.csv(threshold_summary_update, "results/day0_day50/seurat/filtering_stats/mack_iPSC_MN_day0-day50_cell_filtering_final_threshold_summary.csv", row.names = FALSE)
 ```
 
 ```{r}
@@ -1324,7 +1333,20 @@ While it is possible to run SoupX without clustering information, you will get f
 
 >  If you try and run it on a channel with  (e.g. a cell line, flow-sorted cells), you will likely get a warning, an error, and/or an extremely high contamination estimate. In such circumstances your best option is usually to manually set the contamination to something reasonable.
 
-```{r eval=FALSE}
+```bash
+mamba -h 
+mamba create -n hdf5 conda-forge::r-hdf5r python==3.10
+conda
+```
+Sys.setenv(LD_LIBRARY_PATH=paste("/home/jsmi26/miniforge3/envs/hdf5/lib", Sys.getenv("LD_LIBRARY_PATH"), sep =":"))
+Sys.getenv("LD_LIBRARY_PATH")
+install.packages("hdf5r", configure.args = "--with-hdf5=/home/jsmi26/miniforge3/envs/hdf5/bin/h5cc")
+Sys.getenv("LD_LIBRARY_PATH")
+Sys.setenv(PATH=paste("/home/jsmi26/miniforge3/envs/hdf5/bin",Sys.getenv("PATH"), sep = ":"))
+Sys.getenv("PATH")
+library(hdf5r)
+
+```{r eval=TRUE}
 if(!exists("filter_objs")){
   seurat_objs_filt <- dir("results/individual_objs", 
                           pattern = "mack_.+_motor_neuron_filtered_seurat_obj.RDS",
@@ -1338,9 +1360,8 @@ if(!exists("filter_objs")){
   names(filter_objs) <- paste0("iPSC_", names(filter_objs))
 }
 length(filter_objs) #19
-```
 
-```{r}
+
 # define output directory locations
 outdirs <- glue("results/soupX_counts/{names(filter_objs)}") %>% 
   as.character() %>% 
@@ -1349,9 +1370,7 @@ outdirs <- glue("results/soupX_counts/{names(filter_objs)}") %>%
 #re-order the entries by time
 outdirs <- outdirs[sample_manifest$sample_id] 
 length(outdirs) #19
-```
 
-```{r eval=FALSE}
 # Processes all data sets
 soup_channels <- list()
 for(dir in outdirs){
@@ -1382,7 +1401,17 @@ job::job({
 }, import = c("soup_channels"))
 ```
 
-```{r, eval=FALSE}
+Error in dyn.load(file, DLLpath = DLLpath, ...) : 
+  unable to load shared object '/home/jsmi26/R/x86_64-pc-linux-gnu-library/4.3/hdf5r/libs/hdf5r.so':
+  libhdf5_hl.so.310: cannot open shared object file: No such file or directory
+
+```{r}
+hdf5r::H5File
+Sys.getenv("LD_LIBRARY_PATH")
+Sys.getenv("PATH")
+```
+
+```{r, eval=TRUE}
 if(!exists("soup_channels")){
   soup_channels <- readRDS("results/soupX_counts/mack_iPSC_MN_day0-day50_soupX_channel_objs_list.RDS")
 }
@@ -1447,7 +1476,7 @@ ests <- sapply(est_first_pass, function(x) ifelse(!is.character(x), unique(x$met
 round(mean(ests, na.rm = TRUE), digits = 3)
 ```
 
-```{r, eval=FALSE}
+```{r, eval=TRUE}
 # Manually adjust the missing datasets using the mean rho value from all other samples  
 missing <- grepl("ipsc|y3$|y5$", names(est_first_pass))
 ave_rho <- round(mean(sapply(est_first_pass[!missing],  function(x) unique(x$metaData$rho))), digits = 3)
@@ -1468,7 +1497,7 @@ final_estimates <- final_estimates[names(outdirs)]
 length(final_estimates) #19
 
 # export the corrected counts 
-job::job({
+# job::job({
   save_corrected_counts <- purrr::map(outdirs, function(outdir){
     if(!dir.exists(outdir)){
       print(outdir)
@@ -1477,10 +1506,10 @@ job::job({
       DropletUtils:::write10xCounts(outdir, out)
     }
   })
-}, import = c("final_estimates", "outdirs"))
+# }, import = c("final_estimates", "outdirs"))
 ```
 
-```{r eval=FALSE}
+```{r eval=TRUE}
 estimates_df <- purrr::map_dfr(names(final_estimates), function(x){
   final_estimates[[x]]$metaData %>% 
     rownames_to_column("barcode") %>% 
@@ -1490,7 +1519,7 @@ estimates_df <- purrr::map_dfr(names(final_estimates), function(x){
 
 head(estimates_df)
 # table(estimates_df$sample_id)
-# write.csv(estimates_df, "results/soupX_counts/mack_iPSC_MN_day0-day50_soupX_contamination_estimates.csv", row.names = FALSE)
+write.csv(estimates_df, "results/soupX_counts/mack_iPSC_MN_day0-day50_soupX_contamination_estimates.csv", row.names = FALSE)
 ```
 
 ```{r}
@@ -1528,9 +1557,12 @@ plotMarkerDistribution(sc = soup_channels,
 
 # Merge Filtered Objects
 
-```{r eval=FALSE}
+```{r eval=TRUE}
 preprocess_merge_obj <- "iPSC_motor_neuron_day0-day50_time-course_SCT_UMAP_Seurat_obj.RDS"
-merged_obj <- readRDS(file.path("results/day0_day50/seurat", preprocess_merge_obj))
+
+if(!exists("merged_obj")){
+  merged_obj <- readRDS(file.path("results/day0_day50/seurat", preprocess_merge_obj))
+}
 merged_obj
 ```
 
@@ -1538,7 +1570,7 @@ merged_obj
 print(options()$Seurat.object.assay.version)
 ```
 
-```{r eval=FALSE}
+```{r eval=TRUE}
 outs <- dir("results/soupX_counts",pattern = "^iPSC", full.names = TRUE)
 names(outs) <- basename(outs)
 length(outs) #19
@@ -1581,14 +1613,14 @@ soupx_objs <- soupx_objs[unique(sample_manifest$sample_id)]
 names(soupx_objs)
 ```
 
-```{r eval=FALSE}
+```{r eval=TRUE}
 job::job({
   sapply(names(soupx_objs), function(x)
     saveRDS(soupx_objs[[x]], glue("results/individual_objs/mack_{x}_motor_neuron_filtered_soupX_seurat_obj.RDS")))
 }, import = c("soupx_objs"))
 ```
 
-```{r eval=FALSE}
+```{r eval=TRUE}
 VERSION="v5"
 options(Seurat.object.assay.version = VERSION)
 
@@ -1603,7 +1635,7 @@ merged_filt_obj <-  merge(x = soupx_objs$iPSC_ipsc,
 # 33538 features across 87870 samples within 1 assay 
 # Active assay: RNA (33538 features, 0 variable features)
 merged_filt_obj 
-# saveRDS(merged_filt_obj,glue("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj_{VERSION}.RDS"))
+saveRDS(merged_filt_obj,glue("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj_{VERSION}.RDS"))
 ```
 
 
@@ -1630,7 +1662,7 @@ https://satijalab.org/seurat/articles/seurat5_essential_commands#create-seurat-o
 `pbmc3k[["RNA5"]] <- as(object = pbmc3k[["RNA3"]], Class = "Assay5")`
 
 
-```{r eval=FALSE}
+```{r eval=TRUE}
 if(!exists("merged_filt_obj")){
   merged_filt_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj_v5.RDS")
 }
@@ -2039,165 +2071,6 @@ Note on scale_data and return.only.var.genes
 https://www.sc-best-practices.org/cellular_structure/integration.html
 * "one can say that Harmony and Seurat consistently perform well for simple batch correction tasks,"
 
-## Seurat regression 
-
-Since each sample was made a "layer" and so in Layer1 these cells are in the same batch, so lacks 2 factor levels. 
-
-> required or else Error in `contrasts<-`(`*tmp*`, value = contr.funs[1 + isOF[nn]]) :
-
-https://github.com/satijalab/seurat/issues/3657
-
-```{r eval=FALSE}
-if(!exists("merged_filt_obj_v3")){
-  obj_path <- "results/day0_day50/seurat/intermediate_objects/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v3.RDS"
-  merged_filt_obj_v3 <- readRDS(obj_path)
-  DefaultAssay(merged_filt_obj_v3) <- "RNA"
-  merged_filt_obj_v3 <- DietSeurat(object = merged_filt_obj_v3,
-                                   assays = "RNA")
-                                   
-}
-# merged_filt_obj_v3
-class(merged_filt_obj_v3[["RNA"]]) #v3
-quantile(merged_filt_obj_v3$percent.mt)
-table(merged_filt_obj_v3$batch)
-```
-
-```{r eval=FALSE}
-  # options(Seurat.object.assay.version = 'v3')
-  #regularized negative binomial regression to normalize UMI count data
-  #Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures().
-
-  DefaultAssay(merged_filt_obj_v3) <- "RNA"
-  temp <- merged_filt_obj_v3[grep("^MT-", rownames(merged_filt_obj_v3), invert = TRUE), ]
-  temp$batch <- as.factor(merged_filt_obj_v3$batch)
-  
-  merged_norm_batchcorr <- SCTransform(merged_filt_obj_v3,
-                             assay="RNA",
-                             new.assay.name = "SCT",
-                             vars.to.regress = c("batch","percent.mt"),
-                             method = "glmGamPoi",
-                             return.only.var.genes = TRUE,
-                             verbose = TRUE)
-  
-  merged_norm_batchcorr <- merged_norm_batchcorr %>%  
-    RunPCA(npcs = 50, verbose = FALSE) 
-
-  merged_norm_batchcorr <- merged_norm_batchcorr %>% 
-    RunUMAP(reduction = "pca",
-              dims = 1:50, 
-              n.components = 3,
-              n.neighbors = 30,# default 30
-              metric = "cosine",
-              min.dist = 0.2, # default 0.3
-              return.model = TRUE,
-              verbose = T) 
-  
-  merged_norm_batchcorr <- merged_norm_batchcorr %>% 
-      FindNeighbors(reduction = "pca",
-                    dims = 1:50, 
-                    k.param = 20,
-                    nn.method = "annoy",
-                    annoy.metric = "cosine",
-                    n.trees = 100,
-                    verbose = T)
-  
-  merged_norm_batchcorr <- merged_norm_batchcorr %>% 
-      FindClusters(resolution = c(0.8, 1.0, 1.5), 
-                   algorithm = 2, 
-                   verbose = T) 
-  
-  merged_norm_batchcorr <- AddMetaData(merged_norm_batchcorr,
-                                 as.data.frame(merged_norm_batchcorr@reductions$umap@cell.embeddings))
-
-job::job({
-  saveRDS(merged_norm_batchcorr,
-        "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_batchcorrected_seurat_obj_v3.RDS")
-}, import = c("merged_norm_batchcorr"))
-```
-
-```{r fig.height=10}
-if(!exists("merged_norm_batchcorr")){
-  merged_norm_batchcorr <- readRDS(file.path(current_path, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_batchcorrected_seurat_obj_v3.RDS"))
-}
-
-merged_norm_batchcorr$id <- factor(merged_norm_batchcorr$orig.ident, 
-                                   levels = c(unique(merged_norm_batchcorr$orig.ident)))
-
-merged_norm_batchcorr$seurat_clusters <- merged_norm_batchcorr$SCT_snn_res.1
-Idents(merged_norm_batchcorr) <- merged_norm_batchcorr$SCT_snn_res.1
-
-merged_norm_batchcorr
-
-# pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
-ElbowPlot(merged_norm_batchcorr,ndims = 50, reduction = "pca")
-# dev.off()
-
-# pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_transform_1-4PCs_loadings.pdf", height = 10, width=7)
-VizDimLoadings(merged_norm_batchcorr, dims = 1:4, reduction = "pca")
-# dev.off()
-
-# pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_byLouvainCluster_sct_UMAP.pdf",height = 10, width= 17)
-DimPlot(merged_norm_batchcorr, dims = c(1,2)) +
-  scale_color_manual(values = colors_vector)
-# dev.off()
-```
-
-```{r fig.height=10}
-bc_d1 <- DimPlot(merged_norm_batchcorr, 
-        group.by = c("batch","id"),
-        label = T, 
-        repel = T,
-        label.size = 7) + 
-  scale_color_manual(values = colors_vector)
-
-# png("figures/day0_day50/filtered_merged_batchcorrected/filtered_merged_results_iPSC_MN_seurat_batchcorrected_UMAP_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
-bc_d1
-# dev.off()
-
-bc_s1 <- DimPlot(merged_norm_batchcorr, 
-        group.by = c("id"),
-        split.by = "batch",
-        label = T, 
-        repel = T,
-        label.size = 7) + 
-  scale_color_manual(values = colors_vector)
-
-# png("figures/day0_day50/filtered_merged_batchcorrected/filtered_merged_results_iPSC_MN_seurat_batchcorrected_UMAP_splitBy_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
-bc_s1
-# dev.off()
-``` 
-
-```{r}
-Idents(merged_norm_batchcorr) <- merged_norm_batchcorr$orig.ident
-purrr::map(names(marker_genes_iPSC), function(type){    
-  h <- ifelse(length(marker_genes_iPSC[[type]]) <= 4, 12, 20)
-  outfile <- glue("figures/day0_day50/filtered_merged_batchcorrected/iPSC_MN_batchcorrected_expression_{type}_marker_genes.png")
-  
-  # png(outfile, height = h, width = 20, units = "in", res = 100)
-  print(
-    FeaturePlot(merged_norm_batchcorr, 
-                    features = marker_genes_iPSC[[type]],
-                    label = TRUE) +
-          patchwork::plot_annotation(title = glue("{type} marker genes"))
-        )
-  # dev.off()
-  
-})
-```
-
-```{r}
-# Identify the 10 most highly variable genes
-top10 <- head(VariableFeatures(merged_norm_batchcorr), 10)
-
-# plot variable features with and without labels
-plot1 <- VariableFeaturePlot(merged_norm_batchcorr)
-plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
-
-# pdf("figures/day0_day50/filtered_merged_batchcorrected/iPSC_MN_seurat_batchcorrected_topVarFeatures.pdf", height = 5, width = 10)
-plot2
-# dev.off()
-```
-
 ## RPCA
 
 https://satijalab.org/seurat/articles/integration_rpca.html
@@ -2223,7 +2096,7 @@ Possible Layer Groups
 
 * would you want to integrate the replicate samples and then merge with unintegrated samples? That seems like a bad idea since it would adding to the technical differences between batch1/2 vs batch3/4. 
 
-```{r eval=FALSE}
+```{r eval=TRUE}
 VERSION = 'v5'
 if(!exists("merged_norm_obj")){
   merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
@@ -2318,23 +2191,23 @@ purrr::map(c("umaprpca","umaprpcaorder"), function(x){
                            custom_colors = colors_vector)          
   
   png(glue("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_{x}_UMAP_day_filtered.png"), height = 15, width = 25, units = "in", res = 150)
-  rpcafilt_id
+  print(rpcafilt_id)
   dev.off()
   
   png(glue("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_{x}_UMAP_splitBy_batch_day_filtered.png"),  height = 15, width = 25, units = "in", res = 150)
-  rpcafilt_b34_id + 
-    facet_wrap(~time_point)
+  print(rpcafilt_b34_id + 
+    facet_wrap(~time_point))
   dev.off()
   
-  png("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_{x}_UMAP_batch_filtered.png",  height = 15, width = 25, units = "in", res = 150)
-  rpcafilt_batch
+  png(glue("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_{x}_UMAP_batch_filtered.png"),  height = 15, width = 25, units = "in", res = 150)
+  print(rpcafilt_batch)
   dev.off()
 
   rpca_3d <- make_3D_umap(metadata = merged_rpca_obj@meta.data, 
              idents_column = c(paste0("umaprpca_",1:3)), 
              label_cols = c("id","batch"), 
              selected_colors = colors_vector)
-  htmlwidgets::saveWidget(rpca_3d, "figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_{x}_UMAP.html")
+  htmlwidgets::saveWidget(rpca_3d, glue("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_{x}_UMAP.html"))
 })
 ```
 
@@ -2367,7 +2240,7 @@ Weighting applied to negative samples in low dimensional embedding optimization.
 negative.sample.rate	
 The number of negative samples to select per positive sample in the optimization process. Increasing this value will result in greater repulsive force being applied, greater optimization cost, but slightly more accuracy.
 
-```{r eval=FALSE}
+```{r eval=TRUE}
 VERSION = 'v5'
 if(!exists("merged_norm_obj")){
   merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
@@ -2380,40 +2253,61 @@ merged_harmony_obj <- IntegrateLayers(
     orig.reduction = "pca",
     new.reduction = "harmony",
     assay = "SCT",
+    preserve.order = FALSE,
+    verbose = TRUE )
+
+merged_harmony_obj <- IntegrateLayers(
+    object = merged_norm_obj,
+    method = HarmonyIntegration,
+    orig.reduction = "pca",
+    new.reduction = "harmonyorder",
+    assay = "SCT",
     preserve.order = TRUE,
     verbose = TRUE )
 
+dims <- 1:30
 merged_harmony_obj <- merged_harmony_obj %>% 
-   FindNeighbors(reduction = "harmony",
-                 dims = 1:30) %>% 
-   FindClusters(resolution = c(0.8, 1.0, 1.5),
-                algorithm = 2)
+   FindNeighbors(graph.name = c("harmony_nn","harmony_snn"), 
+                 reduction = "harmony",
+                 dims = dims) %>% 
+   FindNeighbors(graph.name = c("harmonyorder_nn","harmonyorder_snn"), 
+                 reduction = "harmonyorder",
+                 dims = dims) 
+   # FindClusters(resolution = c(0.8, 1.0, 1.5),
+   #              algorithm = 2)
 
-```
 
-```{r}
 merged_harmony_obj <- merged_harmony_obj %>% 
    RunUMAP(reduction = "harmony",
            n.components = 3,
-           dims = 1:30,
+           dims = dims,
            n.neighbors = 30,# default 30
            metric = "cosine",
            min.dist = 0.1, # default 0.3
            negative.sample.rate = 10,
            n.epochs = 500,
-           reduction.name = "umap.harmony")
+           reduction.name = "umap.harmony") %>% 
+     RunUMAP(reduction = "harmonyorder",
+           n.components = 3,
+           dims = dims,
+           n.neighbors = 30,# default 30
+           metric = "cosine",
+           min.dist = 0.1, # default 0.3
+           negative.sample.rate = 10,
+           n.epochs = 500,
+           reduction.name = "umap.harmonyorder")
   
 merged_harmony_obj$id <- factor(merged_harmony_obj$orig.ident,
                                 levels=unique(merged_harmony_obj$orig.ident))
 merged_harmony_obj <- AddMetaData(merged_harmony_obj,
                                   merged_harmony_obj@reductions$umap.harmony@cell.embeddings)
+merged_harmony_obj <- AddMetaData(merged_harmony_obj,
+                                  merged_harmony_obj@reductions$umap.harmonyorder@cell.embeddings)
 
-# job::job({
-#   saveRDS(merged_harmony_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_harmonyIntegration_seurat_obj_v5.RDS")
-# }, import = c("merged_harmony_obj"))
-```
+job::job({
+  saveRDS(merged_harmony_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_harmonyIntegration_seurat_obj_v5.RDS")
+}, import = c("merged_harmony_obj"))
 
-```{r fig.height=10, fig.width=10}
 # pdf("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
 # ElbowPlot(merged_harmony_obj,ndims = 50, reduction = "pca")
 # dev.off()
@@ -2421,57 +2315,57 @@ merged_harmony_obj <- AddMetaData(merged_harmony_obj,
 # pdf("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_transform_1-4PCs_loadings.pdf", height = 10, width=7)
 # VizDimLoadings(merged_harmony_obj, dims = 1:4, reduction = "pca")
 # dev.off()
+purrr::map(c("harmony","harmonyorder"), function(x){
 
-# pdf("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_byLouvainCluster_sct_UMAP.pdf",height = 10, width= 17)
-DimPlot(merged_harmony_obj,
-        reduction = "umap.harmony",
-        dims = c(1,2)) +
-  scale_color_manual(values = colors_vector)
-# dev.off()
-
-filt_id <- custom_dimplot(metadata = merged_harmony_obj@meta.data,
-                         colorby = "id", 
-                         add_text = TRUE,
-                         label_samples = FALSE,
-                         dimred_colnames = "umapharmony", 
-                         custom_colors = sample_id_colors)
-
-filt_batch <- custom_dimplot(metadata = merged_harmony_obj@meta.data,
-                         colorby = "batch", 
-                         add_text = TRUE,
-                         label_samples = FALSE,
-                         dimred_colnames = "umapharmony", 
-                         custom_colors = ggsci::pal_jco()(4))
-
-filt_b34_id <- custom_dimplot(metadata = merged_harmony_obj@meta.data %>% 
-                            filter(time_point > 30),
-                         colorby = "id", 
-                         add_text = TRUE,
-                         label_samples = FALSE,
-                         dimred_colnames = "umapharmony", 
-                         custom_colors = colors_vector)
-
-# png("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_iPSC_MN_seurat_UMAP_splitBy_batch_day_filtered.png",  height = 15, width = 25, units = "in", res = 150)
-filt_b34_id + 
-  facet_wrap(~time_point)
-# dev.off()
-
-# png("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_iPSC_MN_seurat_UMAP_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
-filt_id
-# dev.off()
-
-# png("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_iPSC_MN_seurat_UMAP_batch_filtered.png", height = 15, width = 25, units = "in", res = 150)
-filt_batch
-# dev.off()
-```
-
-```{r fig.height=10}
-harmony_3d <- make_3D_umap(metadata = merged_harmony_obj@meta.data, 
-             idents_column = c(paste0("umapharmony_",1:3)), 
-             label_cols = c("id","batch"), 
-             selected_colors = colors_vector)
-
-harmony_3d
+  pdf(glue("figures/day0_day50/filtered_merged_harmony/merged_{x}_obj_batch_byLouvainCluster_sct_UMAP.pdf"),height = 10, width= 17)
+  print(DimPlot(merged_harmony_obj,
+          reduction = "x",
+          dims = c(1,2)) +
+    scale_color_manual(values = colors_vector))
+  dev.off()
+  
+  filt_id <- custom_dimplot(metadata = merged_harmony_obj@meta.data,
+                           colorby = "id", 
+                           add_text = TRUE,
+                           label_samples = FALSE,
+                           dimred_colnames = x, 
+                           custom_colors = sample_id_colors)
+  
+  filt_batch <- custom_dimplot(metadata = merged_harmony_obj@meta.data,
+                           colorby = "batch", 
+                           add_text = TRUE,
+                           label_samples = FALSE,
+                           dimred_colnames = x, 
+                           custom_colors = ggsci::pal_jco()(4))
+  
+  filt_b34_id <- custom_dimplot(metadata = merged_harmony_obj@meta.data %>% 
+                              filter(time_point > 30),
+                           colorby = "id", 
+                           add_text = TRUE,
+                           label_samples = FALSE,
+                           dimred_colnames = x, 
+                           custom_colors = colors_vector)
+  
+  png(glue("figures/day0_day50/filtered_merged_harmony/merged_{x}_obj_iPSC_MN_seurat_UMAP_splitBy_batch_day_filtered.png"),  height = 15, width = 25, units = "in", res = 150)
+  print(filt_b34_id + 
+    facet_wrap(~time_point))
+  dev.off()
+  
+  png(glue("figures/day0_day50/filtered_merged_harmony/merged_{x}_obj_iPSC_MN_seurat_UMAP_day_filtered.png"), height = 15, width = 25, units = "in", res = 150)
+  print(filt_id)
+  dev.off()
+  
+  png(glue("figures/day0_day50/filtered_merged_harmony/merged_{x}_obj_iPSC_MN_seurat_UMAP_batch_filtered.png"), height = 15, width = 25, units = "in", res = 150)
+  print(filt_batch)
+  dev.off()
+  
+  harmony_3d <- make_3D_umap(metadata = merged_harmony_obj@meta.data, 
+                 idents_column = c(paste0("umap",x,"_", 1:3)), 
+                 label_cols = c("id","batch"), 
+                 selected_colors = colors_vector)
+  
+  htmlwidgets::saveWidget(harmony_3d, glue("figures/day0_day50/filtered_merged_rpca/merged_{x}_obj_iPSC_MN_seurat_UMAP.html"))
+})
 ```
 
 ```{r eval=FALSE}
@@ -2503,7 +2397,7 @@ SOX7
 SOX17
 TCF-2/HNF-1 beta
 
-```{r}
+```{r eval=FALSE fig.height=10, fig.width=10}
 # table(marker_genes_endoderm %in% rownames(merged_harmony_obj))
 # marker_genes_endoderm[!marker_genes_endoderm %in% rownames(merged_harmony_obj)]
 # "HDE1"  "HDE2"  "FABP2" "TNF" 
@@ -2511,10 +2405,7 @@ TCF-2/HNF-1 beta
 marker_genes_endoderm3 <- marker_genes_endoderm[marker_genes_endoderm %in% rownames(merged_harmony_obj)]
 marker_genes_endoderm3 <- marker_genes_endoderm3[order(marker_genes_endoderm3)]
 length(marker_genes_endoderm3)
-```
 
-
-```{r fig.height=10, fig.width=10}
 Idents(merged_harmony_obj) <- merged_harmony_obj$orig.ident
 
 # png("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_iPSC_MN_seurat_endoderm_markers_p1.png", height = 12, width = 18, res = 100, units="in")
@@ -2525,6 +2416,163 @@ VlnPlot(merged_harmony_obj,
 # png("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_iPSC_MN_seurat_endoderm_markers_p2.png", height = 12, width = 18, res = 100, units="in")
 VlnPlot(merged_harmony_obj,
         features = marker_genes_endoderm[10:18])
+# dev.off()
+```
+
+## Seurat regression 
+
+Since each sample was made a "layer" and so in Layer1 these cells are in the same batch, so lacks 2 factor levels. 
+
+> required or else Error in `contrasts<-`(`*tmp*`, value = contr.funs[1 + isOF[nn]]) :
+
+https://github.com/satijalab/seurat/issues/3657
+
+```{r eval=TRUE}
+if(!exists("merged_filt_obj_v3")){
+  obj_path <- "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v3.RDS"
+  merged_filt_obj_v3 <- readRDS(obj_path)
+  DefaultAssay(merged_filt_obj_v3) <- "RNA"
+  merged_filt_obj_v3 <- DietSeurat(object = merged_filt_obj_v3,
+                                   assays = "RNA")
+                                   
+}
+# merged_filt_obj_v3
+class(merged_filt_obj_v3[["RNA"]]) #v3
+quantile(merged_filt_obj_v3$percent.mt)
+table(merged_filt_obj_v3$batch)
+```
+
+```{r eval=TRUE}
+  # options(Seurat.object.assay.version = 'v3')
+  #regularized negative binomial regression to normalize UMI count data
+  #Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures().
+
+  DefaultAssay(merged_filt_obj_v3) <- "RNA"
+  temp <- merged_filt_obj_v3[grep("^MT-", rownames(merged_filt_obj_v3), invert = TRUE), ]
+  temp$batch <- as.factor(merged_filt_obj_v3$batch)
+  
+  merged_norm_batchcorr <- SCTransform(merged_filt_obj_v3,
+                             assay="RNA",
+                             new.assay.name = "SCT",
+                             vars.to.regress = c("batch","percent.mt"),
+                             method = "glmGamPoi",
+                             return.only.var.genes = TRUE,
+                             verbose = TRUE)
+  
+  merged_norm_batchcorr <- merged_norm_batchcorr %>%  
+    RunPCA(npcs = 50, verbose = FALSE) 
+
+  merged_norm_batchcorr <- merged_norm_batchcorr %>% 
+    RunUMAP(reduction = "pca",
+              dims = 1:50, 
+              n.components = 3,
+              n.neighbors = 30,# default 30
+              metric = "cosine",
+              min.dist = 0.2, # default 0.3
+              return.model = TRUE,
+              verbose = T) 
+  
+  merged_norm_batchcorr <- merged_norm_batchcorr %>% 
+      FindNeighbors(reduction = "pca",
+                    dims = 1:50, 
+                    k.param = 20,
+                    nn.method = "annoy",
+                    annoy.metric = "cosine",
+                    n.trees = 100,
+                    verbose = T)
+  
+  merged_norm_batchcorr <- merged_norm_batchcorr %>% 
+      FindClusters(resolution = c(0.8, 1.0, 1.5), 
+                   algorithm = 2, 
+                   verbose = T) 
+  
+  merged_norm_batchcorr <- AddMetaData(merged_norm_batchcorr,
+                                 as.data.frame(merged_norm_batchcorr@reductions$umap@cell.embeddings))
+
+job::job({
+  saveRDS(merged_norm_batchcorr,
+        "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_batchcorrected_seurat_obj_v3.RDS")
+}, import = c("merged_norm_batchcorr"))
+```
+
+```{r fig.height=10}
+if(!exists("merged_norm_batchcorr")){
+  merged_norm_batchcorr <- readRDS(file.path(current_path, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_batchcorrected_seurat_obj_v3.RDS"))
+}
+
+merged_norm_batchcorr$id <- factor(merged_norm_batchcorr$orig.ident, 
+                                   levels = c(unique(merged_norm_batchcorr$orig.ident)))
+
+merged_norm_batchcorr$seurat_clusters <- merged_norm_batchcorr$SCT_snn_res.1
+Idents(merged_norm_batchcorr) <- merged_norm_batchcorr$SCT_snn_res.1
+
+merged_norm_batchcorr
+
+# pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
+ElbowPlot(merged_norm_batchcorr,ndims = 50, reduction = "pca")
+# dev.off()
+
+# pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_transform_1-4PCs_loadings.pdf", height = 10, width=7)
+VizDimLoadings(merged_norm_batchcorr, dims = 1:4, reduction = "pca")
+# dev.off()
+
+# pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_byLouvainCluster_sct_UMAP.pdf",height = 10, width= 17)
+DimPlot(merged_norm_batchcorr, dims = c(1,2)) +
+  scale_color_manual(values = colors_vector)
+# dev.off()
+```
+
+```{r eval=FALSE, fig.height=10}
+bc_d1 <- DimPlot(merged_norm_batchcorr, 
+        group.by = c("batch","id"),
+        label = T, 
+        repel = T,
+        label.size = 7) + 
+  scale_color_manual(values = colors_vector)
+
+# png("figures/day0_day50/filtered_merged_batchcorrected/filtered_merged_results_iPSC_MN_seurat_batchcorrected_UMAP_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
+bc_d1
+# dev.off()
+
+bc_s1 <- DimPlot(merged_norm_batchcorr, 
+        group.by = c("id"),
+        split.by = "batch",
+        label = T, 
+        repel = T,
+        label.size = 7) + 
+  scale_color_manual(values = colors_vector)
+
+# png("figures/day0_day50/filtered_merged_batchcorrected/filtered_merged_results_iPSC_MN_seurat_batchcorrected_UMAP_splitBy_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
+bc_s1
+# dev.off()
+``` 
+
+```{r eval=FALSE}
+Idents(merged_norm_batchcorr) <- merged_norm_batchcorr$orig.ident
+purrr::map(names(marker_genes_iPSC), function(type){    
+  h <- ifelse(length(marker_genes_iPSC[[type]]) <= 4, 12, 20)
+  outfile <- glue("figures/day0_day50/filtered_merged_batchcorrected/iPSC_MN_batchcorrected_expression_{type}_marker_genes.png")
+  
+  # png(outfile, height = h, width = 20, units = "in", res = 100)
+  print(
+    FeaturePlot(merged_norm_batchcorr, 
+                    features = marker_genes_iPSC[[type]],
+                    label = TRUE) +
+          patchwork::plot_annotation(title = glue("{type} marker genes"))
+        )
+  # dev.off()
+  
+})
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(merged_norm_batchcorr), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(merged_norm_batchcorr)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+
+# pdf("figures/day0_day50/filtered_merged_batchcorrected/iPSC_MN_seurat_batchcorrected_topVarFeatures.pdf", height = 5, width = 10)
+plot2
 # dev.off()
 ```
 
