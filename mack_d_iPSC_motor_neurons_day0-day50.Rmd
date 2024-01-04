@@ -52,20 +52,6 @@ conflicted::conflict_prefer("filter","dplyr")
 conflicted::conflict_prefer("saveRDS","base")
 ```
 
-```{r}
-colors_vector <- c(RColorBrewer::brewer.pal(12, "Paired"), 
-            "blue1", "darkslategray3", "burlywood3", "#984EA3",
-            "seagreen1", "yellow2", "orchid", "darkblue", 
-            "lightsalmon2","slateblue1","lightskyblue4",
-            "azure2", "chartreuse1",  "lemonchiffon2",
-            "deeppink", "darkslategray1", "green4", "navajowhite", 
-            "brown4", "darkgoldenrod2", "deepskyblue1", "lightpink") %>% 
-  # c(., ggpubr::get_palette("jco", 5)) %>% 
-  c("mediumpurple4","magenta", "peru") %>% 
-  c(ggsci::pal_igv()(51))
-
-length(colors_vector) 
-```
 
 ------------------ CMAKE NOT FOUND --------------------
 
@@ -86,19 +72,35 @@ ERROR: configuration failed for package ‘nloptr’
 # Define Functions
 
 ```{r}
-make_3D_umap <- function(metadata, idents_column, extra_label_cols=NULL, selected_colors=NULL){
+colors_vector <- c(RColorBrewer::brewer.pal(12, "Paired"), 
+            "blue1", "darkslategray3", "burlywood3", "#984EA3",
+            "seagreen1", "yellow2", "orchid", "darkblue", 
+            "lightsalmon2","slateblue1","lightskyblue4",
+            "azure2", "chartreuse1",  "lemonchiffon2",
+            "deeppink", "darkslategray1", "green4", "navajowhite", 
+            "brown4", "darkgoldenrod2", "deepskyblue1", "lightpink") %>% 
+  # c(., ggpubr::get_palette("jco", 5)) %>% 
+  c("mediumpurple4","magenta", "peru") %>% 
+  c(ggsci::pal_igv()(51))
+
+length(colors_vector) 
+
+sample_id_colors <- c("black",colors_vector[1:18])
+```
+
+```{r}
+make_3D_umap <- function(metadata, idents_column, label_cols, selected_colors=NULL){
     "
     idents_column is for labeling. ex) 'RNA_snn_res.0.7 as well as the UMAP colnames, eg UMAP_1, UMAP_2'
     "
     # 3D UMAP
-    plot.data <- metadata %>% 
-      select(all_of(c(idents_column)))
+    plot.data <- metadata
     plot.data$label <- paste(rownames(plot.data))
-    if(!is.null(extra_label_cols)){
-      plot.data$label <- paste(plot.data$label, 
-                               metadata[[extra_label_cols]],
-                               sep = "\n")
-    }
+
+    plot.data  <- plot.data %>% 
+          unite(col = label, all_of(c("label",label_cols)), sep = "\n", remove = FALSE) %>% 
+          select(all_of(c("label",label_cols)), all_of(idents_column))
+
     
     if(is.null(selected_colors)){
       selected_colors <- c("lightseagreen", "gray50",  "darkgreen", "red4", "red", "turquoise4","black","yellow4","royalblue1","lightcyan3",
@@ -107,10 +109,10 @@ make_3D_umap <- function(metadata, idents_column, extra_label_cols=NULL, selecte
     }
 
     cnames <- colnames(plot.data)
-    formulas <- sapply(1:3, function(x) as.formula(paste0("~", grep(x, cnames, value = TRUE))))
+    formulas <- sapply(1:3, function(x) as.formula(paste0("~", grep(glue("_{x}$"), cnames, value = TRUE))))
     fig <- plot_ly(data = plot.data, 
         x = formulas[[1]], y = formulas[[2]], z = formulas[[3]], 
-        color = as.formula(paste0("~", idents_column[4])), 
+        color = as.formula(paste0("~", label_cols[1])), 
         colors = selected_colors, 
         type = "scatter3d", 
         mode = "markers", 
@@ -125,8 +127,10 @@ make_3D_umap <- function(metadata, idents_column, extra_label_cols=NULL, selecte
 ```{r}
 custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
                            lab_size = 6, ny = 0, custom_lab_fill = NULL,
+                           label_samples = TRUE,
                            color_text_grp = FALSE,
-                           add_text = TRUE, seed = 2023){
+                           add_text = TRUE, 
+                           seed = 2023){
   
   # define x and y column names
   x_names <- paste0(dimred_colnames, "_1")
@@ -176,7 +180,7 @@ custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
      mapping <- aes_string(x = "x", y = "y", label = colorby)
    }
   
-   if(add_text){
+   if( all(add_text & label_samples) ){
      plot <- plot + 
            ggrepel::geom_text_repel(data = labs_df, 
                              mapping = aes_string(x = "x", y = "y", label = colorby),
@@ -185,7 +189,7 @@ custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
                              segment.colour = NA,
                              size = lab_size,
                              seed = seed)
-   }else{
+   }else if ( label_samples ) {
       plot <- plot + 
          ggrepel::geom_label_repel(data = labs_df, 
                            mapping = mapping,
@@ -1024,6 +1028,11 @@ https://www.10xgenomics.com/resources/analysis-guides/common-considerations-for-
 From Yadav 2023
 
 >All the 10x runs for each human sample were initially filtered with an nUMI cutoff of >1000 and then nuclei with less than 5% mitochondrial gene contamination were retained. Next, the mitochondrial genes were also removed from the matrices. A total of 55,289 nuclei that passed quality control filtering, with mean detection of 2,187 genes per nucleus (Figure S1).
+
+nFeature_RNA is the number of genes detected in each cell. 
+  * Low nFeature_RNA for a cell indicates that it may be dead/dying or an empty droplet.
+
+nCount_RNA is the total number of molecules (UMI) detected within a cell. 
 
 ```{r}
 seurat_objs_dbls <- dir("results/individual_objs", 
@@ -1903,7 +1912,7 @@ plot2
 ```
 
 nFeature_RNA is the number of genes detected in each cell. 
-* Low nFeature_RNA for a cell indicates that it may be dead/dying or an empty droplet.
+  * Low nFeature_RNA for a cell indicates that it may be dead/dying or an empty droplet.
 
 nCount_RNA is the total number of molecules (UMI) detected within a cell. 
 
@@ -2182,6 +2191,29 @@ plot2
 
 ## RPCA
 
+https://satijalab.org/seurat/articles/integration_rpca.html
+
+k.anchor	
+* How many neighbors (k) to use when picking anchors
+
+k.filter	
+* How many neighbors (k) to use when filtering anchors
+
+from Yadav 2023:
+> The 7 human datasets were integrated using SCTransform normalization followed by CCA based integration using the Seurat 4 package
+
+from Rayon 2023:
+> Replicate datasets were subsequently filtered to remove contaminant cells (such as mesoderm and blood). The resulting datasets were then normalised and integrated using the SCTransform/IntegrateData workflow implemented in Seurat 3.2.2
+> Replicates were then integrated together to create the time point and species datasets.
+
+
+Possible Layer Groups
+- 1 layer per sample
+- 1 layer per batch
+- 1 layer per time-point
+
+* would you want to integrate the replicate samples and then merge with unintegrated samples? That seems like a bad idea since it would adding to the technical differences between batch1/2 vs batch3/4. 
+
 ```{r eval=FALSE}
 VERSION = 'v5'
 if(!exists("merged_norm_obj")){
@@ -2199,72 +2231,85 @@ merged_rpca_obj <- IntegrateLayers(
     new.reduction = "rpca",
     normalization.method = 'SCT', #why is this required?
     assay = "SCT",
-    k.anchor = 5, # default
-    preserve.order = TRUE, #keep time-course samples in order day3 into day0. Then Day8 into Day0/3 obj 
-    verbose = TRUE ) %>%
-    FindNeighbors(reduction = "rpca",
-                 dims = 1:50)
-
-merged_rpca_obj <- merged_rpca_obj %>% 
-   FindClusters(resolution = c(0.8, 1.0, 1.5),
-                algorithm = 2)
+    k.anchor = 5, 
+    preserve.order = TRUE, #keep time-course samples in order day3 into day0. Then Day8 into Day0/3 obj
+    verbose = TRUE)
 
 merged_rpca_obj <- merged_rpca_obj %>% 
    RunUMAP(reduction = "rpca",
            n.components = 3,
-           dims = 1:50,
+           dims = 1:30,
+           n.neighbors = 30,# default 30
+           metric = "cosine",
+           min.dist = 0.01, # default 0.3
+           n.epochs = 500,
            reduction.name = "umap.rpca")
-  
+
+merged_rpca_obj <- merged_rpca_obj %>%
+   FindNeighbors(reduction = "rpca",
+                 dims = 1:30) %>% 
+   FindClusters(resolution = c(0.8, 1.0, 1.5),
+                algorithm = 2)
+
 merged_rpca_obj$id <- factor(merged_rpca_obj$orig.ident,
                                 levels=unique(merged_rpca_obj$orig.ident))
 merged_rpca_obj <- AddMetaData(merged_rpca_obj,
                                   merged_rpca_obj@reductions$umap.rpca@cell.embeddings)
 
-job::job({
-  saveRDS(merged_rpca_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_RPCAIntegration_seurat_obj_v5.RDS")
-}, import = c("merged_rpca_obj"))
+# job::job({
+#   saveRDS(merged_rpca_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_RPCAIntegration_seurat_obj_v5.RDS")
+# }, import = c("merged_rpca_obj"))
 ```
 
-```{r fig.height=10, warning=FALSE}
+```{r fig.height=10, fig.width=10}
 # pdf("figures/day0_day50/filtered_merged_rpca/merged_rpca_sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
-ElbowPlot(merged_rpca_obj, ndims = 50, reduction = "pca")
+# ElbowPlot(merged_rpca_obj, ndims = 50, reduction = "pca")
 # dev.off()
-
+# 
 # pdf("figures/day0_day50/filtered_merged_rpca/merged_rpca_transform_1-4PCs_loadings.pdf", height = 10, width=7)
-VizDimLoadings(merged_rpca_obj, dims = 1:4, reduction = "pca")
+# VizDimLoadings(merged_rpca_obj, dims = 1:4, reduction = "pca")
 # dev.off()
 
-filt_batch <- custom_dimplot(metadata = merged_rpca_obj@meta.data,
+rpcafilt_batch <- custom_dimplot(metadata = merged_rpca_obj@meta.data,
                          colorby = "batch", 
-                         dimred_colnames = "umap", 
+                         dimred_colnames = "umaprpca", 
                          custom_colors = ggsci::pal_jco()(4))
                            
-# filt_batch
-filt_id <- custom_dimplot(metadata = merged_rpca_obj@meta.data,
+rpcafilt_id <- custom_dimplot(metadata = merged_rpca_obj@meta.data,
                          colorby = "id", 
-                         dimred_colnames = "umap", 
-                         custom_colors = colors_vector)
+                         dimred_colnames = "umaprpca", 
+                         custom_colors = sample_id_colors)
                           
 
 # png("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_rpca_UMAP_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
-filt_id
+rpcafilt_id
 # dev.off()
 
-filt_b34_id <- custom_dimplot(metadata = merged_rpca_obj@meta.data %>% 
-                            filter(grepl("batch3|batch4", batch)),
+rpcafilt_b34_id <- custom_dimplot(metadata = merged_rpca_obj@meta.data %>% 
+                            filter(time_point > 30),
                          colorby = "id", 
-                         add_text = FALSE,
-                         dimred_colnames = "umap", 
+                         label_samples = FALSE,
+                         dimred_colnames = "umaprpca", 
                          custom_colors = colors_vector)
 
 # png("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_rpca_UMAP_splitBy_batch_day_filtered.png",  height = 15, width = 25, units = "in", res = 150)
-filt_b34_id + 
+rpcafilt_b34_id + 
   facet_wrap(~time_point)
 # dev.off()
 
 # png("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_rpca_UMAP_batch_filtered.png",  height = 15, width = 25, units = "in", res = 150)
-filt_batch
+rpcafilt_batch
 # dev.off()
+```
+
+```{r fig.height=10, fig.width=10}
+# rpcafilt_id +
+#   facet_wrap(~batch)
+
+rpca_3d <- make_3D_umap(metadata = merged_rpca_obj@meta.data, 
+             idents_column = c(paste0("umaprpca_",1:3)), 
+             label_cols = c("id","batch"), 
+             selected_colors = colors_vector)
 ```
 
 ```{r eval=FALSE}
@@ -2287,6 +2332,15 @@ purrr::map(names(marker_genes_iPSC), function(type){
 
 ## Harmony 
 
+n.neighbors
+This determines the number of neighboring points used in local approximations of manifold structure. Larger values will result in more global structure being preserved at the loss of detailed local structure. In general this parameter should often be in the range 5 to 50.
+
+repulsion.strength	
+Weighting applied to negative samples in low dimensional embedding optimization. Values higher than one will result in greater weight being given to negative samples.
+
+negative.sample.rate	
+The number of negative samples to select per positive sample in the optimization process. Increasing this value will result in greater repulsive force being applied, greater optimization cost, but slightly more accuracy.
+
 ```{r eval=FALSE}
 VERSION = 'v5'
 if(!exists("merged_norm_obj")){
@@ -2300,19 +2354,27 @@ merged_harmony_obj <- IntegrateLayers(
     orig.reduction = "pca",
     new.reduction = "harmony",
     assay = "SCT",
-    verbose = TRUE ) %>%
-   FindNeighbors(reduction = "harmony",
-                 dims = 1:50)
+    preserve.order = TRUE,
+    verbose = TRUE )
 
 merged_harmony_obj <- merged_harmony_obj %>% 
-   FindClusters(graph.name = "SCT_snn",
-                resolution = c(0.8, 1.0, 1.5),
+   FindNeighbors(reduction = "harmony",
+                 dims = 1:30) %>% 
+   FindClusters(resolution = c(0.8, 1.0, 1.5),
                 algorithm = 2)
 
+```
+
+```{r}
 merged_harmony_obj <- merged_harmony_obj %>% 
    RunUMAP(reduction = "harmony",
            n.components = 3,
-           dims = 1:50,
+           dims = 1:30,
+           n.neighbors = 30,# default 30
+           metric = "cosine",
+           min.dist = 0.1, # default 0.3
+           negative.sample.rate = 10,
+           n.epochs = 500,
            reduction.name = "umap.harmony")
   
 merged_harmony_obj$id <- factor(merged_harmony_obj$orig.ident,
@@ -2320,46 +2382,60 @@ merged_harmony_obj$id <- factor(merged_harmony_obj$orig.ident,
 merged_harmony_obj <- AddMetaData(merged_harmony_obj,
                                   merged_harmony_obj@reductions$umap.harmony@cell.embeddings)
 
-job::job({
-  saveRDS(merged_harmony_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_harmonyIntegration_seurat_obj_v5.RDS")
-}, import = c("merged_harmony_obj"))
+# job::job({
+#   saveRDS(merged_harmony_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_harmonyIntegration_seurat_obj_v5.RDS")
+# }, import = c("merged_harmony_obj"))
 ```
 
-```{r fig.height=10}
-# pdf("figures/day0_day50/harmony/merged_harmony_obj_batch_sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
-ElbowPlot(merged_harmony_obj,ndims = 50, reduction = "pca")
+```{r fig.height=10, fig.width=10}
+# pdf("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
+# ElbowPlot(merged_harmony_obj,ndims = 50, reduction = "pca")
+# dev.off()
+# 
+# pdf("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_transform_1-4PCs_loadings.pdf", height = 10, width=7)
+# VizDimLoadings(merged_harmony_obj, dims = 1:4, reduction = "pca")
 # dev.off()
 
-# pdf("figures/day0_day50/harmony/merged_harmony_obj_batch_transform_1-4PCs_loadings.pdf", height = 10, width=7)
-VizDimLoadings(merged_harmony_obj, dims = 1:4, reduction = "pca")
-# dev.off()
-
-# pdf("figures/day0_day50/harmony/merged_harmony_obj_batch_byLouvainCluster_sct_UMAP.pdf",height = 10, width= 17)
+# pdf("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_byLouvainCluster_sct_UMAP.pdf",height = 10, width= 17)
 DimPlot(merged_harmony_obj,
-        reduction = "umap",
+        reduction = "umap.harmony",
         dims = c(1,2)) +
   scale_color_manual(values = colors_vector)
 # dev.off()
 
-filt_harmony_d1 <- DimPlot(merged_harmony_obj, 
-        group.by = c("batch","id"),
-        reduction = "umap.harmony", 
-        label = T, 
-        repel = T,
-        label.size = 7) + 
-  scale_color_manual(values = colors_vector)
+filt_id <- custom_dimplot(metadata = merged_harmony_obj@meta.data,
+                         colorby = "id", 
+                         add_text = TRUE,
+                         label_samples = FALSE,
+                         dimred_colnames = "umapharmony", 
+                         custom_colors = sample_id_colors)
 
+filt_batch <- custom_dimplot(metadata = merged_harmony_obj@meta.data,
+                         colorby = "batch", 
+                         add_text = TRUE,
+                         label_samples = FALSE,
+                         dimred_colnames = "umapharmony", 
+                         custom_colors = ggsci::pal_jco()(4))
 
-# filt_harmony_d2 <- DimPlot(merged_harmony_obj, 
-#         group.by = c("batch","id"),
-#         reduction = "umap.harmony",
-#         label = T, 
-#         repel = T,
-#         label.size = 7) + 
-#   scale_color_manual(values = colors_vector)
+filt_b34_id <- custom_dimplot(metadata = merged_harmony_obj@meta.data %>% 
+                            filter(time_point > 30),
+                         colorby = "id", 
+                         add_text = TRUE,
+                         label_samples = FALSE,
+                         dimred_colnames = "umapharmony", 
+                         custom_colors = colors_vector)
 
-# png("figures/day0_day50/harmony/merged_harmony_obj_batch_iPSC_MN_seurat_UMAP_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
-filt_harmony_d1
+# png("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_iPSC_MN_seurat_UMAP_splitBy_batch_day_filtered.png",  height = 15, width = 25, units = "in", res = 150)
+filt_b34_id + 
+  facet_wrap(~time_point)
+# dev.off()
+
+# png("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_iPSC_MN_seurat_UMAP_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
+filt_id
+# dev.off()
+
+# png("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_iPSC_MN_seurat_UMAP_batch_filtered.png", height = 15, width = 25, units = "in", res = 150)
+filt_batch
 # dev.off()
 ```
 
@@ -2368,7 +2444,7 @@ Idents(merged_harmony_obj) <- merged_harmony_obj$orig.ident
 purrr::map(names(marker_genes_iPSC), function(type){
  
    h <- ifelse(length(marker_genes_iPSC[[type]]) <= 4, 12, 20)
-  outfile <- glue("figures/day0_day50/harmony/merged_harmony_obj_batch_iPSC_MN_expression_{type}_marker_genes.png")
+  outfile <- glue("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_iPSC_MN_expression_{type}_marker_genes.png")
   
   png(outfile, height = h, width = 20, units = "in", res = 100)
   print(FeaturePlot(merged_harmony_obj, 
@@ -2406,12 +2482,12 @@ length(marker_genes_endoderm3)
 ```{r fig.height=10, fig.width=10}
 Idents(merged_harmony_obj) <- merged_harmony_obj$orig.ident
 
-# png("figures/day0_day50/harmony/merged_harmony_obj_batch_iPSC_MN_seurat_endoderm_markers_p1.png", height = 12, width = 18, res = 100, units="in")
+# png("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_iPSC_MN_seurat_endoderm_markers_p1.png", height = 12, width = 18, res = 100, units="in")
 VlnPlot(merged_harmony_obj,
         features = marker_genes_endoderm[1:9])
 # dev.off()
 
-# png("figures/day0_day50/harmony/merged_harmony_obj_batch_iPSC_MN_seurat_endoderm_markers_p2.png", height = 12, width = 18, res = 100, units="in")
+# png("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_iPSC_MN_seurat_endoderm_markers_p2.png", height = 12, width = 18, res = 100, units="in")
 VlnPlot(merged_harmony_obj,
         features = marker_genes_endoderm[10:18])
 # dev.off()
