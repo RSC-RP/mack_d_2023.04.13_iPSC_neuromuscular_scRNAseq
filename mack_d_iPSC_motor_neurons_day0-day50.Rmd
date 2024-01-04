@@ -1071,12 +1071,16 @@ length(seurat_objs_dbls) # 19
           nfeat_upl <- attr(nfeat_outlier,which = "thresholds")["higher"]
           nfeat_lowl <- attr(nfeat_outlier,which = "thresholds")["lower"]
           
+          # hard thresholds for lower bounds
+          #  at least 200 genes assayed per cell
+          #  at least 500 reads per cells
           to_retain <- WhichCells(input, 
                                   expression = 
-                                    nFeature_RNA > 200 & #at least 200 genes assayed per cell
+                                    nFeature_RNA > 200 & 
                                     nFeature_RNA < nfeat_upl &
-                                    nCount_RNA > 500 & # at least 500 reads per cells
+                                    nCount_RNA > 500 &
                                     nCount_RNA < ncount_upl &
+                                    
                                     percent.ribo > rb_th &
                                     percent.mt < mito_th &
                                     class == "singlet")
@@ -1094,12 +1098,7 @@ length(seurat_objs_dbls) # 19
           
           sub_filt_obj <- subset(
                           x = input,
-                          subset = 
-                            nFeature_RNA > 200 &
-                            percent.ribo > rb_th &
-                            percent.mt < mito_th &
-                            class == "singlet"
-                        )
+                          cells = to_retain)
 
           print(glue("Saving {outfile}"))
           base::saveRDS(sub_filt_obj, outfile)
@@ -1129,15 +1128,19 @@ length(seurat_objs_dbls) # 19
 ```
 
 ```{r}
-threshold_summary <- purrr::map_dfr(dir("results/day0_day50/seurat/filtering_stats", full.names = TRUE), function(x){
+outpaths <- dir("results/day0_day50/seurat/filtering_stats",
+                pattern = "filtering_threshold_summary.csv" , 
+                full.names = TRUE)
+
+threshold_summary <- purrr::map_dfr(outpaths, function(x){
   read.csv(x) 
 }) %>% 
   mutate(sample_id = paste0("iPSC_", sample), 
          percent = round(output_number_cells / input_number_cells * 100, digits = 2)) %>%
-  left_join(., sample_manifest, by = c("sample_id")) %>% 
-  arrange(time_point, sample_id) %>% 
+  left_join(., sample_manifest, by = c("sample_id")) %>%
+  arrange(time_point, sample_id) %>%
   mutate(sample_id = factor(sample_id, levels=unique(sample_id))) %>%
-  select(sample_id, everything()) %>% 
+  select(sample_id, everything()) %>%
   arrange(sample_id)
 
 threshold_summary %>% head()
@@ -1145,7 +1148,7 @@ threshold_summary %>% head()
 ```
 
 ```{r}
-# pdf("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_mito_thresholds.pdf", height = 8, width = 10)
+pdf("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_mito_thresholds.pdf", height = 8, width = 10)
 ggplot(threshold_summary, aes(x=batch, y=mito_th, fill=batch)) +
   geom_boxplot(alpha=0.25) +
   geom_point(aes(color=sample_id),
@@ -1158,9 +1161,8 @@ ggplot(threshold_summary, aes(x=batch, y=mito_th, fill=batch)) +
   guides(color="none") +
   theme_classic() +
   theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
-# dev.off()
+dev.off()
 ```
-
 
 ```{r fig.width=10}
 ths_to_plot <- threshold_summary %>% 
@@ -1191,9 +1193,9 @@ bplot <- ggplot(ths_to_plot, aes(x = sample_id,
   theme_classic() +
   theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
 
-# png("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_barplot.png",height = 8, width = 16, unit="in", res=150)
+png("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_barplot.png",height = 8, width = 16, unit="in", res=150)
 bplot
-# dev.off()
+dev.off()
 ```
 
 
@@ -1214,7 +1216,6 @@ mean_th <- threshold_summary %>%
 
 mean_th # 7.429377
 ```
-
 
 Move the original files to a seperate subdirectory for later, if needed. 
 
@@ -1263,7 +1264,7 @@ write.csv(threshold_summary_update, "results/day0_day50/seurat/filtering_stats/m
 ```
 
 ```{r}
-# pdf("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_mito_thresholds_update.pdf", height = 7, width = 10)
+pdf("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_mito_thresholds_update.pdf", height = 7, width = 10)
 ggplot(threshold_summary_update, aes(x=batch, y=mito_th, fill=batch)) +
   geom_boxplot(alpha=0.25) +
   geom_point(aes(color=sample_id),
@@ -1278,7 +1279,7 @@ ggplot(threshold_summary_update, aes(x=batch, y=mito_th, fill=batch)) +
   guides(color="none") +
   theme_classic() +
   theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
-# dev.off()
+dev.off()
 ```
 
 ```{r fig.width=10}
@@ -1310,9 +1311,9 @@ bplot2 <- ggplot(ths_to_plot, aes(x = sample_id,
   theme_bw() +
   theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
 
-# png("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_barplot_update.png",height = 8, width = 16, unit="in", res=150)
+png("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_barplot_update.png",height = 8, width = 16, unit="in", res=150)
 bplot2
-# dev.off()
+dev.off()
 ```
 
 
@@ -1338,6 +1339,7 @@ mamba -h
 mamba create -n hdf5 conda-forge::r-hdf5r python==3.10
 conda
 ```
+
 Sys.setenv(LD_LIBRARY_PATH=paste("/home/jsmi26/miniforge3/envs/hdf5/lib", Sys.getenv("LD_LIBRARY_PATH"), sep =":"))
 Sys.getenv("LD_LIBRARY_PATH")
 install.packages("hdf5r", configure.args = "--with-hdf5=/home/jsmi26/miniforge3/envs/hdf5/bin/h5cc")
@@ -1345,6 +1347,10 @@ Sys.getenv("LD_LIBRARY_PATH")
 Sys.setenv(PATH=paste("/home/jsmi26/miniforge3/envs/hdf5/bin",Sys.getenv("PATH"), sep = ":"))
 Sys.getenv("PATH")
 library(hdf5r)
+Error in dyn.load(file, DLLpath = DLLpath, ...) : 
+  unable to load shared object '/home/jsmi26/R/x86_64-pc-linux-gnu-library/4.3/hdf5r/libs/hdf5r.so':
+  libhdf5_hl.so.310: cannot open shared object file: No such file or directory
+
 
 ```{r eval=TRUE}
 if(!exists("filter_objs")){
@@ -1399,16 +1405,6 @@ length(soup_channels) # 19
 job::job({
   saveRDS(soup_channels, "results/soupX_counts/mack_iPSC_MN_day0-day50_soupX_channel_objs_list.RDS")
 }, import = c("soup_channels"))
-```
-
-Error in dyn.load(file, DLLpath = DLLpath, ...) : 
-  unable to load shared object '/home/jsmi26/R/x86_64-pc-linux-gnu-library/4.3/hdf5r/libs/hdf5r.so':
-  libhdf5_hl.so.310: cannot open shared object file: No such file or directory
-
-```{r}
-hdf5r::H5File
-Sys.getenv("LD_LIBRARY_PATH")
-Sys.getenv("PATH")
 ```
 
 ```{r, eval=TRUE}
@@ -1541,7 +1537,6 @@ est_plot
 # dev.off()
 ```
 
-
 There are some issues in the plotting functions that haven't been updated. 
 * https://github.com/constantAmateur/SoupX/issues/102
 
@@ -1552,7 +1547,6 @@ plotMarkerDistribution(sc = soup_channels,
                        tfidfMin = 1)
 
 ```
-
 
 
 # Merge Filtered Objects
@@ -2099,7 +2093,7 @@ Possible Layer Groups
 ```{r eval=TRUE}
 VERSION = 'v5'
 if(!exists("merged_norm_obj")){
-  merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
+  merged_norm_obj <- readRDS("results/day0_day50/seurat/old_thresholds/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
 }
 
 # defaults to Layers which are the sample IDs in this case
@@ -2116,6 +2110,7 @@ merged_rpca_obj <- IntegrateLayers(
 
 dims <- 1:30
 merged_rpca_obj <-  IntegrateLayers(
+      object = merged_rpca_obj,
       method = RPCAIntegration,
       orig.reduction = "pca",
       new.reduction = "rpca",
@@ -2308,13 +2303,14 @@ job::job({
   saveRDS(merged_harmony_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_harmonyIntegration_seurat_obj_v5.RDS")
 }, import = c("merged_harmony_obj"))
 
-# pdf("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
-# ElbowPlot(merged_harmony_obj,ndims = 50, reduction = "pca")
-# dev.off()
+pdf("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
+ElbowPlot(merged_harmony_obj,ndims = 50, reduction = "pca")
+dev.off()
 # 
-# pdf("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_transform_1-4PCs_loadings.pdf", height = 10, width=7)
-# VizDimLoadings(merged_harmony_obj, dims = 1:4, reduction = "pca")
-# dev.off()
+pdf("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_transform_1-4PCs_loadings.pdf", height = 10, width=7)
+VizDimLoadings(merged_harmony_obj, dims = 1:4, reduction = "pca")
+dev.off()
+
 purrr::map(c("harmony","harmonyorder"), function(x){
 
   pdf(glue("figures/day0_day50/filtered_merged_harmony/merged_{x}_obj_batch_byLouvainCluster_sct_UMAP.pdf"),height = 10, width= 17)
