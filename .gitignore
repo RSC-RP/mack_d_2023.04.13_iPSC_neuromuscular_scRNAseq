@@ -12,22 +12,12 @@
 rclone.sh
 
 # Project specific
-azcopy.sh
-meeting_notes_link.txt
 00_archive/
+azcopy.sh
 figures/
 references/
 resources/
 results/
 samples/
 presentations/
-
-# for symlinks
-00_archive
-figures
-references
-resources
-results
-samples
-presentations
-
+meeting_notes_link.txt
