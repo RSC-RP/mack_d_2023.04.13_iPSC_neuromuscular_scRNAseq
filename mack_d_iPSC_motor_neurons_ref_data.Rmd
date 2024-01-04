@@ -34,9 +34,10 @@ library(glue)
 library(ggplot2)
 library(plotly)
 library(RColorBrewer)
+library(plot3D)
 
 library(Seurat)
-# library(SeuratDisk)
+library(SeuratDisk)
 library(ontologyIndex)
 library(reticulate)
 
@@ -44,24 +45,14 @@ library(sceasy)
 library(anndata)
 ```
 
-ImportError: /usr/lib/x86_64-linux-gnu/libssl.so.3: version `OPENSSL_3.2.0' not found (required by /home/jsmi26/miniforge3/envs/scanvi_scib/lib/python3.10/site-packages/h5py/../../.././libcurl.so.4)
-
 ```{r message=FALSE, warning=FALSE}
 # python modules
-if( Sys.info()[["nodename"]] == "pdlposit-0" ) {
-  print(Sys.getenv("LD_LIBRARY_PATH"))
-  mamba_path <- "/miniforge3/envs/scanvi_scib"
-  Sys.setenv(LD_LIBRARY_PATH="/home/jsmi26/miniforge3/envs/scanvi_scib/lib")
-}else{
-  mamba_path <- "opt/mambaforge/envs/scanvi_scib"
-}
-print(Sys.getenv("LD_LIBRARY_PATH"))
-
-reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), mamba_path))
-scvi <- import("scvi", convert = FALSE)
+reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "opt/mambaforge/envs/scanvi_scib"))
 sc <- import("scanpy", convert = FALSE)
+scvi <- import("scvi", convert = FALSE)
 scib <- import("scib_metrics.benchmark", convert = FALSE)
 ```
+
 ```{r}
 # address common function name conflicts
 conflicted::conflict_prefer("select", "dplyr")
@@ -155,20 +146,19 @@ clean_standardize_annots <- function(seurat_obj){
         grepl("Micro", top_level_annotation) ~ "microglia",
   
         grepl("Oligo", top_level_annotation) ~ "oligodendrocytes",
+        # grepl("N[Uu][Ll]", subtype_annotation) ~ "esc_neuron",
         grepl("Neuro", top_level_annotation) & !grepl("Moto|^MN", subtype_annotation) ~ "neuron", 
-        grepl("DRG_Progenitor", top_level_annotation) ~ "progenitor",
-        
+        # grepl("Neuro", top_level_annotation) & grepl("IEG", subtype_annotation) ~ "IEG_neuron",
+        # grepl("Neuro", top_level_annotation) & !grepl("Moto|^MN", subtype_annotation) ~ paste0("sc_",gsub("^.+(dorsal|ventral|mid).+", "\\1", description),"_neuron"),
         grepl("Neuro", top_level_annotation) & grepl("Moto|^MN", subtype_annotation) ~ "motorneurons",
+        grepl("DRG_Progenitor", top_level_annotation) ~ "progenitor",
         TRUE ~ tolower(top_level_annotation)
       ), 
       
       subtype_standardized = case_when(
         grepl("pMN", subtype_annotation) ~ "pMN",
-        grepl("Neuro", top_level_annotation) &
-          !grepl("Moto|^MN", subtype_annotation) ~ gsub("-[0-9]{1,2}$","", subtype_annotation) %>% 
-                                                    gsub(".+\\s(.+)$", "\\1", .) %>% gsub("\\/|-","_", .),
-        # grepl("Neuro", top_level_annotation) & grepl("Moto|^MN", subtype_annotation) & dataset == "Rayon" ~ "esc_mn",
-        # grepl("Neuro", top_level_annotation) & grepl("Moto|^MN", subtype_annotation) & dataset == "Yadav" ~ "adult_mn",
+        grepl("Neuro", top_level_annotation) & !grepl("Moto|^MN", subtype_annotation) ~ gsub("-[0-9]{1,2}$","", subtype_annotation) %>% 
+                                                                                                  gsub(".+\\s(.+)$", "\\1", .) %>% gsub("\\/|-","_", .),
         TRUE ~ top_level_standardized)) %>% 
     select(matches("standardized"))
   
@@ -186,19 +176,18 @@ clean_standardize_annots <- function(seurat_obj){
 ```
 
 ```{r}
-make_3D_umap <- function(metadata, idents_column, extra_label_cols=NULL, selected_colors=NULL){
+make_3D_umap <- function(metadata, idents_column, label_cols, selected_colors=NULL){
     "
     idents_column is for labeling. ex) 'RNA_snn_res.0.7 as well as the UMAP colnames, eg UMAP_1, UMAP_2'
     "
     # 3D UMAP
-    plot.data <- metadata %>% 
-      select(all_of(c(idents_column)))
+    plot.data <- metadata
     plot.data$label <- paste(rownames(plot.data))
-    if(!is.null(extra_label_cols)){
-      plot.data$label <- paste(plot.data$label, 
-                               metadata[[extra_label_cols]],
-                               sep = "\n")
-    }
+
+    plot.data  <- plot.data %>% 
+          unite(col = label, all_of(c("label",label_cols)), sep = "\n", remove = FALSE) %>% 
+          select(all_of(c("label",label_cols)), all_of(idents_column))
+
     
     if(is.null(selected_colors)){
       selected_colors <- c("lightseagreen", "gray50",  "darkgreen", "red4", "red", "turquoise4","black","yellow4","royalblue1","lightcyan3",
@@ -210,7 +199,7 @@ make_3D_umap <- function(metadata, idents_column, extra_label_cols=NULL, selecte
     formulas <- sapply(1:3, function(x) as.formula(paste0("~", grep(glue("_{x}$"), cnames, value = TRUE))))
     fig <- plot_ly(data = plot.data, 
         x = formulas[[1]], y = formulas[[2]], z = formulas[[3]], 
-        color = as.formula(paste0("~", idents_column[4])), 
+        color = as.formula(paste0("~", label_cols[1])), 
         colors = selected_colors, 
         type = "scatter3d", 
         mode = "markers", 
@@ -223,32 +212,99 @@ make_3D_umap <- function(metadata, idents_column, extra_label_cols=NULL, selecte
 ```
 
 ```{r}
-custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors){
+custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
+                           lab_size = 6, ny = 0, custom_lab_fill = NULL,
+                           label_samples = TRUE,
+                           color_text_grp = FALSE,
+                           add_text = TRUE, 
+                           seed = 2023){
+  
+  # define x and y column names
   x_names <- paste0(dimred_colnames, "_1")
   y_names <- paste0(dimred_colnames, "_2")
   
+  # define labels positions
   labs_df <- metadata %>%
     select(all_of(c(colorby, x_names, y_names))) %>%
     group_by(!! as.name(colorby)) %>% 
     summarise(x = mean(!! as.name(x_names)),
               y = mean(!! as.name(y_names)))
+  
+   # define point sizes based on how many total cells in data
    ncells <- nrow(metadata)
    pt_size <- case_when(
      ncells < 5e4 ~ 1,
      ncells >= 5e4 & ncells < 1e5 ~ 0.5,
      ncells >= 1e5 ~ 0.25)
+   
+   # Make the scatterplot
    plot <- ggplot(metadata, 
-         aes_string(x = x_names, y = y_names, color = colorby)) +
-    geom_point(size = pt_size, alpha = 0.6) +
-    ggrepel::geom_text_repel(data = labs_df, 
-                             mapping = aes_string(x = "x", y = "y", label = colorby),
-                             color = "black") +
+         aes_string(x = x_names, y = y_names)) +
+    geom_point(aes_string(color = colorby),
+               size = pt_size, alpha = 0.4) +
     scale_color_manual(values = custom_colors) +
-    guides(color = guide_legend(override.aes = list(alpha = 1))) +
+    guides(color = guide_legend(override.aes = list(alpha = 1, size = 2))) +
     theme_classic() +
-    theme(legend.position = "bottom")
+    theme(legend.position = "top")
+   
+   # customize label positions
+   if(is.character(ny)){
+     y_val <-  ifelse(grepl(ny, labs_df[[colorby]]), 1.5, 0)
+   }else{
+     y_val <- ny
+   }
+   
+   if(is.null(custom_lab_fill)){
+     fill_val <-  "white"
+   }else{
+     fill_val <- custom_lab_fill
+   }
+   
+   if(color_text_grp){
+     mapping <- aes_string(x = "x", y = "y", label = colorby, color = colorby)
+
+   }else{
+     mapping <- aes_string(x = "x", y = "y", label = colorby)
+   }
+  
+   if( all(add_text & label_samples) ){
+     plot <- plot + 
+           ggrepel::geom_text_repel(data = labs_df, 
+                             mapping = aes_string(x = "x", y = "y", label = colorby),
+                             color = "black",
+                             nudge_y = y_val,
+                             segment.colour = NA,
+                             size = lab_size,
+                             seed = seed)
+   }else if ( label_samples ) {
+      plot <- plot + 
+         ggrepel::geom_label_repel(data = labs_df, 
+                           mapping = mapping,
+                           fill = fill_val,
+                           nudge_y = y_val,
+                           segment.colour = NA,
+                           label.size = 0.5,
+                           size = lab_size,
+                           show.legend = FALSE,
+                           seed = seed)
+   }
    
    return(plot)
+}
+```
+
+
+```{r}
+make_alpha <- function(color, percent=100){
+  # https://www.dataanalytics.org.uk/make-transparent-colors-in-r/
+  ## Get RGB values for named color
+  rgb.val <- col2rgb(color)
+  
+  ## Make new color using input color as base and alpha set by transparency
+  t.col <- rgb(rgb.val[1], rgb.val[2], rgb.val[3],
+               max = 255,
+               alpha = (100 - percent) * 255 / 100)
+
 }
 ```
 
@@ -1492,7 +1548,6 @@ celltype_annots <- read.csv("references/Allen_Rayon_Yadav_integrated_celltype_la
   mutate(standardized_top_level_annotation = gsub("\\s{1,}", "_", standardized_top_level_annotation)) %>% 
   mutate_at(vars(standardized_top_level_annotation), ~case_when(
     dataset == "yadav_2023" & top_level_annotation == "Neurons" ~ top_level_annotation,
-    dataset == "Allen_M1" & top_level_annotation == "Micro-PVM" ~ 'Microglia',
     TRUE ~ .))
 
 celltypes_to_retain <- celltype_annots %>% 
@@ -1500,11 +1555,8 @@ celltypes_to_retain <- celltype_annots %>%
          !grepl("Ery", top_level_annotation), 
          !grepl("Null", subtype_annotation)) %>% 
   mutate_at(vars(standardized_subtype_annotation), ~gsub("\\s{1,}","_", .) %>%
-              ifelse(grepl("Not|Rem", .), standardized_top_level_annotation, .)) %>% 
-  mutate_at(vars(standardized_class_label), ~case_when(
-    . == "Remove" & grepl("Neurons", top_level_annotation) ~ "Neuron",
-    . == "Remove" & grepl("Micro-PVM", top_level_annotation) ~ "Glia",
-    TRUE ~ gsub(" cells", "", .)))
+              # gsub("(Neuron)s","\\1",.) %>% 
+              ifelse(grepl("Not|Rem", .), standardized_top_level_annotation, .))
 
 # head(celltypes_to_retain)
 dim(celltypes_to_retain)
@@ -2291,6 +2343,12 @@ if(!exists("merged_split_obj")){
 
 merged_split_obj
 ```
+```{r}
+merged_split_obj@meta.data %>% 
+  filter(subtype_standardized == "microglia") %>% 
+  select(dataset, top_level_annotation,subtype_standardized) %>% 
+  distinct()
+```
 
 ```{r eval=FALSE}
 DefaultAssay(merged_split_obj) <- 'SCT'
@@ -2333,6 +2391,7 @@ table(df[,2:3])
 
 ```{r}
 top_marker_genes <- marker_genes %>% 
+  select(gene, everything()) %>% 
   filter(p_val_adj < 0.001) %>% 
   group_by(cluster) %>% 
   dplyr::top_n(n = 10, wt = avg_log2FC) %>% 
@@ -2362,9 +2421,9 @@ plots2 <- purrr::map(unique(top_marker_genes$cluster), function(x){
       patchwork::plot_annotation(title = glue("top 10 DEGs in {x}"))
     
     outname <- glue("figures/cell_refs/allen_yadav_rayon_integrated/subset/find_all_marker_genes/integrated_cell_ref_scanvi_subset_{x}_UMAP.pdf")
-    # pdf(outname, height = 15, width = 20)
+    pdf(outname, height = 15, width = 20)
     print(fp)
-    # dev.off()
+    dev.off()
 })
 ```
 
@@ -2380,8 +2439,7 @@ cell_type_table <- merged_split_obj@meta.data %>%
   pivot_wider(names_from = dataset, values_from = n) %>% 
   mutate(across(Allen_M1:yadav_2023, ~ifelse(is.na(.), 0,.)))
 
-# View(cell_type_table)
-# write.csv(cell_type_table, "results/integrated_ref/Allen_Rayon_Yadav_integrated_cell_ref_subtype_standardized_table.csv", row.names = FALSE)
+View(cell_type_table)
 ```
 
 ```{r}
@@ -2411,48 +2469,8 @@ purrr::map(1:nrow(to_plot), function(x){
 })
 ```
 
-```{r}
-rpca_3d <- make_3D_umap(metadata = merged_split_obj@meta.data, 
-             idents_column = c(paste0("umaprpca_",1:3), "subtype_standardized"), 
-             extra_label_cols = c("subtype_standardized"), 
-             selected_colors = colors_vector)
 
-scanvi_3d <- make_3D_umap(metadata = merged_split_obj@meta.data, 
-             idents_column = c(paste0("umapscanvi_",1:3), "subtype_standardized"), 
-             extra_label_cols = c("subtype_standardized"), 
-             selected_colors = colors_vector)
-
-scanvi2_3d <- make_3D_umap(metadata = merged_split_obj@meta.data, 
-             idents_column = c(paste0("umapscanvi2_",1:3), "subtype_standardized"), 
-             extra_label_cols = c("subtype_standardized"), 
-             selected_colors = colors_vector)
-
-# scanvi2_3d
-# htmlwidgets::saveWidget(rpca_3d, "figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_rpca_UMAP.html")
-# htmlwidgets::saveWidget(scanvi_3d, "figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_scanvi_UMAP.html")
-# htmlwidgets::saveWidget(scanvi2_3d, "figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_scanvi_2covs_UMAP.html")
-```
-
-```{r}
-library(plot3D)
-```
-
-for_3d_plot <- merged_split_obj@meta.data %>% 
-  select(barcode, subtype_standardized, top_level_standardized, matches("umapscanvi_"))
-  
-```{r}
-make_alpha <- function(color, percent=100){
-  # https://www.dataanalytics.org.uk/make-transparent-colors-in-r/
-  ## Get RGB values for named color
-  rgb.val <- col2rgb(color)
-  
-  ## Make new color using input color as base and alpha set by transparency
-  t.col <- rgb(rgb.val[1], rgb.val[2], rgb.val[3],
-               max = 255,
-               alpha = (100 - percent) * 255 / 100)
-
-}
-```
+#### 3D Plots
 
 ```{r}
 celltypes <- unique(merged_split_obj@meta.data$subtype_standardized)
@@ -2463,19 +2481,36 @@ cc_subtypes <- cc_subtypes[order(names(cc_subtypes))]
 cc_subtypes['Inh_Dorsal'] <- cc_subtypes['motorneurons']
 cc_subtypes['motorneurons'] <- "red"
 
-# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/color_legend_subtype_standardized_3D_UMAP.pdf", height = 5, width = 10)
+
 par(mar = c(15, 4, 4, 2) + 0.1)
 barplot(rep(1, n_types), col = cc_subtypes,names.arg = names(cc_subtypes), las = 2)
-# dev.off()
 ```
 
-theta gives the azimuthal direction 
-phi the colatitude.
+```{r}
+rpca_3d <- make_3D_umap(metadata = merged_split_obj@meta.data, 
+             idents_column = c(paste0("umaprpca_",1:3)), 
+             label_cols = c("subtype_standardized", "top_level_standardized","dataset"), 
+             selected_colors = cc_subtypes)
 
-theta rotates around the Z-axis 
-phi rotates around the X-axis, 
+scanvi_3d <- make_3D_umap(metadata = merged_split_obj@meta.data, 
+             idents_column = c(paste0("umapscanvi_",1:3)), 
+             label_cols = c("subtype_standardized","top_level_standardized","dataset"), 
+             selected_colors = cc_subtypes)
 
+# scanvi2_3d <- make_3D_umap(metadata = merged_split_obj@meta.data, 
+#              idents_column = c(paste0("umapscanvi2_",1:3)), 
+#              label_cols = c("subtype_standardized"), 
+#              selected_colors = colors_vector)
 
+# scanvi2_3d
+htmlwidgets::saveWidget(rpca_3d, "figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_rpca_UMAP.html")
+htmlwidgets::saveWidget(scanvi_3d, "figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_scanvi_UMAP.html")
+# htmlwidgets::saveWidget(scanvi2_3d, "figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_scanvi_2covs_UMAP.html")
+```
+
+for_3d_plot <- merged_split_obj@meta.data %>% 
+  select(barcode, subtype_standardized, top_level_standardized, matches("umapscanvi_"))
+  
 ```{r}
 colors_3d_other <- merged_split_obj@meta.data %>% 
   select(barcode, subtype_standardized, top_level_standardized, matches("umapscanvi_")) %>% 
@@ -2494,16 +2529,23 @@ colors_3d_other <- colors_3d_other %>%
   filter(!grepl("motorneuron",subtype_standardized))
 
 n1 <- length(as.numeric(as.factor(colors_3d_other$subtype_standardized)))
-# head(colors_3d_other)
+head(colors_3d_other)
 ```
 
+theta gives the azimuthal direction 
+phi the colatitude.
+
+theta rotates around the Z-axis 
+phi rotates around the X-axis, 
 
 ```{r fig.height=12, fig.width=12}
-t <- 100
-p <- 120
+t <- 60
+p <- 25
 
-# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_spinal_cord_motor_cortex_scanvi_integrated_subtype_standardized_plot3D_UMAP.pdf", height = 15, width = 15)
-# png("figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_spinal_cord_motor_cortex_scanvi_integrated_subtype_standardized_plot3D_UMAP.png", height = 15, width = 15, units = "in", res = 150)
+# t <- 100
+# p <- 120
+
+# pdf("Figures/TARGET_AML_ETS_Family_Fusions_plot3D_scatter_3D_long.pdf", height = 10, width = 12)
 plot3D::scatter3D(x=colors_3d_other$umapscanvi_1, 
                   y=colors_3d_other$umapscanvi_2,
                   z=colors_3d_other$umapscanvi_3,
@@ -2534,6 +2576,8 @@ plot3D::scatter3D(x=colors_3d_mn$umapscanvi_1,
 ```
 
 
+
+
 ## Motor Neurons and subsets
 
 ```{r}
@@ -2552,7 +2596,7 @@ mn_marker_list <- purrr::map(unique(mn_subtype_markers_incl$celltype) %>% set_na
 Idents(merged_split_obj) <- merged_split_obj$subtype_standardized
 
 bc <- merged_split_obj@meta.data %>% 
-  filter(grepl("motor|pMN", subtype_standardized)) %>% 
+  filter(grepl("motor|pMN|astrocyte|microglia|oligodendrocytes|opc", subtype_standardized)) %>% 
   rownames(.)
 
 subset_common_types <- subset(merged_split_obj, cells = bc)
@@ -2561,8 +2605,26 @@ table(Idents(subset_common_types))
 ```
 
 ```{r fig.height=10, fig.width=10}
+ct_qc_umap <- custom_dimplot(metadata = subset_common_types@meta.data,
+                                colorby = c("subtype_standardized"),
+                                dimred_colnames = "umapscanvi",
+                                custom_colors = cc_subtypes)
+
+donor_qc_umap <- custom_dimplot(metadata = subset_common_types@meta.data,
+                                colorby = c("donor"),
+                                dimred_colnames = "umapscanvi",
+                                label_samples = FALSE,
+                                custom_colors = colors_vector)
+
+# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/embryonic_adult_sc_mc_integrated_scanvi_common_types_donor_QC_UMAP.pdf",height = 10, width = 20)
+ct_qc_umap + donor_qc_umap # patchwork::plot_layout(guides = "collect")
+# dev.off()
+```
+
+```{r fig.height=10, fig.width=10}
 mn_markers_plots <- purrr::map(names(mn_marker_list), function(x){
-    fp <- FeaturePlot(subset_common_types,
+    fp <- FeaturePlot(
+            object = subset(subset_common_types, idents = "motorneurons"),
             features = mn_marker_list[[x]],
             reduction = "umap.scanvi",
             label.size = 2,
