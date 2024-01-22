@@ -1045,7 +1045,7 @@ length(seurat_objs_dbls) # 19
 ```
 
 ```{r eval=TRUE}
-# job::job({
+job::job({
   # loop through each sample and create dynamic filting thresholds
   filter_objs <- purrr::map(names(seurat_objs_dbls), function(x){
     
@@ -1056,6 +1056,8 @@ length(seurat_objs_dbls) # 19
         if( any(!file.exists(outfile) | !file.exists(out_summary)) ){
           
           print(glue("Processing {x}"))
+          # nmads = 3 default
+          # number of MADs away from median required for a value to be called an outlier.
           mito_outlier <- scuttle::isOutlier(input$percent.mt, type="higher")
           rb_outlier <- scuttle::isOutlier(input$percent.ribo, type="lower")
           ncount_outlier <- scuttle::isOutlier(input$nCount_RNA, type="both")
@@ -1124,7 +1126,7 @@ length(seurat_objs_dbls) # 19
       })
   names(filter_objs) <- paste0("iPSC_", names(seurat_objs_dbls))
   
-# }, import = c("seurat_objs_dbls"))
+}, import = c("seurat_objs_dbls"))
 ```
 
 ```{r}
@@ -1148,7 +1150,7 @@ threshold_summary %>% head()
 ```
 
 ```{r}
-pdf("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_mito_thresholds.pdf", height = 8, width = 10)
+# pdf("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_mito_thresholds.pdf", height = 8, width = 10)
 ggplot(threshold_summary, aes(x=batch, y=mito_th, fill=batch)) +
   geom_boxplot(alpha=0.25) +
   geom_point(aes(color=sample_id),
@@ -1161,10 +1163,10 @@ ggplot(threshold_summary, aes(x=batch, y=mito_th, fill=batch)) +
   guides(color="none") +
   theme_classic() +
   theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
-dev.off()
+# dev.off()
 ```
 
-```{r fig.width=10}
+```{r fig.width=15}
 ths_to_plot <- threshold_summary %>% 
   select(sample_id, input_number_cells, output_number_cells) %>% 
   pivot_longer(cols = -sample_id, 
@@ -1193,9 +1195,9 @@ bplot <- ggplot(ths_to_plot, aes(x = sample_id,
   theme_classic() +
   theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
 
-png("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_barplot.png",height = 8, width = 16, unit="in", res=150)
+# png("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_barplot.png",height = 8, width = 16, unit="in", res=150)
 bplot
-dev.off()
+# dev.off()
 ```
 
 
@@ -1529,7 +1531,7 @@ est_plot <- ggplot(est_df_subset, aes(x =  sample_id, y=rho, fill = sample_id)) 
   geom_hline(yintercept = 0.05, linetype="dashed") +
   labs(title="SoupX Ambient DNA Contamination Estimates", y="contamination fraction", x="") +
   theme_classic() +
-  scale_y_continuous(limits=c(0,0.15)) +
+  scale_y_continuous(limits=c(0,0.2)) +
   theme(axis.text.x = element_text(angle = 25, vjust = 1, hjust = 1))
 
 # png("figures/day0_day50/soupX/iPSC_MN_contamination_estimates_update.png", height = 7, width = 10, units = "in", res = 150)
