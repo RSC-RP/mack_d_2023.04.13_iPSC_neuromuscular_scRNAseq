@@ -5,6 +5,7 @@
 .DS_Store
 *.RDS
 .Renviron
+~$* 
 
 # this is OS specific for Cybertron/Local
 .Renviron 
