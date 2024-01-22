@@ -2021,9 +2021,9 @@ ggplot(genes_detected, aes(x=time_point_day,
 ```
 
 
-```{r}
+```{r eval=FALSE}
 umi_counts_filt <-  sapply( Layers(merged_norm_obj@assays$RNA), function(x) {
-   colSums(merged_norm_obj@assays$RNA[[x]] > 0)
+   colSums(merged_norm_obj@assays$RNA[x] > 0)
 })
 
 
@@ -2033,11 +2033,9 @@ mean_per_day <- sapply(umi_counts_filt, mean)
 
 # unlist(umi_counts_filt) %>% length()
 
-median(unlist(umi_counts_filt)) # 1723 genes detected across all cells
-mean(unlist(umi_counts_filt)) #1885 genes detected across all cells
-```
+median(unlist(umi_counts_filt)) # median genes detected across all cells
+mean(unlist(umi_counts_filt)) # mean genes detected across all cells
 
-```{r}
 med_per_day[order(med_per_day)]
 ```
 
@@ -2092,6 +2090,7 @@ Possible Layer Groups
 
 * would you want to integrate the replicate samples and then merge with unintegrated samples? That seems like a bad idea since it would adding to the technical differences between batch1/2 vs batch3/4. 
 
+
 ```{r eval=TRUE}
 VERSION = 'v5'
 if(!exists("merged_norm_obj")){
@@ -2106,11 +2105,14 @@ merged_rpca_obj <- IntegrateLayers(
     new.reduction = "rpcaorder",
     normalization.method = 'SCT', #why is this required?
     assay = "SCT",
-    k.anchor = 5,
+    k.anchor = 10,
+    k.weight = 100, #default
     preserve.order = TRUE, #keep time-course samples in order day3 into day0. Then Day8 into Day0/3 obj
     verbose = TRUE) 
 
 dims <- 1:30
+# had error when run with defaul k.anchor =  5.
+# Error Number of anchor cells is less than k.weight. Consider lowering k.weight to less than 92 or increase k.anchor.
 merged_rpca_obj <-  IntegrateLayers(
       object = merged_rpca_obj,
       method = RPCAIntegration,
@@ -2118,7 +2120,8 @@ merged_rpca_obj <-  IntegrateLayers(
       new.reduction = "rpca",
       normalization.method = 'SCT', #why is this required?
       assay = "SCT",
-      k.anchor = 5,
+      k.anchor = 10,
+      k.weight = 100, #default
       preserve.order = FALSE, # merge by largest sized dataset
       verbose = TRUE)
   
@@ -2145,7 +2148,7 @@ merged_rpca_obj <-  IntegrateLayers(
                    reduction = "rpca",
                    dims = dims) %>% 
      FindNeighbors(graph.name = c("rpcaorder_nn","rpcaorder_snn"),
-                   reduction = "rpca",
+                   reduction = "rpcaorder",
                    dims = dims) 
      # FindClusters(resolution = c(0.8, 1.0, 1.5),
      #              algorithm = 2)
@@ -2160,7 +2163,20 @@ merged_rpca_obj <-  IntegrateLayers(
   job::job({
     saveRDS(merged_rpca_obj, glue("results/day0_day50/seurat/iPSC_MN_time-course_filtered_merged_soupX_normalized_RPCAIntegration_seurat_obj_v5.RDS"))
   }, import = c("merged_rpca_obj"))
+```
 
+```{r}
+merged_rpca_obj
+```
+```{r fig.height=10, fig.width=10}
+DimPlot(merged_rpca_obj, reduction = "umap.rpca") +
+  scale_color_manual(values = colors_vector)
+
+DimPlot(merged_rpca_obj, reduction = "umap.rpcaorder") +
+  scale_color_manual(values = colors_vector)
+```
+
+```{r eval=TRUE}
 # pdf(glue("figures/day0_day50/filtered_merged_rpca/merged_rpca_sct_transform_100PCs_elbow_plot.pdf"), height = 7, width=10)
 # ElbowPlot(merged_rpca_obj, ndims = 50, reduction = "pca")
 # dev.off()
@@ -2243,57 +2259,79 @@ if(!exists("merged_norm_obj")){
   merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
 }
 
+dims <- 1:30
+
 # defaults to Layers which are the sample IDs in this case
-merged_harmony_obj <- IntegrateLayers(
+merged_harmony_obj1 <- IntegrateLayers(
     object = merged_norm_obj,
     method = HarmonyIntegration,
     orig.reduction = "pca",
     new.reduction = "harmony",
     assay = "SCT",
     preserve.order = FALSE,
-    verbose = TRUE )
-
-merged_harmony_obj <- IntegrateLayers(
-    object = merged_norm_obj,
-    method = HarmonyIntegration,
-    orig.reduction = "pca",
-    new.reduction = "harmonyorder",
-    assay = "SCT",
-    preserve.order = TRUE,
-    verbose = TRUE )
-
-dims <- 1:30
-merged_harmony_obj <- merged_harmony_obj %>% 
+    verbose = TRUE ) %>% 
    FindNeighbors(graph.name = c("harmony_nn","harmony_snn"), 
                  reduction = "harmony",
                  dims = dims) %>% 
-   FindNeighbors(graph.name = c("harmonyorder_nn","harmonyorder_snn"), 
-                 reduction = "harmonyorder",
-                 dims = dims) 
-   # FindClusters(resolution = c(0.8, 1.0, 1.5),
-   #              algorithm = 2)
-
-
-merged_harmony_obj <- merged_harmony_obj %>% 
    RunUMAP(reduction = "harmony",
            n.components = 3,
            dims = dims,
            n.neighbors = 30,# default 30
            metric = "cosine",
            min.dist = 0.1, # default 0.3
-           negative.sample.rate = 10,
+           # negative.sample.rate = 10,
            n.epochs = 500,
-           reduction.name = "umap.harmony") %>% 
-     RunUMAP(reduction = "harmonyorder",
+           reduction.name = "umap.harmony")
+
+# for some reason, the harmony integration just over-writes the last harmony reduction, regardless of names being different. 
+merged_harmony_obj2 <- IntegrateLayers(
+    object = merged_norm_obj,
+    method = HarmonyIntegration,
+    orig.reduction = "pca",
+    new.reduction = "harmonyorder",
+    assay = "SCT",
+    preserve.order = TRUE,
+    verbose = TRUE ) %>% 
+  FindNeighbors(graph.name = c("harmonyorder_nn","harmonyorder_snn"), 
+                 reduction = "harmonyorder",
+                 dims = dims) %>% 
+  RunUMAP(reduction = "harmonyorder",
            n.components = 3,
            dims = dims,
            n.neighbors = 30,# default 30
            metric = "cosine",
            min.dist = 0.1, # default 0.3
-           negative.sample.rate = 10,
+           # negative.sample.rate = 10,
            n.epochs = 500,
            reduction.name = "umap.harmonyorder")
-  
+
+merged_harmony_obj1
+merged_harmony_obj2
+
+
+# The results are identical 
+# so changing the param for HARMONY Integration order does not affect anything. I'm guessing since its a seurat wrapper, when underlying harmony alg is invoked it will just order the datasets based on its defaults. 
+
+# identical(merged_harmony_obj1@reductions$harmony@cell.embeddings,
+#           merged_harmony_obj2@reductions$harmonyorder@cell.embeddings)
+```
+
+```{r fig.height=10, fig.width=10}
+DimPlot(merged_harmony_obj1,
+        reduction = "umap.harmony") +
+  scale_color_manual(values = colors_vector)
+
+DimPlot(merged_harmony_obj2, 
+        reduction = "umap.harmonyorder") +
+    scale_color_manual(values = colors_vector)
+```
+
+
+```{r eval=TRUE}
+merged_harmony_obj <- merged_harmony_obj1
+merged_harmony_obj@reductions[["harmonyorder"]] <- merged_harmony_obj2@reductions$harmony
+merged_harmony_obj@reductions[["umap.harmonyorder"]] <- merged_harmony_obj2@reductions$umap.harmonyorder
+
 merged_harmony_obj$id <- factor(merged_harmony_obj$orig.ident,
                                 levels=unique(merged_harmony_obj$orig.ident))
 merged_harmony_obj <- AddMetaData(merged_harmony_obj,
@@ -2305,19 +2343,21 @@ job::job({
   saveRDS(merged_harmony_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_harmonyIntegration_seurat_obj_v5.RDS")
 }, import = c("merged_harmony_obj"))
 
-pdf("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
-ElbowPlot(merged_harmony_obj,ndims = 50, reduction = "pca")
-dev.off()
-# 
-pdf("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_transform_1-4PCs_loadings.pdf", height = 10, width=7)
-VizDimLoadings(merged_harmony_obj, dims = 1:4, reduction = "pca")
-dev.off()
+# pdf("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
+# ElbowPlot(merged_harmony_obj,ndims = 50, reduction = "pca")
+# dev.off()
 
+# pdf("figures/day0_day50/filtered_merged_harmony/merged_harmony_obj_batch_transform_1-4PCs_loadings.pdf", height = 10, width=7)
+# VizDimLoadings(merged_harmony_obj, dims = 1:4, reduction = "pca")
+# dev.off()
+```
+
+```{r eval=TRUE}
 purrr::map(c("harmony","harmonyorder"), function(x){
 
   pdf(glue("figures/day0_day50/filtered_merged_harmony/merged_{x}_obj_batch_byLouvainCluster_sct_UMAP.pdf"),height = 10, width= 17)
   print(DimPlot(merged_harmony_obj,
-          reduction = "x",
+          reduction = x,
           dims = c(1,2)) +
     scale_color_manual(values = colors_vector))
   dev.off()
@@ -2326,14 +2366,14 @@ purrr::map(c("harmony","harmonyorder"), function(x){
                            colorby = "id", 
                            add_text = TRUE,
                            label_samples = FALSE,
-                           dimred_colnames = x, 
+                           dimred_colnames = paste0("umap",x), 
                            custom_colors = sample_id_colors)
   
   filt_batch <- custom_dimplot(metadata = merged_harmony_obj@meta.data,
                            colorby = "batch", 
                            add_text = TRUE,
                            label_samples = FALSE,
-                           dimred_colnames = x, 
+                           dimred_colnames = paste0("umap",x), 
                            custom_colors = ggsci::pal_jco()(4))
   
   filt_b34_id <- custom_dimplot(metadata = merged_harmony_obj@meta.data %>% 
@@ -2341,7 +2381,7 @@ purrr::map(c("harmony","harmonyorder"), function(x){
                            colorby = "id", 
                            add_text = TRUE,
                            label_samples = FALSE,
-                           dimred_colnames = x, 
+                           dimred_colnames = paste0("umap",x), 
                            custom_colors = colors_vector)
   
   png(glue("figures/day0_day50/filtered_merged_harmony/merged_{x}_obj_iPSC_MN_seurat_UMAP_splitBy_batch_day_filtered.png"),  height = 15, width = 25, units = "in", res = 150)
@@ -2359,7 +2399,7 @@ purrr::map(c("harmony","harmonyorder"), function(x){
   
   harmony_3d <- make_3D_umap(metadata = merged_harmony_obj@meta.data, 
                  idents_column = c(paste0("umap",x,"_", 1:3)), 
-                 label_cols = c("id","batch"), 
+
                  selected_colors = colors_vector)
   
   htmlwidgets::saveWidget(harmony_3d, glue("figures/day0_day50/filtered_merged_rpca/merged_{x}_obj_iPSC_MN_seurat_UMAP.html"))
@@ -2381,19 +2421,6 @@ purrr::map(names(marker_genes_iPSC), function(type){
   dev.off()
 })
 ```
-
-Claudin-6
-Cytokeratin 19
-EOMES
-FABP1/L-FABP
-FABP2/I-FABP
-GATA-4
-Goosecoid
-HNF-3 alpha/FoxA1
-HNF-3 beta/FoxA2
-SOX7
-SOX17
-TCF-2/HNF-1 beta
 
 ```{r eval=FALSE fig.height=10, fig.width=10}
 # table(marker_genes_endoderm %in% rownames(merged_harmony_obj))
