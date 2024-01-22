@@ -1,0 +1,6 @@
+name: cellrank
+channels:
+  - conda-forge
+dependencies:
+  - python==3.10
+  - cellrank==2.0.2

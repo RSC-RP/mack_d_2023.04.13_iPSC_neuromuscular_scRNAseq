@@ -52,23 +52,6 @@ conflicted::conflict_prefer("filter","dplyr")
 conflicted::conflict_prefer("saveRDS","base")
 ```
 
-
------------------- CMAKE NOT FOUND --------------------
-
-CMake was not found on the PATH. Please install CMake:
-
- - sudo yum install cmake          (Fedora/CentOS; inside a terminal)
- - sudo apt install cmake          (Debian/Ubuntu; inside a terminal).
- - sudo pacman -S cmake            (Arch Linux; inside a terminal).
- - sudo brew install cmake         (MacOS; inside a terminal with Homebrew)
- - sudo port install cmake         (MacOS; inside a terminal with MacPorts)
-
-Alternatively install CMake from: <https://cmake.org/>
-
--------------------------------------------------------
-ERROR: configuration failed for package ‘nloptr’
-* removing ‘/home/jsmi26/R/x86_64-pc-linux-gnu-library/4.3/nloptr’
-
 # Define Functions
 
 ```{r}
@@ -428,24 +411,339 @@ head(mn_subtype_markers)
 
 ```{r}
 current_path <- file.path("results/day0_day50/seurat")
-current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS" #v5 Seurat Object
+current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS" #v5 Seurat Object
 
 merged_norm_obj <- readRDS(file.path(current_path, current_obj))
+merged_norm_obj@meta.data$log2_nCount_RNA <- log2(merged_norm_obj@meta.data$nCount_RNA)
+
+merged_norm_obj
 ```
+
+```{r}
+# logNormalize to be consistent with the reference dataset
+DefaultAssay(merged_norm_obj) <- 'RNA'
+
+# split to normalize each individually
+merged_norm_obj[["RNA"]] <- split(merged_norm_obj[["RNA"]],
+                                  f = merged_norm_obj$orig.ident)
+merged_norm_obj <- NormalizeData(merged_norm_obj,
+                                 normalization.method = "LogNormalize") %>% 
+  FindVariableFeatures() %>% 
+  ScaleData() %>% 
+  RunPCA(npcs = 50, 
+         reduction.name = "pca_lognorm")
+
+# join layers to export the full raw counts matrix for all samples (layers)
+merged_norm_obj[["RNA"]] <- JoinLayers(merged_norm_obj[["RNA"]])
+```
+
+```{r}
+# find clusters with harmoning integrated UMAP
+DefaultAssay(merged_norm_obj) <- "SCT"
+
+merged_norm_obj <- merged_norm_obj %>% 
+  FindNeighbors(reduction = "harmony",
+                dims = 1:50, 
+                k.param = 20, #default
+                graph.name = c("harmony_nn","harmony_snn")) %>% 
+  FindClusters(resolution = 0.7, 
+               algorithm = 3, 
+               graph.name = "harmony_snn", 
+               group.singletons = FALSE)
+```
+
+```{r}
+table(merged_norm_obj$harmony_snn_res.0.7)
+```
+
+## Visualization 
+
+```{r}
+table(merged_norm_obj$subtype_standardized)
+```
+
+```{r fig.height=10, fig.width=10}
+custom_dimplot(metadata = merged_norm_obj@meta.data, 
+               colorby = "batch", 
+               dimred_colnames = "umapharmony", 
+               custom_colors = ggpubr::get_palette("jco", 4))
+
+custom_dimplot(metadata = merged_norm_obj@meta.data, 
+               colorby = "subtype_standardized", 
+               dimred_colnames = "umapharmony", 
+               custom_colors = ggpubr::get_palette("simpsons", 7))
+
+custom_dimplot(metadata = merged_norm_obj@meta.data, 
+               colorby = "harmony_snn_res.0.7", 
+               dimred_colnames = "umapharmony", 
+               custom_colors = ggpubr::get_palette("simpsons", 24))
+```
+
+## Investigate Outliers 
+
+```{r}
+outliers <- subset(merged_norm_obj, subset = umapharmony_2 > 8)
+
+outliers
+table(outliers$harmony_snn_res.0.7)
+```
+
+```{r fig.height=10, fig.width=10}
+custom_dimplot(metadata = outliers@meta.data, 
+               colorby = "batch",label_samples = FALSE,
+               dimred_colnames = "umapharmony", 
+               custom_colors = ggpubr::get_palette("jco",4))
+```
+
+```{r}
+# quantile(merged_norm_obj$log2_nCount_RNA, probs = seq(0.5,1, length.out = 11))
+FeaturePlot(merged_norm_obj,
+            reduction = "umap.harmony", 
+            cols = c("azure","red"),
+            max.cutoff = 14.87302,
+            features = "log2_nCount_RNA")
+
+FeaturePlot(outliers,
+            reduction = "umap.harmony",
+            max.cutoff = 14.87302,
+            features = "log2_nCount_RNA")
+
+FeaturePlot(merged_norm_obj,
+            reduction = "umap.harmony", 
+            cols = c("azure","red"),
+            features = "nFeature_RNA")
+
+FeaturePlot(outliers,
+            reduction = "umap.harmony",
+            features = "nFeature_RNA")
+
+FeaturePlot(merged_norm_obj,
+            reduction = "umap.harmony", 
+            cols = c("azure","red"),
+            features = "percent.mt")
+FeaturePlot(outliers,
+            reduction = "umap.harmony",
+            features = "percent.mt")
+```
+
+```{r}
+outliers$orig.ident %>% table()
+```
+
+```{r}
+DefaultAssay(outliers_filt) <- "RNA"
+
+# outliers_filt[["RNA"]] <- split(outliers_filt[["RNA"]], f = outliers_filt$orig.ident)
+
+umi_counts_c20 <-  sapply(grep("counts",Layers(outliers_filt@assays$RNA), value = TRUE), function(x) {
+   colSums(outliers_filt@assays$RNA[[x]] > 0)
+})
+
+sapply(umi_counts_c20, quantile) %>% 
+  as.data.frame() %>% 
+  pheatmap::pheatmap(mat = ., cluster_rows = FALSE)
+```
+
+# Subset 
+
+removed 586 cells total 
+
+```{r}
+# remove cluster 20 outliers for now. Need to determine what is driving their VERY different expression profile. But the cells looks so clustered so close that I also think it could be technical artifacts that could be making them cluster like that. 
+iPSC_obj <- subset(merged_norm_obj, subset =  umapharmony_2 < 8)
+DefaultAssay(iPSC_obj) <- "SCT"
+iPSC_obj
+```
+
+```{r}
+# re-run find neighbors, UMAP reduction, and clustering on the subset object
+iPSC_obj <- iPSC_obj %>% 
+    FindNeighbors(reduction = "harmony",
+                dims = 1:50, 
+                k.param = 20, #default
+                graph.name = c("subset_harmony_nn","subset_harmony_snn")) %>% 
+    FindClusters(resolution = 0.7, 
+                 algorithm = 3, 
+                 graph.name = "subset_harmony_snn", 
+                 cluster.name = "subset_harmony_clusters",
+                 group.singletons = FALSE) %>% 
+     RunUMAP(reduction = "harmony",
+           n.components = 3,
+           dims = 1:30,
+           n.neighbors = 30,# default 30
+           metric = "cosine",
+           min.dist = 0.1, # default 0.3
+           negative.sample.rate = 10,
+           n.epochs = 500,
+           reduction.name = "umap_harmony_subset")
+
+iPSC_obj
+iPSC_obj <- AddMetaData(iPSC_obj, 
+                        metadata = iPSC_obj@reductions$umap_harmony_subset@cell.embeddings)
+
+table(iPSC_obj$subset_harmony_clusters) # 22 clusters 
+```
+
+```{r fig.height=10, fig.width=10}
+custom_dimplot(metadata = iPSC_obj@meta.data, 
+               colorby = "batch", 
+               dimred_colnames = "umapharmonysubset", 
+               custom_colors = ggpubr::get_palette("jco", 4))
+
+custom_dimplot(metadata = iPSC_obj@meta.data, 
+               colorby = "subtype_standardized", 
+               add_text = FALSE,
+               dimred_colnames = "umapharmonysubset", 
+               custom_colors = brewer.pal(7,"Set3"))
+
+custom_dimplot(metadata = iPSC_obj@meta.data, 
+               colorby = "subset_harmony_clusters", 
+               dimred_colnames = "umapharmonysubset", 
+               custom_colors = ggpubr::get_palette("simpsons", 22))
+
+custom_dimplot(metadata = iPSC_obj@meta.data, 
+               colorby = "id",label_samples = FALSE,
+               dimred_colnames = "umapharmonysubset", 
+               custom_colors = viridis::turbo(19))
+```
+
+# Trajectories
 
 Review article:
 https://www.nature.com/articles/s41576-021-00444-7
 
+Selecting which time-points to include:
+However, there are cases where the dynamics of the process being studied is unknown or when assumptions are based on the phenotypic behaviour, which may not reflect the underlying molecular dynamics that are being profiled by scRNA-seq71. To address this, Kleyman et al. developed the time point selection (TPS) method71 (Fig. 2). TPS was originally developed and applied to bulk RNA-seq but can also be used for scRNA-seq. It works by initially oversampling bulk-level RNA-seq using cheap array methods. Next, spline curves are used to fit the profiled data, which enables the method to predict values for unobserved time points. A heuristic optimization function is then used to select the most informative time points, those points that if sampled provide enough information to reconstruct the entire expression trajectory for all genes
+
+
 OK - slingshot
+   - Monocle3
+   
 No
 - PRESCIENT (8 citations, not maintained in 3 yrs)
 - psupertime (not maintained in 4yrs, only 11 citations)
-
+- dyno (not maintained in 4yrs)
+- CSHMM (not maintained in 7 years, 151 citations)
 https://github.com/gifford-lab/prescient
 
+https://github.com/dynverse/dyno
 
-#
+# Monocle3
 
+```{r}
+library(monocle3)
+library(SeuratWrappers)
+```
+
+```{r}
+temp <- as.cell_data_set(iPSC_obj)
+reducedDimNames(temp)
+reducedDim(temp, type = "UMAP_HARMONY_SUBSET")
+reducedDim(temp, type = "PCA")
+```
+
+```{r}
+cds <- new_cell_data_set(expression_data = iPSC_obj@assays$SCT$counts,
+                         cell_metadata = iPSC_obj@meta.data)
+logcounts(cds) <- iPSC_obj@assays$SCT$data
+
+reducedDims(cds) <- list(PCA=iPSC_obj@reductions$pca@cell.embeddings,
+                         Harmony=iPSC_obj@reductions$harmony@cell.embeddings,
+                         UMAP=iPSC_obj@reductions$umap_harmony_subset@cell.embeddings)
+
+cds
+```
+
+```{r}
+# use the harmony UMAP (renamed to simply UMAP for compatibility) to identify unsupervised clusters
+# defines the 'partitions' found in the cell clustering 
+cds <- cluster_cells(cds, 
+                     reduction_method = "UMAP",
+                     cluster_method = "leiden",
+                     k = 20)
+
+cds
+```
+
+```{r}
+p1 <- plot_cells(cds, 
+                 show_trajectory_graph = FALSE)
+
+p2 <- plot_cells(cds, 
+                 color_cells_by = "partition", 
+                 show_trajectory_graph = FALSE)
+
+p3 <- plot_cells(cds, 
+                 color_cells_by = "orig.ident", 
+                 show_trajectory_graph = FALSE)
+
+p1
+p2
+p3
+```
+
+
+
+```{r}
+# Identifying the program of gene expression changes is equivalent to learning a trajectory that the cells follow through this space.
+cds <- learn_graph(cds, 
+                   use_partition = FALSE,
+                   verbose = TRUE)
+```
+
+```{r}
+DimPlot(subset(iPSC_obj, subset = orig.ident == "iPSC_ipsc"),
+        reduction = "umap_harmony_subset",
+        group.by = "id")
+```
+
+```{r}
+plot_cells(cds, label_principal_points = TRUE)
+```
+
+```{r}
+#Assigns cells a pseudotime value based on their projection on the principal graph
+time0 <- WhichCells(iPSC_obj, expression = orig.ident == "iPSC_ipsc")
+cds <- order_cells(cds, 
+                   reduction_method = "UMAP", 
+                   root_cells = NULL, 
+                   verbose = TRUE)
+
+cds
+```
+
+```{r}
+plot_cells(cds, 
+           label_groups_by_cluster = FALSE,
+           label_leaves = FALSE, 
+           label_branch_points = FALSE)
+```
+
+```{r}
+plot_cells(cds, 
+           color_cells_by = "pseudotime",
+           label_groups_by_cluster = FALSE,
+           label_leaves = FALSE, 
+           label_branch_points = FALSE)
+```
+
+# Slingshot
+
+```{r}
+library(slingshot)
+```
+
+# TSCAN
+
+```{r}
+library(TSCAN)
+```
+
+# CellRank 
+
+https://cellrank.readthedocs.io/en/latest/notebooks/tutorials/kernels/500_real_time.html
+
+a scRNA-seq dataset with experimental time points. Additional spatial or lineage information improves the accuracy of fate mapping, but is not required.
 
 # Session Info
 
