@@ -557,23 +557,26 @@ iPSC_obj
 
 ```{r}
 # re-run find neighbors, UMAP reduction, and clustering on the subset object
+dims <- 1:30
 iPSC_obj <- iPSC_obj %>% 
     FindNeighbors(reduction = "harmony",
-                dims = 1:50, 
+                dims = dims, 
                 k.param = 20, #default
-                graph.name = c("subset_harmony_nn","subset_harmony_snn")) %>% 
+                # graph.name = c("subset_harmony_nn","subset_harmony_snn")
+                ) %>% 
     FindClusters(resolution = 0.7, 
                  algorithm = 3, 
-                 graph.name = "subset_harmony_snn", 
+                 # graph.name = "subset_harmony_snn", 
                  cluster.name = "subset_harmony_clusters",
-                 group.singletons = FALSE) %>% 
+                 group.singletons = FALSE
+                 ) %>% 
      RunUMAP(reduction = "harmony",
            n.components = 3,
-           dims = 1:30,
+           dims = dims,
            n.neighbors = 30,# default 30
            metric = "cosine",
            min.dist = 0.1, # default 0.3
-           negative.sample.rate = 10,
+           # negative.sample.rate = 10,
            n.epochs = 500,
            reduction.name = "umap_harmony_subset")
 
@@ -583,6 +586,8 @@ iPSC_obj <- AddMetaData(iPSC_obj,
 
 table(iPSC_obj$subset_harmony_clusters) # 22 clusters 
 ```
+
+
 
 ```{r fig.height=10, fig.width=10}
 custom_dimplot(metadata = iPSC_obj@meta.data, 
@@ -602,7 +607,8 @@ custom_dimplot(metadata = iPSC_obj@meta.data,
                custom_colors = ggpubr::get_palette("simpsons", 22))
 
 custom_dimplot(metadata = iPSC_obj@meta.data, 
-               colorby = "id",label_samples = FALSE,
+               colorby = "id",
+               label_samples = FALSE,
                dimred_colnames = "umapharmonysubset", 
                custom_colors = viridis::turbo(19))
 ```
@@ -633,13 +639,6 @@ https://github.com/dynverse/dyno
 ```{r}
 library(monocle3)
 library(SeuratWrappers)
-```
-
-```{r}
-temp <- as.cell_data_set(iPSC_obj)
-reducedDimNames(temp)
-reducedDim(temp, type = "UMAP_HARMONY_SUBSET")
-reducedDim(temp, type = "PCA")
 ```
 
 ```{r}
@@ -682,8 +681,6 @@ p2
 p3
 ```
 
-
-
 ```{r}
 # Identifying the program of gene expression changes is equivalent to learning a trajectory that the cells follow through this space.
 cds <- learn_graph(cds, 
@@ -701,15 +698,17 @@ DimPlot(subset(iPSC_obj, subset = orig.ident == "iPSC_ipsc"),
 plot_cells(cds, label_principal_points = TRUE)
 ```
 
+If `root_cells` is set as NULL, then its based on manual selection of the root cells. However, there are methods available like time point selection (TPS) that might be able to refine the root cells, rather than use all time0 cells.
+
 ```{r}
 #Assigns cells a pseudotime value based on their projection on the principal graph
 time0 <- WhichCells(iPSC_obj, expression = orig.ident == "iPSC_ipsc")
 cds <- order_cells(cds, 
                    reduction_method = "UMAP", 
-                   root_cells = NULL, 
+                   root_cells = time0, 
                    verbose = TRUE)
 
-cds
+# cds
 ```
 
 ```{r}
@@ -732,6 +731,35 @@ plot_cells(cds,
 ```{r}
 library(slingshot)
 ```
+
+cds <- new_cell_data_set(expression_data = iPSC_obj@assays$SCT$counts,
+                         cell_metadata = iPSC_obj@meta.data)
+logcounts(cds) <- iPSC_obj@assays$SCT$data
+
+reducedDims(cds) <- list(PCA=iPSC_obj@reductions$pca@cell.embeddings,
+                         Harmony=iPSC_obj@reductions$harmony@cell.embeddings,
+                         UMAP=iPSC_obj@reductions$umap_harmony_subset@cell.embeddings)
+
+two-step process composed of identifying the global lineage structure with a cluster-based minimum spanning tree (MST) and fitting simultaneous principal curves to describe each lineage.
+
+```{r}
+sce <- Seurat::as.SingleCellExperiment(iPSC_obj, assay = "SCT")
+
+sce
+```
+
+potential labels
+1) subtype (N=7)
+2) unsupervised clusters (N=22)
+* subset_harmony_clusters
+3) subtype + unsupervised clusters
+
+```{r}
+sce <- slingshot(sce, 
+                 clusterLabels = 'subset_harmony_clusters',
+                 reducedDim = 'PCA')
+```
+
 
 # TSCAN
 

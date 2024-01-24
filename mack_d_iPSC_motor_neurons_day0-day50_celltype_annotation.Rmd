@@ -263,81 +263,6 @@ ipsc_obj$seurat_clusters <- ipsc_obj$SCT_snn_res.1
 Idents(ipsc_obj) <- ipsc_obj$orig.ident
 ```
 
-## Update Data Dimension Reduction 
-
-min.dist	
-This controls how tightly the embedding is allowed compress points together. Larger values ensure embedded points are moreevenly distributed, while smaller values allow the algorithm to optimise more accurately with regard to local structure. Sensible values are in the range 0.001 to 0.5.
-
-n.neighbors	
-This determines the number of neighboring points used in local approximations of manifold structure. Larger values will result in more global structure being preserved at the loss of detailed local structure. In general this parameter should often be in the range 5 to 50.
-
-```{r eval=FALSE}
-# ipsc_obj
-class(ipsc_obj[["RNA"]]) #v5
-
-# Update umap params
-ipsc_obj <- ipsc_obj %>% 
-          RunUMAP(reduction = "pca",
-                dims = 1:30,
-                # features = VariableFeatures(ipsc_obj),
-                assay = 'SCT',
-                n.components = 3,
-                n.neighbors = 30,# default 30
-                metric = "cosine",
-                min.dist = 0.01, # default 0.3
-                n.epochs = 500,
-                return.model = TRUE,
-                verbose = T)
-
-ipsc_obj <- AddMetaData(ipsc_obj,as.data.frame(ipsc_obj@reductions$umap@cell.embeddings))
-# saveRDS(ipsc_obj,"results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_ipsc_obj_v5.RDS")
-```
-
-
-## UMAP
-
-```{r fig.height=10, fig.width=10}
-DimPlot(ipsc_obj, 
-        reduction = "umap.harmony",
-        label = FALSE,
-        label.size = 2,
-        repel = FALSE,
-        dims = c(1,2)) +
-  scale_color_manual(values = colors_vector) +
-  theme(legend.position = 'bottom')
-
-
-DimPlot(ipsc_obj, 
-        reduction = "umap.harmony",
-        group.by = 'seurat_clusters',
-        label = TRUE,
-        label.size = 10,
-        repel = TRUE,
-        dims = c(1,2)) +
-  scale_color_manual(values = colors_vector) +
-  theme(legend.position = 'bottom')
-```
-
-```{r fig.height=10}
-filt_d1 <- DimPlot(ipsc_obj, 
-        group.by = c("batch","id"),
-        label = T, 
-        repel = T,
-        label.size = 7) + 
-  scale_color_manual(values = colors_vector)
-
-filt_s1 <- DimPlot(ipsc_obj, 
-        group.by = c("id"),
-        split.by = "batch",
-        label = T, 
-        repel = T,
-        label.size = 7) + 
-  scale_color_manual(values = colors_vector)
-
-filt_d1
-filt_s1
-```
-
 
 # SCANVI Transfer Labels 
 
@@ -560,6 +485,101 @@ ct_count_table
 # write.csv(ct_count_table, "results/day0_day50/celltype_annotation_batches1234_by_integrated_ref_summary_table.csv", row.names = FALSE)
 ```
 
+
+# Update UMAP Params 
+
+min.dist	
+This controls how tightly the embedding is allowed compress points together. Larger values ensure embedded points are moreevenly distributed, while smaller values allow the algorithm to optimise more accurately with regard to local structure. Sensible values are in the range 0.001 to 0.5.
+
+n.neighbors	
+This determines the number of neighboring points used in local approximations of manifold structure. Larger values will result in more global structure being preserved at the loss of detailed local structure. In general this parameter should often be in the range 5 to 50.
+
+```{r}
+current_path <- file.path("results/day0_day50/seurat")
+current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS" 
+
+if(!exists("ipsc_obj")){
+  ipsc_obj <- readRDS(file.path(current_path,current_obj))
+}
+ipsc_obj
+```
+
+```{r eval=FALSE}
+# ipsc_obj
+class(ipsc_obj[["RNA"]]) #v5
+
+# remove old dim reductions
+ipsc_obj@meta.data[,paste0("umapharmony_",1:3)] <- NULL
+ipsc_obj@reductions$umap.harmony <- NULL
+
+# Update umap params
+ipsc_obj <- ipsc_obj %>% 
+          RunUMAP(reduction = "harmony",
+                dims = 1:30,
+                n.components = 3,
+                n.neighbors = 30,# default 30
+                metric = "cosine",
+                min.dist = 0.2, # default 0.3
+                n.epochs = 500,
+                reduction.name = "umap.harmony",
+                return.model = TRUE,
+                verbose = T)
+
+
+embeddings <- as.data.frame(ipsc_obj@reductions$umap.harmony@cell.embeddings)
+ipsc_obj <- AddMetaData(ipsc_obj, embeddings)
+
+# saveRDS(ipsc_obj,"results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_ipsc_obj_v5.RDS")
+```
+
+
+## UMAP
+
+```{r fig.height=10, fig.width=10}
+DimPlot(ipsc_obj, 
+        reduction = "umap.harmony",
+        label = FALSE,
+        label.size = 2,
+        repel = FALSE,
+        dims = c(1,2)) +
+  scale_color_manual(values = colors_vector) +
+  theme(legend.position = 'bottom')
+
+
+DimPlot(ipsc_obj, 
+        reduction = "umap.harmony",
+        group.by = 'seurat_clusters',
+        label = TRUE,
+        label.size = 10,
+        repel = TRUE,
+        dims = c(1,2)) +
+  scale_color_manual(values = colors_vector) +
+  theme(legend.position = 'bottom')
+```
+
+```{r fig.height=10}
+filt_d1 <- DimPlot(ipsc_obj, 
+        group.by = c("batch","id"),
+        reduction = "umap.harmony",
+        label = T, 
+        repel = T,
+        label.size = 7) + 
+  scale_color_manual(values = colors_vector)
+
+filt_s1 <- DimPlot(ipsc_obj, 
+        group.by = c("id"),
+        reduction = "umap.harmony",
+        split.by = "batch",
+        label = T, 
+        repel = T,
+        label.size = 7) + 
+  scale_color_manual(values = colors_vector)
+
+filt_d1
+filt_s1
+```
+
+
 # Visualization 
 
 ```{r}
@@ -574,29 +594,29 @@ celltypes <- celltypes[order(celltypes)]
 ```
 
 ```{r fig.height=10, fig.width=10}
-pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_scanvi_UMAP.pdf", height = 15, width = 15)
+# pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_scanvi_UMAP.pdf", height = 15, width = 15)
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                dimred_colnames = "umapscanvi", 
                colorby = "subtype_standardized",
                custom_colors = colors_vector)
-dev.off()
+# dev.off()
 
-pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_sampleID_scanvi_UMAP.pdf", height = 15, width = 15)
+# pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_sampleID_scanvi_UMAP.pdf", height = 15, width = 15)
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                dimred_colnames = "umapscanvi", 
                colorby = "id",
                label_samples = FALSE,
                custom_colors = colors_vector)
-dev.off()
+# dev.off()
 
-pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_batch_scanvi_UMAP.pdf", height = 15, width = 15)
+# pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_batch_scanvi_UMAP.pdf", height = 15, width = 15)
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                dimred_colnames = "umapscanvi", 
                colorby = "batch",
                custom_colors = colors_vector)
-dev.off()
+# dev.off()
 
-pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_batch_split_scanvi_UMAP.pdf", height = 15, width = 15)
+# pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_batch_split_scanvi_UMAP.pdf", height = 15, width = 15)
 custom_dimplot(metadata = ipsc_obj@meta.data %>% 
                  filter(time_point > 30), 
                dimred_colnames = "umapscanvi", 
@@ -604,23 +624,30 @@ custom_dimplot(metadata = ipsc_obj@meta.data %>%
                label_samples = FALSE,
                custom_colors = colors_vector[10:20]) +
   facet_wrap(~time_point)
-dev.off()
+# dev.off()
 ```
-```{r}
-pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_harmony_UMAP.pdf", height = 15, width = 15)
+
+```{r fig.height=10, fig.width=10}
+# pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_harmony_UMAP.pdf", height = 15, width = 15)
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                dimred_colnames = "umapharmony", 
                colorby = "subtype_standardized",
                custom_colors = colors_vector)
-dev.off()
+# dev.off()
 
-pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_sampleID_harmony_UMAP.pdf", height = 15, width = 15)
+custom_dimplot(metadata = ipsc_obj@meta.data, 
+               dimred_colnames = "umapharmony", 
+               colorby = "subtype_standardized",
+               custom_colors = colors_vector) + 
+  facet_wrap(~subtype_standardized)
+
+# pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_sampleID_harmony_UMAP.pdf", height = 15, width = 15)
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                dimred_colnames = "umapharmony", 
                colorby = "id",
                label_samples = FALSE,
                custom_colors = colors_vector)
-dev.off()
+# dev.off()
 ```
 
 ```{r}
@@ -666,18 +693,32 @@ make_3D_umap(metadata = ipsc_obj@meta.data,
 ```{r fig.height=10, fig.width=10}
 set.seed(2023)
 
+subtype_labels <- ipsc_obj@meta.data %>% 
+  mutate(subtype_labels = case_when(
+    subtype_standardized == "progenitor" ~ "neuroglial\nprogenitor", 
+    subtype_standardized == "schwann" ~ "schwann cell",
+    subtype_standardized == "dl3"  ~ "dorsal\ninterneuron 3",
+    subtype_standardized == "dl4" ~ "dorsal\ninterneuron 4",
+    subtype_standardized == "opc" ~ "oligodendrocyte\nprogenitor",
+    subtype_standardized == "motorneurons" ~ "motor neuron",
+    TRUE ~ subtype_standardized)) %>% 
+  pull(subtype_labels)
+
+# table(subtype_labels)
+ipsc_obj@meta.data$subtype_labels <- subtype_labels
+
 umap_scanvi_plot <- custom_dimplot(metadata = ipsc_obj@meta.data, 
-               dimred_colnames = "umap", 
+               dimred_colnames = "umapharmony", 
                colorby = "subtype_labels",
                add_text = FALSE,
                ny = "oligod",
                color_text_grp = TRUE,
-               custom_lab_fill = c("white", rep("black",5), rep("white", 2)),
+               lab_size = 4,
+               custom_lab_fill = c("white", rep("black",5), "white"),
                custom_colors = viridis::turbo(8)) +
   theme(axis.title = element_text(size=14),
         axis.text = element_text(size=14), 
         legend.title = element_blank(),
-        # legend.key = element_rect(fill=NA),
         legend.text = element_text(size = 16)) +
   guides(color = guide_legend(ncol=4,override.aes = list(size = 4, alpha = 1)))
   
@@ -711,7 +752,251 @@ plot3D::scatter3D(x=ipsc_obj$umap_1, y=ipsc_obj$umap_2, z=ipsc_obj$umap_3,
                   scale = FALSE)
 ```
 
+# Cell type frequency vs Time
 
+```{r}
+subtype_table <- ipsc_obj@meta.data %>% 
+  mutate(subtype_standardized = as.factor(subtype_standardized),
+         time_point = as.factor(time_point)) %>% 
+  group_by(time_point, subtype_standardized, .drop = FALSE) %>%
+  reframe(number_of_cells = n()) %>%
+  ungroup() %>% 
+  group_by(time_point) %>%
+  mutate(total_cells = sum(number_of_cells)) %>% 
+  ungroup() %>% 
+  mutate(percent_of_cells = round(number_of_cells/total_cells *100, digits = 2)) %>%
+  group_by(subtype_standardized) %>%
+  arrange(desc(number_of_cells), .by_group = T)
+
+# head(subtype_table)
+subtype_table
+```
+
+```{r}
+celltypes <- unique(ipsc_obj@meta.data$subtype_standardized)
+celltypes <- celltypes[order(celltypes)]
+
+ celltype_colors <- viridis::turbo(8) %>% 
+   set_names(celltypes)
+
+total_cells_plot <- ggplot(subtype_table, aes(x = time_point, y = number_of_cells, group = subtype_standardized)) +
+  # geom_col(aes(fill = subtype_standardized)) +
+  geom_point(aes(color = subtype_standardized), size = 3,
+             alpha = 0.7) +
+  geom_line(aes(color = subtype_standardized), linewidth = 0.5, linetype = "dashed") +
+  scale_color_manual(values = celltype_colors) +
+  scale_fill_manual(values = celltype_colors) +
+  theme_bw()
+
+pct_cells_plot <- ggplot(subtype_table, aes(x = time_point, y = percent_of_cells, group = subtype_standardized)) +
+  # geom_col(aes(fill = subtype_standardized)) +
+  geom_point(aes(color = subtype_standardized), size = 3, alpha=0.7) +
+  geom_line(aes(color = subtype_standardized), linewidth = 0.5, linetype = "dashed") +
+  scale_color_manual(values = celltype_colors) +
+  scale_fill_manual(values = celltype_colors) +
+  theme_bw()
+
+total_cells_plot
+
+# pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_celltypes_per_timepoint_lineplot.pdf")
+pct_cells_plot
+# dev.off()
+```
+
+# Subclustering 
+
+```{r}
+current_path <- file.path("results/day0_day50/seurat")
+current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS" #v5 Seurat Object
+
+if(!exists("ipsc_obj")){
+  ipsc_obj <- readRDS(file.path(current_path,current_obj))
+}
+ipsc_obj
+```
+
+```{r}
+Graphs(ipsc_obj)
+```
+
+```{r}
+Idents(ipsc_obj) <- ipsc_obj$subtype_standardized
+
+dims <- 1:30
+MNs <- subset(ipsc_obj, idents = "motorneurons") %>% 
+  FindNeighbors(reduction = "harmony", 
+                dims = dims, 
+                k.param = 30) %>% 
+  FindClusters(cluster.name = "motorneuron_subclusters", 
+               resolution = 0.5,
+               algorithm = 1, 
+               group.singletons = TRUE)
+MNs_df <- MNs@meta.data
+
+prog <- subset(ipsc_obj, idents = "progenitor") %>% 
+  FindNeighbors(reduction = "harmony", 
+                dims = dims,
+                k.param = 30) %>% 
+  FindClusters(cluster.name = "progenitor_subclusters", 
+               resolution = 0.5,
+               algorithm = 1, 
+               group.singletons = TRUE)
+prog_df <- prog@meta.data
+
+
+# table(prog_df$progenitor_subclusters) %>% length() #8 
+# table(MNs_df$motorneuron_subclusters) %>% length() #4
+
+prog_df%>% 
+    make_3D_umap(metadata = ., 
+              idents_column = c(paste0("umapharmony", "_",1:3)), 
+              label_cols = c("progenitor_subclusters","id","batch"), 
+              selected_colors = colors_vector)
+
+MNs_df %>%
+  make_3D_umap(metadata = .,
+              idents_column = c(paste0("umapharmony", "_",1:3)),
+              label_cols = c("motorneuron_subclusters","id","batch"),
+              selected_colors = colors_vector)
+
+# rm(MNs)
+# rm(prog)
+```
+
+```{r}
+# define the subclusters
+# create new subtype labels with the unsupervised subclusters
+mn_prog_subclusts <- prog_df %>% 
+  select(barcode, progenitor_subclusters, subtype_standardized) %>% 
+  bind_rows(., select(MNs_df, barcode, motorneuron_subclusters, subtype_standardized)) %>% 
+  bind_rows(., select(ipsc_obj@meta.data, subtype_standardized) %>% 
+              filter(!grepl("motor|prog", subtype_standardized))) %>% 
+  
+  mutate_at(vars(progenitor_subclusters,motorneuron_subclusters), ~ifelse(is.na(.), "", .)) %>% 
+  unite(col = "subclusters", progenitor_subclusters,motorneuron_subclusters,
+        sep = "", remove = F) %>% 
+  mutate(subtype_standardized_subclusters = ifelse(subclusters != "", 
+                              paste(subtype_standardized, subclusters, sep="_"), 
+                              subtype_standardized),
+         barcode_merged = rownames(.)) %>% 
+  set_rownames(value = NULL) %>% 
+  column_to_rownames("barcode_merged") %>%
+  select(subtype_standardized_subclusters)
+
+table(mn_prog_subclusts)[order(table(mn_prog_subclusts))]
+
+# Add the metadata
+ipsc_obj <- AddMetaData(ipsc_obj, mn_prog_subclusts)
+```
+
+```{r}
+table(ipsc_obj$subtype_standardized_subclusters)
+length(table(ipsc_obj$subtype_standardized_subclusters)) #31
+```
+
+```{r fig.height=10, fig.width=10}
+DimPlot(ipsc_obj, 
+        group.by = "subtype_standardized_subclusters",
+        reduction = "umap.harmony") +
+  scale_color_manual(values = colors_vector)
+```
+
+```{r fig.height=12, fig.width=12}
+custom_dimplot(metadata = ipsc_obj@meta.data, 
+               colorby = "subtype_standardized", 
+               add_text = FALSE,
+               dimred_colnames = "umapharmony", 
+               custom_colors = brewer.pal(7,"Set3"))
+
+custom_dimplot(metadata = ipsc_obj@meta.data, 
+               colorby = "subtype_standardized_subclusters", 
+               dimred_colnames = "umapharmony", 
+               lab_size = 3,
+               custom_colors = colors_vector)
+
+ipsc_obj@meta.data %>%
+  filter(grepl("motorneurons_[78]$",subtype_standardized_subclusters)) %>%
+  custom_dimplot(metadata = .,
+               colorby = "subtype_standardized_subclusters",
+               dimred_colnames = "umapharmony", 
+               label_samples = FALSE,
+               custom_colors = colors_vector[-1])
+```
+
+
+```{r eval=FALSE}
+# update to re-classify the "outliers" for MNs and progenitors
+ipsc_obj$subtype_subclusters <- case_when(
+    grepl("progenitor_[9]$|progenitor_1[0-1]$",ipsc_obj$subtype_standardized_subclusters) ~ "progenitor_in_MNs",
+    grepl("motorneurons_[3-9]$|motorneurons_1[0-7]$",ipsc_obj$subtype_standardized_subclusters) ~ "MNs_in_progenitors",
+    TRUE ~ as.character(ipsc_obj$subtype_standardized_subclusters)
+  )
+
+custom_dimplot(metadata = ipsc_obj@meta.data, 
+               colorby = "subtype_subclusters", 
+               dimred_colnames = "umapharmonysubset", 
+               custom_colors = colors_vector)
+```
+
+
+# Marker Genes
+
+```{r}
+ipsc_obj <- PrepSCTFindMarkers(ipsc_obj)
+```
+
+```{r}
+Idents(ipsc_obj) <- ipsc_obj$subtype_standardized_subclusters
+degs_subclusters <- FindAllMarkers(ipsc_obj,
+                                   assay ="SCT",
+                                   logfc.threshold = 0.25,
+                                   min.pct = 0.2, 
+                                   min.diff.pct = 0.1, 
+                                   min.cells.feature = 10,
+                                   min.cells.group = 10, 
+                                   return.thresh = 0.001)
+
+Idents(ipsc_obj) <- ipsc_obj$subtype_standardized
+degs_celltypes <- FindAllMarkers(ipsc_obj,
+                                   assay ="SCT",
+                                   logfc.threshold = 0.25,
+                                   min.pct = 0.2, 
+                                   min.diff.pct = 0.1, 
+                                   min.cells.feature = 10,
+                                   min.cells.group = 10, 
+                                   return.thresh = 0.001)
+```
+
+```{r}
+make_degs_df <- function(df){
+  df %>% 
+    select(gene, cluster, avg_log2FC, everything()) %>% 
+    group_by(cluster) %>% 
+    arrange(desc(avg_log2FC), .by_group = TRUE) %>% 
+    filter(p_val_adj < 0.01) %>% 
+    ungroup()
+}
+```
+
+```{r}
+subclusters_results <- make_degs_df(degs_subclusters)
+# write.csv(subclusters_results,"results/day0_day50/degs/iPSC_celltypes_subclusters_results_wilcox.test_sct_DEGs.csv", row.names = FALSE)
+
+celltypes_results <- make_degs_df(degs_celltypes)
+# write.csv(celltypes_results,"results/day0_day50/degs/iPSC_celltypes_wilcox.test_sct_DEGs.csv", row.names = FALSE)
+```
+
+```{r}
+subclusters_results %>% 
+  group_by(cluster) %>% 
+  dplyr::slice(1:5) %>% 
+  ungroup()
+```
+
+```{r}
+head(degs_subclusters)
+head(degs_celltypes)
+```
 
 
 
@@ -721,6 +1006,9 @@ https://github.com/satijalab/seurat/issues/6675
 https://github.com/satijalab/seurat/issues/6054
 
 IntegrateLayers was completed on the SCT assay! So what do I do with 13 models??
+
+BuildClusterTree
+Constructs a phylogenetic tree relating the 'average' cell from each identity class. Tree is estimated based on a distance matrix constructed in either gene expression space or PCA space.
 
 ### Prepare Cell Ref Object 
 

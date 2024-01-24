@@ -4,3 +4,8 @@ channels:
 dependencies:
   - python==3.10
   - cellrank==2.0.2
+  - pip==23.3.1
+  - pip:
+    - moscot==0.3.3
+variables:
+  PIP_TRUSTED_HOST: pypi.org
