@@ -816,10 +816,6 @@ ipsc_obj
 ```
 
 ```{r}
-Graphs(ipsc_obj)
-```
-
-```{r}
 Idents(ipsc_obj) <- ipsc_obj$subtype_standardized
 
 dims <- 1:30
@@ -863,7 +859,7 @@ MNs_df %>%
 # rm(prog)
 ```
 
-```{r}
+```{r eval=FALSE}
 # define the subclusters
 # create new subtype labels with the unsupervised subclusters
 mn_prog_subclusts <- prog_df %>% 
@@ -883,22 +879,33 @@ mn_prog_subclusts <- prog_df %>%
   column_to_rownames("barcode_merged") %>%
   select(subtype_standardized_subclusters)
 
-table(mn_prog_subclusts)[order(table(mn_prog_subclusts))]
+# table(mn_prog_subclusts)[order(table(mn_prog_subclusts))]
 
 # Add the metadata
 ipsc_obj <- AddMetaData(ipsc_obj, mn_prog_subclusts)
+length(unique(ipsc_obj$subtype_standardized_subclusters)) #31 
 ```
 
 ```{r}
-table(ipsc_obj$subtype_standardized_subclusters)
-length(table(ipsc_obj$subtype_standardized_subclusters)) #31
+table(ipsc_obj$subtype_standardized_subclusters)[order(table(ipsc_obj$subtype_standardized_subclusters))]
 ```
 
-```{r fig.height=10, fig.width=10}
+```{r fig.height=15, fig.width=10}
 DimPlot(ipsc_obj, 
+        label = TRUE,
+        repel = TRUE,
+        label.size = 4,
         group.by = "subtype_standardized_subclusters",
         reduction = "umap.harmony") +
-  scale_color_manual(values = colors_vector)
+  scale_color_manual(values = colors_vector) +
+  theme(legend.position = "top")
+```
+
+```{r}
+  make_3D_umap(metadata = ipsc_obj@meta.data,
+              idents_column = c(paste0("umapharmony", "_",1:3)),
+              label_cols = c("subtype_standardized_subclusters","id","batch"),
+              selected_colors = colors_vector)
 ```
 
 ```{r fig.height=12, fig.width=12}
@@ -915,14 +922,13 @@ custom_dimplot(metadata = ipsc_obj@meta.data,
                custom_colors = colors_vector)
 
 ipsc_obj@meta.data %>%
-  filter(grepl("motorneurons_[78]$",subtype_standardized_subclusters)) %>%
+  filter(grepl("motorneurons_[89]$|progenitor_(7|9|11|14)",subtype_standardized_subclusters)) %>%
   custom_dimplot(metadata = .,
                colorby = "subtype_standardized_subclusters",
                dimred_colnames = "umapharmony", 
                label_samples = FALSE,
                custom_colors = colors_vector[-1])
 ```
-
 
 ```{r eval=FALSE}
 # update to re-classify the "outliers" for MNs and progenitors
@@ -942,10 +948,23 @@ custom_dimplot(metadata = ipsc_obj@meta.data,
 # Marker Genes
 
 ```{r}
-ipsc_obj <- PrepSCTFindMarkers(ipsc_obj)
+make_degs_df <- function(df){
+  df %>% 
+    select(gene, cluster, avg_log2FC, everything()) %>% 
+    group_by(cluster) %>% 
+    arrange(desc(avg_log2FC), .by_group = TRUE) %>% 
+    filter(p_val_adj < 0.01) %>% 
+    ungroup()
+}
 ```
 
 ```{r}
+ipsc_obj <- PrepSCTFindMarkers(ipsc_obj)
+```
+
+```{r eval=FALSE}
+ipsc_obj <- PrepSCTFindMarkers(ipsc_obj)
+
 Idents(ipsc_obj) <- ipsc_obj$subtype_standardized_subclusters
 degs_subclusters <- FindAllMarkers(ipsc_obj,
                                    assay ="SCT",
@@ -965,20 +984,7 @@ degs_celltypes <- FindAllMarkers(ipsc_obj,
                                    min.cells.feature = 10,
                                    min.cells.group = 10, 
                                    return.thresh = 0.001)
-```
 
-```{r}
-make_degs_df <- function(df){
-  df %>% 
-    select(gene, cluster, avg_log2FC, everything()) %>% 
-    group_by(cluster) %>% 
-    arrange(desc(avg_log2FC), .by_group = TRUE) %>% 
-    filter(p_val_adj < 0.01) %>% 
-    ungroup()
-}
-```
-
-```{r}
 subclusters_results <- make_degs_df(degs_subclusters)
 # write.csv(subclusters_results,"results/day0_day50/degs/iPSC_celltypes_subclusters_results_wilcox.test_sct_DEGs.csv", row.names = FALSE)
 
@@ -986,19 +992,78 @@ celltypes_results <- make_degs_df(degs_celltypes)
 # write.csv(celltypes_results,"results/day0_day50/degs/iPSC_celltypes_wilcox.test_sct_DEGs.csv", row.names = FALSE)
 ```
 
+## cell types
+
 ```{r}
-subclusters_results %>% 
+celltypes_results <- read.csv("results/day0_day50/degs/iPSC_celltypes_wilcox.test_sct_DEGs.csv")
+dim(celltypes_results)
+```
+
+```{r}
+celltypes_results %>% 
+  mutate(diff = pct.1 - pct.2) %>% 
   group_by(cluster) %>% 
-  dplyr::slice(1:5) %>% 
+  dplyr::top_n(n = 5, wt = avg_log2FC) %>% 
   ungroup()
 ```
 
+## Subclusters 
+
 ```{r}
-head(degs_subclusters)
-head(degs_celltypes)
+subclusters_results <- read.csv("results/day0_day50/degs/iPSC_celltypes_subclusters_results_wilcox.test_sct_DEGs.csv")
+
+dim(subclusters_results)
 ```
 
+```{r}
+top_markers_subclust <- subclusters_results %>% 
+  mutate(diff = pct.1 - pct.2) %>% 
+  group_by(cluster) %>% 
+  dplyr::top_n(n = 5, wt = avg_log2FC) %>% 
+  ungroup()
+```
 
+## Motorneurons
+
+```{r}
+top_mn_genes <- top_markers_subclust %>%
+  mutate(clust_number  = as.numeric(str_split_fixed(cluster, "_", n=2)[,2])) %>% 
+  filter(grepl("motor", cluster)) %>% 
+  arrange(clust_number)
+
+top_mn_genes
+```
+
+```{r}
+MN_obj <- subset(ipsc_obj, idents = c("motorneurons"))
+Idents(MN_obj) <- MN_obj$subtype_standardized_subclusters
+
+# MN_obj
+
+missing <- base::setdiff(top_mn_genes$gene,
+                         rownames(MN_obj@assays$SCT@scale.data))
+
+MN_obj <- GetResidual(object = MN_obj, 
+                         features = top_mn_genes$gene, 
+                         assay = "SCT", 
+                         na.rm = FALSE)
+
+MN_obj[["SCT"]]
+```
+
+```{r fig.height=10, fig.width=15}
+DefaultAssay(MN_obj) <- "RNA"
+#Warning: The following features were omitted as they were not found in the scale.data slot for the RNA assay: HSP90AA1
+DoHeatmap(MN_obj, 
+          features = top_mn_genes$gene)
+```
+
+GroupCorrelationPlot(
+  object,
+  assay = NULL,
+  feature.group = "feature.grp",
+  cor = "nCount_RNA_cor"
+)
 
 # Seurat Transfer Labels 
 
