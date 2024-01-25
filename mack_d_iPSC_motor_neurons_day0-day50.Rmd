@@ -1043,7 +1043,7 @@ length(seurat_objs_dbls) # 19
 ```
 
 ```{r eval=TRUE, fig.height=5, fig.width=10}
-if(!exists("")){
+if(!exists("merged_obj")){
   merged_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_SCT_UMAP_Seurat_obj.RDS")
 
 }
@@ -1084,15 +1084,17 @@ ggplot(merged_obj@meta.data,
 ```
 
 ```{r eval=TRUE}
-seurat_objs_dbls_list <- purrr::map(seurat_objs_dbls, function(x) readRDS(x))
+if(!exists("seurat_objs_dbls_list")){
+  seurat_objs_dbls_list <- purrr::map(seurat_objs_dbls, function(x) readRDS(x))
+}
 
-job::job({
+# job::job({
   # loop through each sample and create dynamic filting thresholds
   filter_objs <- purrr::map(names(seurat_objs_dbls_list), function(x){
     
         outfile <- glue::glue("results/individual_objs/mack_{x}_motor_neuron_filtered_seurat_obj.RDS")
         out_summary <- glue("results/day0_day50/seurat/filtering_stats/mack_iPSC_{x}_day0-day50_cell_filtering_threshold_summary.csv")
-        input <- seurat_objs_dbls_list[x]
+        input <- seurat_objs_dbls_list[[x]]
     
         if( any(!file.exists(outfile) | !file.exists(out_summary)) ){
           
@@ -1118,11 +1120,15 @@ job::job({
           #  at least 200 genes assayed per cell
           #  at least 500 reads per cell
           #  less than 50,000 total reads per cell
+          rna_upper <- 5e4
+          rna_lower <- 500
+          feat_lower <- 200
+          # filtering expression
           to_retain <- WhichCells(input, 
                                   expression = 
-                                    nFeature_RNA > 200 & 
-                                    nCount_RNA > 500 &
-                                    nCount_RNA < 5e4 &
+                                    nFeature_RNA > feat_lower & 
+                                    nCount_RNA > rna_lower &
+                                    nCount_RNA < rna_upper &
                                     percent.ribo > rb_th &
                                     percent.mt < mito_th &
                                     class == "singlet")
@@ -1148,13 +1154,15 @@ job::job({
           ths <-  data.frame(sample=x,
                            mito_th=mito_th,
                            rb_th=rb_th,
-                           ncount_rna_th=500,
-                           nfeat_rna_th=200,
-                           ncount_rna_th=5e4,
+                           ncount_rna_th1=rna_upper,
+                           ncount_rna_th2=rna_lower,
+                           nfeat_rna_th=feat_lower,
+                           
                            ncount_rna_upl=ncount_upl,
                            ncount_rna_lowl=ncount_lowl,
                            nfeat_rna_upl=nfeat_upl,
                            nfeat_rna_lowl=nfeat_lowl,
+                           
                            input_number_cells=ncol(input),
                            output_number_cells=ncol(sub_filt_obj))
           write.csv(ths,out_summary, row.names = FALSE)
@@ -1165,9 +1173,9 @@ job::job({
         }
         return(sub_filt_obj)
       })
-  names(filter_objs) <- paste0("iPSC_", names(seurat_objs_dbls))
+  names(filter_objs) <- paste0("iPSC_", names(seurat_objs_dbls_list))
   
-}, import = c("seurat_objs_dbls_list"))
+# }, import = c("seurat_objs_dbls_list"))
 ```
 
 ```{r}
@@ -1179,7 +1187,7 @@ threshold_summary <- purrr::map_dfr(outpaths, function(x){
   read.csv(x) 
 }) %>% 
   mutate(sample_id = paste0("iPSC_", sample), 
-         percent = round(output_number_cells / input_number_cells * 100, digits = 2)) %>%
+         percent = round(output_number_cells / input_number_cells * 100, digits = 1)) %>%
   left_join(., sample_manifest, by = c("sample_id")) %>%
   arrange(time_point, sample_id) %>%
   mutate(sample_id = factor(sample_id, levels=unique(sample_id))) %>%
@@ -1245,7 +1253,7 @@ custom_violin_qc <- function(metadata, threshold_summary){
 
 # pdf("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_violins.pdf", height = 8, width = 10)
 
-# # dev.off()
+# dev.off()
 ```
 
 ```{r}
@@ -1361,11 +1369,11 @@ threshold_summary_update <- threshold_summary %>%
   mutate(percent = round(output_number_cells/input_number_cells * 100, digits = 1))
 
 threshold_summary_update
-write.csv(threshold_summary_update, "results/day0_day50/seurat/filtering_stats/mack_iPSC_MN_day0-day50_cell_filtering_final_threshold_summary.csv", row.names = FALSE)
+# write.csv(threshold_summary_update, "results/day0_day50/seurat/filtering_stats/mack_iPSC_MN_day0-day50_cell_filtering_final_threshold_summary.csv", row.names = FALSE)
 ```
 
 ```{r}
-pdf("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_mito_thresholds_update.pdf", height = 7, width = 10)
+# pdf("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_mito_thresholds_update.pdf", height = 7, width = 10)
 ggplot(threshold_summary_update, aes(x=batch, y=mito_th, fill=batch)) +
   geom_boxplot(alpha=0.25) +
   geom_point(aes(color=sample_id),
@@ -1380,10 +1388,10 @@ ggplot(threshold_summary_update, aes(x=batch, y=mito_th, fill=batch)) +
   guides(color="none") +
   theme_classic() +
   theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
-dev.off()
+# dev.off()
 ```
 
-```{r fig.width=10}
+```{r fig.width=15}
 ths_to_plot <- threshold_summary_update %>% 
   select(sample_id, input_number_cells, output_number_cells) %>% 
   pivot_longer(cols = -sample_id, 
@@ -1412,9 +1420,9 @@ bplot2 <- ggplot(ths_to_plot, aes(x = sample_id,
   theme_bw() +
   theme(axis.text.x = element_text(angle=25, vjust=1, hjust=1))
 
-png("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_barplot_update.png",height = 8, width = 16, unit="in", res=150)
+# png("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_filtered_seurat_barplot_update.png",height = 8, width = 16, unit="in", res=150)
 bplot2
-dev.off()
+# dev.off()
 ```
 
 
@@ -1616,10 +1624,10 @@ estimates_df <- purrr::map_dfr(names(final_estimates), function(x){
 
 head(estimates_df)
 # table(estimates_df$sample_id)
-write.csv(estimates_df, "results/soupX_counts/mack_iPSC_MN_day0-day50_soupX_contamination_estimates.csv", row.names = FALSE)
+# write.csv(estimates_df, "results/soupX_counts/mack_iPSC_MN_day0-day50_soupX_contamination_estimates.csv", row.names = FALSE)
 ```
 
-```{r}
+```{r fig.width=15}
 est_df_subset <- estimates_df %>% 
   select(sample_id, rho) %>% 
   distinct()
@@ -1646,7 +1654,6 @@ plotMarkerDistribution(sc = soup_channels,
                        nonExpressedGeneList = NULL,
                        maxCells = 150, 
                        tfidfMin = 1)
-
 ```
 
 
@@ -1661,35 +1668,32 @@ if(!exists("merged_obj")){
 merged_obj
 ```
 
-```{r}
-print(options()$Seurat.object.assay.version)
-```
-
 ```{r eval=TRUE}
 outs <- dir("results/soupX_counts",pattern = "^iPSC", full.names = TRUE)
 names(outs) <- basename(outs)
 length(outs) #19
 
-metadata <- merged_obj@meta.data
+metadata <- merged_obj@meta.data %>% 
+  mutate(barcode = rownames(.))
 
 soupx_objs <- purrr::map(outs, function(res){
 
   counts <- Read10X(res)
-  id <- basename(res)
-  print(glue("{id}"))
+  sample_id <- basename(res)
+  print(glue("{sample_id}"))
   
   mdata <- metadata %>% 
-    filter(orig.ident == id) %>% 
-    mutate(barcode = gsub("^iPSC_[A-Za-z].+_","", barcode)) %>% 
-    filter(barcode %in% intersect(colnames(counts), barcode)) %>% 
-    set_rownames(.$barcode) %>% 
+    filter(orig.ident == sample_id) %>% 
+    mutate(orig_obarcode = gsub("^iPSC_[A-Za-z].+_","", barcode)) %>% 
+    filter(orig_obarcode %in% base::intersect(colnames(counts), orig_obarcode)) %>% 
+    set_rownames(.$orig_obarcode) %>% 
     as.data.frame()
   
   print(dim(mdata))
   
   seurat_obj <-  CreateSeuratObject(counts=counts, 
                                     assay="RNA",
-                                    project = id, 
+                                    project = sample_id, 
                                     meta.data = mdata)
   
   seurat_obj <- PercentageFeatureSet(seurat_obj,
@@ -1727,7 +1731,7 @@ merged_filt_obj <-  merge(x = soupx_objs$iPSC_ipsc,
 
 
 # An object of class Seurat 
-# 33538 features across 87870 samples within 1 assay 
+# 33538 features across 86,954 samples within 1 assay 
 # Active assay: RNA (33538 features, 0 variable features)
 merged_filt_obj 
 saveRDS(merged_filt_obj,glue("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj_{VERSION}.RDS"))
@@ -1762,7 +1766,8 @@ if(!exists("merged_filt_obj")){
   merged_filt_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj_v5.RDS")
 }
 
-merged_filt_obj
+dim(merged_filt_obj) #86,954 cells
+
 
 versions = c("v5","v3")
 
@@ -1854,6 +1859,11 @@ This determines the number of neighboring points used in local approximations of
 
 ```{r}
 table(merged_norm_obj$id)
+```
+```{r}
+most_var_genes_per_sample <- SCTResults(merged_norm_obj, slot = "feature.attributes")
+
+# most_var_genes_per_sample
 ```
 
 ```{r fig.height=10}
@@ -1966,7 +1976,7 @@ filt_batch
 merged_3d <- make_3D_umap(metadata = merged_norm_obj@meta.data, 
              idents_column = c(paste0("umap_",1:3)), 
              label_cols = c("id","batch"), 
-             selected_colors = colors_vector)
+             selected_colors = sample_id_colors)
 
 merged_3d
 ```
@@ -2031,11 +2041,6 @@ VlnPlot(merged_norm_obj,
 # dev.off()
 ```
 
-```{r}
-most_var_genes_per_sample <- SCTResults(merged_norm_obj, slot = "feature.attributes")
-
-# most_var_genes_per_sample
-```
 
 ```{r eval=FALSE}
 # Identify the 10 most highly variable genes
@@ -2108,8 +2113,6 @@ ggplot(meta,
   theme_classic()
 # dev.off()
 ```
-
-
 
 ```{r fig.width=7}
 # pdf("figures/day0_day50/filtered_merged_results/iPSC_MN_seurat_nFeature_barplot.pdf", height = 8, width = 15)
@@ -2185,7 +2188,8 @@ from Rayon 2023:
 > Replicates were then integrated together to create the time point and species datasets.
 
 
-Objective metric - use the amount of "density" of day0 cells in their cluster, since day0 should be 100% homogeneous and fewer clusters/cells found in later time-points
+**Objective metric** 
+  - use the amount of "density" of day0 cells in their cluster, since day0 should be 100% homogeneous and fewer clusters/cells found in later time-points
 
 *Possible Layer Groups*
 - 1 layer per sample (19 SCT models)
@@ -2207,22 +2211,28 @@ Objective metric - use the amount of "density" of day0 cells in their cluster, s
     - **ideally**, I would be able to keep dataset1 exactly as-is and then project dataset2 per individual sample onto dataset1 
     - probably could do that extracting the UWOT UMAP model from dataset1 and then use UWOT directly with the additional new samples 
 
+https://github.com/satijalab/seurat/issues/7217
+https://github.com/satijalab/seurat/issues/7318
+ 
 ```{r eval=TRUE}
 VERSION = 'v5'
 if(!exists("merged_norm_obj")){
   merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
-  merged_norm_obj$id <- factor(merged_norm_obj$orig.ident, levels=unique(merged_norm_obj$orig.ident))
-  merged_norm_obj$dataset <- ifelse(merged_norm_obj$batch == "batch4", "dataset2", "dataset1")
-  merged_norm_obj$time_point_factor <- as.factor(merged_norm_obj$time_point)
-
-  table(merged_norm_obj$id)
 }
+
+#ensure meta cols are available
+merged_norm_obj$id <- factor(merged_norm_obj$orig.ident, levels=unique(merged_norm_obj$orig.ident))
+merged_norm_obj$dataset <- ifelse(merged_norm_obj$batch == "batch4", "dataset2", "dataset1")
+merged_norm_obj$time_point_factor <- as.factor(merged_norm_obj$time_point)
+
+table(merged_norm_obj$id)
 
 # dims of reduction to use for UMAP
 dims <- 1:30
 
 # re-order the layers from latest to earliest
-merged_norm_obj[["SCT"]]@SCTModel.list <- merged_norm_obj[["SCT"]]@SCTModel.list[rev(names(merged_norm_obj[["SCT"]]@SCTModel.list))]
+new_order <- rev(names(merged_norm_obj[["SCT"]]@SCTModel.list))
+merged_norm_obj[["SCT"]]@SCTModel.list <- merged_norm_obj[["SCT"]]@SCTModel.list[new_order]
 
 # integrate the layers
 merged_rpca_obj <- merged_norm_obj %>% 
@@ -2230,12 +2240,11 @@ merged_rpca_obj <- merged_norm_obj %>%
     method = RPCAIntegration,
     orig.reduction = "pca",
     new.reduction = "rpcaorder",
-    # reference = c(1:11),
     normalization.method = 'SCT', #why is this required?
     assay = "SCT",
     k.anchor = 5,
     k.weight = 100, #default
-    preserve.order = TRUE, #keep time-course samples in order day3 into day0. Then Day8 into Day0/3 obj
+    preserve.order = TRUE, #keep time-course samples in order given in sct list
     verbose = TRUE)
 
 merged_rpca_obj <-  IntegrateLayers(
@@ -2243,7 +2252,7 @@ merged_rpca_obj <-  IntegrateLayers(
       method = RPCAIntegration,
       orig.reduction = "pca",
       new.reduction = "rpca",
-      reference = c(1:11),
+      reference = c(19:8), #select iPSC day0 to day35 as reference datasets
       normalization.method = 'SCT', #why is this required?
       assay = "SCT",
       k.anchor = 5,
