@@ -766,9 +766,14 @@ to extact all slingshot objects/results
 omega
 This value is provided as a potentially useful rule of thumb for datasets with outlying clusters or multiple, distinct trajectories. 
 
+lineages without defined start cluster
+- If we do not specify a starting point, slingshot selects one based on parsimony, maximizing the number of clusters shared between lineages before a split.
+
  recommend the **specification of an initial cluster based on prior knowledge**
   - either time of sample collection or established gene markers
   - This specification will have no effect on how the MST is constructed, but it will impact how branching curves are constructed.
+  - clusters as **terminal** states will be constrained to have only one connection when the MST 
+  
 
 ```{r}
 sce <- slingshot(sce, 
@@ -791,7 +796,6 @@ slingshot_data <- SlingshotDataSet(sce)
 slingshot_data@lineages %>% head()
 ```
 
-
 ```{r}
 sce2 <- slingshot(sce, 
                  clusterLabels = 'subtype_standardized_subclusters',
@@ -805,11 +809,37 @@ sce2 <- slingshot(sce,
                  allow.breaks = TRUE)
 ```
 
+```{r}
+lineages2 <- SlingshotDataSet(sce2)
+
+names(lineages2@lineages) # 19 lineages
+head(lineages2@lineages)
+summary(sce$slingPseudotime_1) # pseudotime 1 to slingPseudotime_13
+sce
+```
+
 colors_vector
+
+```{r}
+n_clusts <- length(unique(sce$subtype_standardized_subclusters))
+colData(sce)$barcode <- rownames(colData(sce))
+
+cc <-  colData(sce)[,c("barcode","subtype_standardized_subclusters")] %>% 
+  as.data.frame() %>% 
+  left_join(.,  data.frame(colors = colors_vector[1:n_clusts], 
+                           subtype_standardized_subclusters = unique(sce$subtype_standardized_subclusters)), 
+            by="subtype_standardized_subclusters") %>% 
+  pull(colors, name = "subtype_standardized_subclusters")
+
+head(cc)
+```
+
 ```{r fig.height=10, fig.width=10}
 plot(reducedDim(sce, "UMAP.HARMONY"), 
-     col = colors_vector[sce$subtype_standardized_subclusters],
+     col = alpha(cc,alpha = 0.5),
+     cex = 0.25,
      asp = 1, pch = 16)
+
 lines(SlingshotDataSet(sce2),
       type = 'lineages',
       lwd = 2, 

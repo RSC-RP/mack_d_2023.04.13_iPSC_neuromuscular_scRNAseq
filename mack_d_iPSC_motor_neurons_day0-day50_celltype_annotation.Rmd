@@ -772,7 +772,7 @@ subtype_table <- ipsc_obj@meta.data %>%
 subtype_table
 ```
 
-```{r}
+```{r fig.height=10, fig.height=10}
 celltypes <- unique(ipsc_obj@meta.data$subtype_standardized)
 celltypes <- celltypes[order(celltypes)]
 
@@ -996,6 +996,7 @@ celltypes_results <- make_degs_df(degs_celltypes)
 
 ```{r}
 celltypes_results <- read.csv("results/day0_day50/degs/iPSC_celltypes_wilcox.test_sct_DEGs.csv")
+celltypes_results
 dim(celltypes_results)
 ```
 
@@ -1012,6 +1013,7 @@ celltypes_results %>%
 ```{r}
 subclusters_results <- read.csv("results/day0_day50/degs/iPSC_celltypes_subclusters_results_wilcox.test_sct_DEGs.csv")
 
+subclusters_results
 dim(subclusters_results)
 ```
 
