@@ -6,6 +6,7 @@
 *.RDS
 .Renviron
 ~$* 
+*.docx
 
 # this is OS specific for Cybertron/Local
 .Renviron 
