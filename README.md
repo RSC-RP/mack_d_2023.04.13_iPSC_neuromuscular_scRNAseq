@@ -9,7 +9,7 @@ The goal is to investigate the processes of differentiation in motor neurons (MN
 We aim to identify the regional identity and subtypes of iPSC motor neurons and transcriptomic (dis)similarity with native MNs in the fetal spinal cord. 
 
 
-#### Analysis Notebooks:
+### Analysis Notebooks:
 1) **Preprocessing and integration:** mack_d_iPSC_motor_neurons_day0-day50.Rmd
 2) **Integrated primary spinal cord reference:** mack_d_iPSC_motor_neurons_ref_data.Rmd
 3) **Cell type annotation with SCANVI:** mack_d_iPSC_motor_neurons_day0-day50_celltype_annotation.Rmd
