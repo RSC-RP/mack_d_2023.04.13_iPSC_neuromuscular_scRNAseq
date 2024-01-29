@@ -1045,7 +1045,6 @@ length(seurat_objs_dbls) # 19
 ```{r eval=TRUE, fig.height=5, fig.width=10}
 if(!exists("merged_obj")){
   merged_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_SCT_UMAP_Seurat_obj.RDS")
-
 }
 # Examine the upper nCount_RNA limits possible. Day5 and Day8 appear to have very low thresholds that are too agressive. 
 merged_obj$mt.threshold <- ifelse(merged_obj$percent.mt > 8, "remove", "keep")
@@ -1057,7 +1056,7 @@ merged_obj$id <- factor(merged_obj$orig.ident, levels = unique(merged_obj$orig.i
 # upper limit for all samples is too low/ too aggressive for some samples
 all_objs_upl <- scuttle::isOutlier(merged_obj$nCount_RNA,
                                      type="higher", 
-                                     nmads = 4) #30,157
+                                     nmads = 3) #30,157
 
 ggplot(merged_obj@meta.data, aes(x = nCount_RNA)) +
   geom_histogram(binwidth = 500) +
@@ -2191,6 +2190,8 @@ from Rayon 2023:
 **Objective metric** 
   - use the amount of "density" of day0 cells in their cluster, since day0 should be 100% homogeneous and fewer clusters/cells found in later time-points
 
+bad integration - too stringent and "forces" the cells from different batches into the same cluster. Example, we don't want to force the superimposition of day0 onto day50
+
 *Possible Layer Groups*
 - 1 layer per sample (19 SCT models)
   - integrates well, but day0 is quite dispersed across other time points (k = 10, k=5)
@@ -2232,7 +2233,7 @@ dims <- 1:30
 
 # re-order the layers from latest to earliest
 new_order <- rev(names(merged_norm_obj[["SCT"]]@SCTModel.list))
-merged_norm_obj[["SCT"]]@SCTModel.list <- merged_norm_obj[["SCT"]]@SCTModel.list[new_order]
+# merged_norm_obj[["SCT"]]@SCTModel.list <- merged_norm_obj[["SCT"]]@SCTModel.list[new_order]
 
 # integrate the layers
 merged_rpca_obj <- merged_norm_obj %>% 
@@ -2244,6 +2245,7 @@ merged_rpca_obj <- merged_norm_obj %>%
     assay = "SCT",
     k.anchor = 5,
     k.weight = 100, #default
+    reference = c(1:11),
     preserve.order = TRUE, #keep time-course samples in order given in sct list
     verbose = TRUE)
 
@@ -2252,7 +2254,8 @@ merged_rpca_obj <-  IntegrateLayers(
       method = RPCAIntegration,
       orig.reduction = "pca",
       new.reduction = "rpca",
-      reference = c(19:8), #select iPSC day0 to day35 as reference datasets
+      # reference = c(19:8), #select iPSC day0 to day35 as reference datasets
+      reference = c(1:11),
       normalization.method = 'SCT', #why is this required?
       assay = "SCT",
       k.anchor = 5,
@@ -2494,9 +2497,6 @@ if(!exists("merged_norm_obj")){
   merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
 }
 
-merged_norm_obj$dataset <- ifelse(merged_norm_obj$batch == "batch4", "dataset2", "dataset1")
-# Warning: Input is a v3 assay and `split()` only works for v5 assays; converting to a v5 assay
-merged_norm_obj[["SCT"]] <- split(merged_norm_obj[["SCT"]], f = merged_norm_obj$dataset)
 dims <- 1:30
 
 # defaults to Layers which are the sample IDs in this case
@@ -2517,7 +2517,6 @@ merged_harmony_obj <- IntegrateLayers(
            n.neighbors = 30,# default 30
            metric = "cosine",
            min.dist = 0.1, # default 0.3
-           # negative.sample.rate = 10,
            n.epochs = 500,
            reduction.name = "umap.harmony")
 ```
