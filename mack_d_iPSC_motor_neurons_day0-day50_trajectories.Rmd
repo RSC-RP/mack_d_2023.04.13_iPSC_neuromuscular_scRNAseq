@@ -627,10 +627,9 @@ No
 - dyno (not maintained in 4yrs)
 - CSHMM (not maintained in 7 years, 151 citations)
 https://github.com/gifford-lab/prescient
-
 https://github.com/dynverse/dyno
 
-# Monocle3
+## Monocle3
 
 ```{r}
 library(monocle3)
@@ -722,7 +721,7 @@ plot_cells(cds,
            label_branch_points = FALSE)
 ```
 
-# Slingshot
+## Slingshot
 
 ```{r}
 library(slingshot)
@@ -849,17 +848,19 @@ lines(SlingshotDataSet(sce2),
 
 
 
-# TSCAN
+## TSCAN
 
 ```{r}
 library(TSCAN)
 ```
 
-# CellRank 
+
+## CellRank 
 
 https://cellrank.readthedocs.io/en/latest/notebooks/tutorials/kernels/500_real_time.html
 
 a scRNA-seq dataset with experimental time points. Additional spatial or lineage information improves the accuracy of fate mapping, but is not required.
+
 
 # Session Info
 

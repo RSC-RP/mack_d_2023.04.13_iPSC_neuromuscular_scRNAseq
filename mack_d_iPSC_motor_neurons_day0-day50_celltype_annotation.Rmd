@@ -807,7 +807,7 @@ pct_cells_plot
 
 ```{r}
 current_path <- file.path("results/day0_day50/seurat")
-current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS" #v5 Seurat Object
+current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_anno_subclust_seurat_obj_v5.RDS" #v5 Seurat Object
 
 if(!exists("ipsc_obj")){
   ipsc_obj <- readRDS(file.path(current_path,current_obj))
@@ -815,7 +815,7 @@ if(!exists("ipsc_obj")){
 ipsc_obj
 ```
 
-```{r}
+```{r eval=FALSE}
 Idents(ipsc_obj) <- ipsc_obj$subtype_standardized
 
 dims <- 1:30
@@ -857,9 +857,7 @@ MNs_df %>%
 
 # rm(MNs)
 # rm(prog)
-```
 
-```{r eval=FALSE}
 # define the subclusters
 # create new subtype labels with the unsupervised subclusters
 mn_prog_subclusts <- prog_df %>% 
@@ -884,6 +882,10 @@ mn_prog_subclusts <- prog_df %>%
 # Add the metadata
 ipsc_obj <- AddMetaData(ipsc_obj, mn_prog_subclusts)
 length(unique(ipsc_obj$subtype_standardized_subclusters)) #31 
+
+job::job({
+  saveRDS(ipsc_obj,"iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_anno_subclust_seurat_obj_v5.RDS")
+}, import = c("ipsc_obj"))
 ```
 
 ```{r}
@@ -902,10 +904,12 @@ DimPlot(ipsc_obj,
 ```
 
 ```{r}
-  make_3D_umap(metadata = ipsc_obj@meta.data,
+subcluster_3d <-   make_3D_umap(metadata = ipsc_obj@meta.data,
               idents_column = c(paste0("umapharmony", "_",1:3)),
               label_cols = c("subtype_standardized_subclusters","id","batch"),
               selected_colors = colors_vector)
+
+htmlwidgets::saveWidget(subcluster_3d, "figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_harmony_UMAP.html")
 ```
 
 ```{r fig.height=12, fig.width=12}
