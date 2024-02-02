@@ -41,7 +41,7 @@ library(anndata)
 # python modules
 if( Sys.info()[["nodename"]] == "pdlposit-0" ) {
   print(Sys.getenv("LD_LIBRARY_PATH"))
-  mamba_path <- "/miniforge3/envs/scanvi_scib"
+  mamba_path <- "miniforge3/envs/scanvi_scib"
   Sys.setenv(LD_LIBRARY_PATH="/home/jsmi26/miniforge3/envs/scanvi_scib/lib")
 }else{
   mamba_path <- "opt/mambaforge/envs/scanvi_scib"

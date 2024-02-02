@@ -37,6 +37,24 @@ library(Seurat)
 ```
 
 ```{r}
+library(reticulate)
+library(anndata)
+
+# python modules
+if( Sys.info()[["nodename"]] == "pdlposit-0" ) {
+  print(Sys.getenv("LD_LIBRARY_PATH"))
+  mamba_path <- "miniforge3/envs/cellrank"
+}else{
+  mamba_path <- "opt/mambaforge/envs/cellrank"
+}
+
+reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), mamba_path))
+cr <- import("cellrank", convert = FALSE)
+sc <- import("scanpy", convert = FALSE)
+mt <- import("moscot", convert = FALSE)
+```
+
+```{r}
 conflicted::conflict_prefer("select", "dplyr")
 conflicted::conflict_prefer("filter","dplyr")
 conflicted::conflict_prefer("saveRDS","base")
@@ -847,23 +865,6 @@ library(TSCAN)
 
 ## CellRank 
 
-```{r}
-library(reticulate)
-library(anndata)
-
-# python modules
-if( Sys.info()[["nodename"]] == "pdlposit-0" ) {
-  print(Sys.getenv("LD_LIBRARY_PATH"))
-  mamba_path <- "/miniforge3/envs/cellrank"
-}else{
-  mamba_path <- "opt/mambaforge/envs/cellrank"
-}
-
-reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), mamba_path))
-cr <- import("cellrank", convert = FALSE)
-sc <- import("scanpy", convert = FALSE)
-mt <- import("moscot", convert = FALSE)
-```
 
 https://cellrank.readthedocs.io/en/latest/notebooks/tutorials/kernels/500_real_time.html
 
