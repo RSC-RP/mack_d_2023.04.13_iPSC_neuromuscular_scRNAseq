@@ -3,9 +3,10 @@ channels:
   - conda-forge
 dependencies:
   - python==3.10
-  - cellrank==2.0.2
+  - scanpy==1.9.5
   - pip==23.3.1
   - pip:
+    - cellrank==2.0.2
     - moscot==0.3.3
 variables:
   PIP_TRUSTED_HOST: pypi.org

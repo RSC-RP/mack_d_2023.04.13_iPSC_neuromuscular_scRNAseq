@@ -2254,8 +2254,8 @@ merged_rpca_obj <-  IntegrateLayers(
       method = RPCAIntegration,
       orig.reduction = "pca",
       new.reduction = "rpca",
-      # reference = c(19:8), #select iPSC day0 to day35 as reference datasets
-      reference = c(1:11),
+      # reference = c(19:8), 
+      reference = c(1:11), # select iPSC day0 to day35 as reference datasets
       normalization.method = 'SCT', #why is this required?
       assay = "SCT",
       k.anchor = 5,
@@ -2376,6 +2376,7 @@ merged_rpca_obj <- merged_norm_obj %>%
     k.weight = 100, #default
     preserve.order = TRUE, #keep time-course samples in order day3 into day0. Then Day8 into Day0/3 obj
     verbose = TRUE)
+
 ```
 
 
@@ -2439,25 +2440,25 @@ purrr::map(c("umaprpca","umaprpcaorder"), function(x){
                            custom_colors = sample_id_colors) +
     labs(title = x)
 
-  # png(glue("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_{x}_UMAP_day_filtered.png"), height = 15, width = 25, units = "in", res = 150)
+  png(glue("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_{x}_UMAP_day_filtered.png"), height = 15, width = 25, units = "in", res = 150)
   print(rpcafilt_id)
-  # dev.off()
+  dev.off()
 
-  # png(glue("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_{x}_UMAP_splitBy_batch_day_filtered.png"),  height = 15, width = 25, units = "in", res = 150)
+  png(glue("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_{x}_UMAP_splitBy_batch_day_filtered.png"),  height = 15, width = 25, units = "in", res = 150)
   print(rpcafilt_b34_id +
     facet_wrap(~time_point))
-  # dev.off()
+  dev.off()
 
-  # png(glue("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_{x}_UMAP_batch_filtered.png"),  height = 15, width = 25, units = "in", res = 150)
+  png(glue("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_{x}_UMAP_batch_filtered.png"),  height = 15, width = 25, units = "in", res = 150)
   print(rpcafilt_batch)
-  # dev.off()
+  dev.off()
 
   rpca_3d <- make_3D_umap(metadata = merged_rpca_obj@meta.data, 
              idents_column = c(paste0(x, "_",1:3)), 
              label_cols = c("id","batch"), 
              selected_colors = sample_id_colors)
   rpca_3d
-  # htmlwidgets::saveWidget(rpca_3d, glue("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_{x}_UMAP.html"))
+  htmlwidgets::saveWidget(rpca_3d, glue("figures/day0_day50/filtered_merged_rpca/iPSC_MN_seurat_{x}_UMAP.html"))
 })
 ```
 
@@ -2491,6 +2492,9 @@ Weighting applied to negative samples in low dimensional embedding optimization.
 negative.sample.rate	
 The number of negative samples to select per positive sample in the optimization process. Increasing this value will result in greater repulsive force being applied, greater optimization cost, but slightly more accuracy.
 
+
+*Warning:* HarmonyMatrix is deprecated and will be removed in the future from the API in the futureWarning: Warning: The parameters do_pca and npcs are deprecated. They will be ignored for this function call and please remove parameters do_pca and npcs and pass to harmony cell_embeddings directly
+
 ```{r eval=TRUE}
 VERSION = 'v5'
 if(!exists("merged_norm_obj")){
@@ -2519,6 +2523,11 @@ merged_harmony_obj <- IntegrateLayers(
            min.dist = 0.1, # default 0.3
            n.epochs = 500,
            reduction.name = "umap.harmony")
+
+merged_harmony_obj$id <- factor(merged_harmony_obj$orig.ident,
+                                levels=unique(merged_harmony_obj$orig.ident))
+merged_harmony_obj <- AddMetaData(merged_harmony_obj,
+                                  merged_harmony_obj@reductions$umap.harmony@cell.embeddings)
 ```
 
 The results are identical when changing `preserve.order`
@@ -2544,7 +2553,6 @@ merged_harmony_obj2 <- IntegrateLayers(
            n.neighbors = 30,# default 30
            metric = "cosine",
            min.dist = 0.1, # default 0.3
-           # negative.sample.rate = 10,
            n.epochs = 500,
            reduction.name = "umap.harmonyorder")
 
@@ -2624,7 +2632,7 @@ purrr::map(c("harmony"), function(x){
   
   harmony_3d <- make_3D_umap(metadata = merged_harmony_obj@meta.data, 
                  idents_column = c(paste0("umap",x,"_", 1:3)), 
-
+                 label_cols = c("id","batch"), 
                  selected_colors = colors_vector)
   
   htmlwidgets::saveWidget(harmony_3d, glue("figures/day0_day50/filtered_merged_harmony/merged_{x}_obj_iPSC_MN_seurat_UMAP.html"))
@@ -2682,6 +2690,7 @@ if(!exists("merged_filt_obj_v3")){
   obj_path <- "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v3.RDS"
   merged_filt_obj_v3 <- readRDS(obj_path)
   DefaultAssay(merged_filt_obj_v3) <- "RNA"
+  
   merged_filt_obj_v3 <- DietSeurat(object = merged_filt_obj_v3,
                                    assays = "RNA")
                                    
@@ -2718,6 +2727,7 @@ table(merged_filt_obj_v3$batch)
               metric = "cosine",
               min.dist = 0.2, # default 0.3
               return.model = TRUE,
+              n.epochs = 500,
               verbose = T) 
   
   merged_norm_batchcorr <- merged_norm_batchcorr %>% 
@@ -2754,23 +2764,19 @@ merged_norm_batchcorr$id <- factor(merged_norm_batchcorr$orig.ident,
 merged_norm_batchcorr$seurat_clusters <- merged_norm_batchcorr$SCT_snn_res.1
 Idents(merged_norm_batchcorr) <- merged_norm_batchcorr$SCT_snn_res.1
 
-merged_norm_batchcorr
-
-# pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
+pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_sct_transform_100PCs_elbow_plot.pdf", height = 7, width=10)
 ElbowPlot(merged_norm_batchcorr,ndims = 50, reduction = "pca")
-# dev.off()
+dev.off()
 
-# pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_transform_1-4PCs_loadings.pdf", height = 10, width=7)
+pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_transform_1-4PCs_loadings.pdf", height = 10, width=7)
 VizDimLoadings(merged_norm_batchcorr, dims = 1:4, reduction = "pca")
-# dev.off()
+dev.off()
 
-# pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_byLouvainCluster_sct_UMAP.pdf",height = 10, width= 17)
+pdf("figures/day0_day50/filtered_merged_batchcorrected/batchcorrected_byLouvainCluster_sct_UMAP.pdf",height = 10, width= 17)
 DimPlot(merged_norm_batchcorr, dims = c(1,2)) +
   scale_color_manual(values = colors_vector)
-# dev.off()
-```
+dev.off()
 
-```{r eval=FALSE, fig.height=10}
 bc_d1 <- DimPlot(merged_norm_batchcorr, 
         group.by = c("batch","id"),
         label = T, 
@@ -2778,9 +2784,9 @@ bc_d1 <- DimPlot(merged_norm_batchcorr,
         label.size = 7) + 
   scale_color_manual(values = colors_vector)
 
-# png("figures/day0_day50/filtered_merged_batchcorrected/filtered_merged_results_iPSC_MN_seurat_batchcorrected_UMAP_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
+png("figures/day0_day50/filtered_merged_batchcorrected/filtered_merged_results_iPSC_MN_seurat_batchcorrected_UMAP_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
 bc_d1
-# dev.off()
+dev.off()
 
 bc_s1 <- DimPlot(merged_norm_batchcorr, 
         group.by = c("id"),
@@ -2790,9 +2796,16 @@ bc_s1 <- DimPlot(merged_norm_batchcorr,
         label.size = 7) + 
   scale_color_manual(values = colors_vector)
 
-# png("figures/day0_day50/filtered_merged_batchcorrected/filtered_merged_results_iPSC_MN_seurat_batchcorrected_UMAP_splitBy_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
+png("figures/day0_day50/filtered_merged_batchcorrected/filtered_merged_results_iPSC_MN_seurat_batchcorrected_UMAP_splitBy_batch_day_filtered.png", height = 15, width = 25, units = "in", res = 150)
 bc_s1
-# dev.off()
+dev.off()
+
+# bc_3d <- make_3D_umap(metadata = merged_norm_batchcorr@meta.data, 
+#                  idents_column = c(paste0("umap_", 1:3)), 
+#                  label_cols = c("id","batch"), 
+#                  selected_colors = colors_vector)
+#   
+# htmlwidgets::saveWidget(bc_3d, glue("figures/day0_day50/filtered_merged_batchcorrected/merged_batchcorrected_obj_iPSC_MN_seurat_UMAP.html"))
 ``` 
 
 ```{r eval=FALSE}
@@ -2828,7 +2841,7 @@ plot2
 # Session Info
 
 ```{r}
-session_info()
+sessionInfo()
 ```
 
 

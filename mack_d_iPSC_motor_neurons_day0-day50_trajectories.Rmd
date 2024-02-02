@@ -34,16 +34,6 @@ library(plotly)
 library(RColorBrewer)
 
 library(Seurat)
-# library(SeuratDisk)
-# library(SeuratObject)
-# library(SeuratWrappers)
-# library(Matrix)
-# library(SeuratObject)
-# library(SeuratData)
-# library(SeuratWrappers)
-
-library(scDblFinder)
-library(SoupX)
 ```
 
 ```{r}
@@ -411,7 +401,8 @@ head(mn_subtype_markers)
 
 ```{r}
 current_path <- file.path("results/day0_day50/seurat")
-current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS" #v5 Seurat Object
+current_obj <- "iPSC_MN_time-course_filtered_merged_soupX_normalized_RPCAIntegration_seurat_obj_v5.RDS"
+  # "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS" #v5 Seurat Object
 
 ipsc_obj <- readRDS(file.path(current_path, current_obj))
 ipsc_obj@meta.data$log2_nCount_RNA <- log2(ipsc_obj@meta.data$nCount_RNA)
@@ -424,10 +415,7 @@ ipsc_obj
 DefaultAssay(ipsc_obj) <- 'RNA'
 
 # split to normalize each individually
-ipsc_obj[["RNA"]] <- split(ipsc_obj[["RNA"]],
-                                  f = ipsc_obj$orig.ident)
-ipsc_obj <- NormalizeData(ipsc_obj,
-                                 normalization.method = "LogNormalize") %>% 
+ipsc_obj <- NormalizeData(ipsc_obj, normalization.method = "LogNormalize") %>% 
   FindVariableFeatures() %>% 
   ScaleData() %>% 
   RunPCA(npcs = 50, 
@@ -632,18 +620,19 @@ https://github.com/dynverse/dyno
 ## Monocle3
 
 ```{r}
-library(monocle3)
-library(SeuratWrappers)
+suppressPackageStartupMessages(library(monocle3))
+suppressPackageStartupMessages(library(SeuratWrappers))
 ```
 
 ```{r}
+# Warning: gene_metadata must contain a column verbatim named 'gene_short_name' for certain functions.
 cds <- new_cell_data_set(expression_data = ipsc_obj@assays$SCT$counts,
                          cell_metadata = ipsc_obj@meta.data)
 logcounts(cds) <- ipsc_obj@assays$SCT$data
 
 reducedDims(cds) <- list(PCA=ipsc_obj@reductions$pca@cell.embeddings,
-                         Harmony=ipsc_obj@reductions$harmony@cell.embeddings,
-                         UMAP=ipsc_obj@reductions$umap.harmony@cell.embeddings)
+                         Harmony=ipsc_obj@reductions$rpca@cell.embeddings,
+                         UMAP=ipsc_obj@reductions$umap.rpca@cell.embeddings)
 
 cds
 ```
@@ -683,10 +672,10 @@ cds <- learn_graph(cds,
                    verbose = TRUE)
 ```
 
-```{r}
+```{r eval=FALSE}
 DimPlot(subset(ipsc_obj, subset = orig.ident == "iPSC_ipsc"),
-        reduction = "umap.harmony",
-        group.by = "harmony_clusters")
+        reduction = "umap.rpca",
+        group.by = "rpca_clusters")
 ```
 
 ```{r fig.height=10, fig.width=10}
@@ -720,6 +709,7 @@ plot_cells(cds,
            label_leaves = FALSE, 
            label_branch_points = FALSE)
 ```
+
 
 ## Slingshot
 
@@ -856,6 +846,24 @@ library(TSCAN)
 
 
 ## CellRank 
+
+```{r}
+library(reticulate)
+library(anndata)
+
+# python modules
+if( Sys.info()[["nodename"]] == "pdlposit-0" ) {
+  print(Sys.getenv("LD_LIBRARY_PATH"))
+  mamba_path <- "/miniforge3/envs/cellrank"
+}else{
+  mamba_path <- "opt/mambaforge/envs/cellrank"
+}
+
+reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), mamba_path))
+cr <- import("cellrank", convert = FALSE)
+sc <- import("scanpy", convert = FALSE)
+mt <- import("moscot", convert = FALSE)
+```
 
 https://cellrank.readthedocs.io/en/latest/notebooks/tutorials/kernels/500_real_time.html
 
