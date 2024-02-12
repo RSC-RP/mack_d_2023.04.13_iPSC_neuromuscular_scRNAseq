@@ -1893,9 +1893,7 @@ This controls how tightly the embedding is allowed compress points together. Lar
 n.neighbors	
 This determines the number of neighboring points used in local approximations of manifold structure. Larger values will result in more global structure being preserved at the loss of detailed local structure. In general this parameter should often be in the range 5 to 50.
 
-```{r}
-table(merged_norm_obj$id)
-```
+
 ```{r}
 most_var_genes_per_sample <- SCTResults(merged_norm_obj, slot = "feature.attributes")
 
@@ -2197,6 +2195,105 @@ data.frame(counts=umi_counts_filt$counts.iPSC_ipsc) %>%
   geom_histogram(binwidth = 100)
 ```
 
+### Subset Batches 1,2,4
+
+```{r eval=TRUE}
+if(!exists("merged_filt_obj")){
+  merged_filt_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_seurat_obj_v5.RDS")
+}
+
+dim(merged_filt_obj) #86,954 cells
+versions = c("v5")
+
+for(VERSION in versions){
+  options(Seurat.object.assay.version = VERSION)
+  print(glue("The seurat object version is set to: {options()$Seurat.object.assay.version}"))
+
+  # remove MT genes
+  temp <- merged_filt_obj[grep("^MT-", rownames(merged_filt_obj), invert = TRUE), ]
+  temp <- subset(temp, subset = batch != "batch3")
+  print(table(temp$batch))
+  
+  # object version 
+  seurat_class <- class(temp[['RNA']])
+  
+  # convert if necessary
+  if( seurat_class == "Assay5" & VERSION == "v3" ){
+    temp <- JoinLayers(temp)
+    temp[["RNA"]] <- as(object = temp[["RNA"]], Class = "Assay")
+  }
+  if( seurat_class == "Assay" & VERSION == "v5" ){
+     temp[["RNA"]] <- as(object = temp[["RNA"]], Class = "Assay5")
+  }
+  print(glue("The object class is set as {class(temp[['RNA']])}"))
+  
+  #regularized negative binomial regression to normalize UMI count data
+  #Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures().
+  merged_subset_obj <- SCTransform(temp,
+                           assay="RNA",
+                           new.assay.name = "SCT",
+                           vars.to.regress = "percent.mt",
+                           method = "glmGamPoi",
+                           return.only.var.genes = FALSE,
+                           verbose = TRUE)
+  
+  merged_subset_obj <-   RunPCA(merged_subset_obj,
+                              assay = "SCT",
+                              npcs = 50,
+                              verbose = TRUE) %>% 
+        RunUMAP(reduction = "pca",
+                dims = 1:50,
+                n.components = 3,
+                n.neighbors = 30,# default 30
+                metric = "cosine",
+                min.dist = 0.1, # default 0.3
+                return.model = TRUE,
+                verbose = T)
+  
+    merged_subset_obj <- merged_subset_obj %>%
+        FindNeighbors(reduction = "pca",
+                      dims = 1:50,
+                      k.param = 20,
+                      nn.method = "annoy",
+                      annoy.metric = "cosine",
+                      n.trees = 100,
+                      n.epochs = 500,
+                      verbose = T)
+  
+    merged_subset_obj <- merged_subset_obj %>%
+        FindClusters(resolution = c(0.5, 1.0, 1.5),
+                     algorithm = 2,
+                     verbose = T)
+  
+    merged_subset_obj <- AddMetaData(merged_subset_obj,
+                                   as.data.frame(merged_subset_obj@reductions$umap@cell.embeddings))
+    
+    saveRDS(merged_subset_obj, glue("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_B124_seurat_obj_{VERSION}.RDS"))
+}
+rm(merged_subset_obj)
+```
+
+```{r}
+if(!exists("merged_subset_obj")){
+  merged_subset_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_B124_seurat_obj_v5.RDS")
+}
+
+# Add metadata and idents
+merged_subset_obj$id <- factor(merged_subset_obj$orig.ident, 
+                               levels=unique(merged_subset_obj$orig.ident))
+merged_subset_obj$seurat_clusters <- merged_subset_obj$SCT_snn_res.1
+Idents(merged_subset_obj) <- merged_subset_obj$orig.ident
+
+merged_subset_obj #60184 features across 62,544 samples within 2 assays 
+table(merged_subset_obj$batch)
+```
+
+```{r fig.width=10, fig.height=10}
+DimPlot(merged_subset_obj,
+        reduction = "umap", 
+        group.by = "id", 
+        cols = colors_vector)
+```
 
 # Batch Effect Correction 
 
