@@ -920,7 +920,9 @@ job::job({
 ```
 
 ```{r}
-doublet_scores <- purrr::map_dfr(dir("results/doublet_scores", full.names = TRUE), function(x){
+doublet_scores <- purrr::map_dfr(dir("results/doublet_scores", 
+                                     pattern = "_scDblFinder_scores.csv",
+                                     full.names = TRUE), function(x){
   read.csv(x) %>%
   mutate(id=factor(orig.ident, levels=unique(orig.ident)),
          barcode=X)
@@ -936,14 +938,6 @@ head(doublet_scores)
 dim(doublet_scores) #98532    76
 # table(doublet_scores$batch)
 # table(doublet_scores$sample_id)
-```
-
-```{r eval=FALSE}
-doublet_scores %>% 
-  select(orig.ident,barcode,
-         distanceToNearest,score,
-         class,matches("^ratio")) %>% 
-  head()
 ```
 
 ```{r eval=FALSE}
@@ -990,11 +984,32 @@ purrr::map(unique(doublet_scores$orig.ident), function(x){
 ```
 
 ```{r}
+pct_doubles_df <- doublet_scores %>% 
+    select(orig.ident,barcode,
+         distanceToNearest,score,
+         class,matches("^ratio")) %>% 
+  mutate(id = factor(orig.ident, 
+                     levels = unique(orig.ident))) %>% 
+  group_by(id) %>% 
+  mutate(total_cells = n()) %>% 
+  ungroup() %>% 
+  group_by(id, total_cells, class) %>% 
+  dplyr::count(name = "number_of_cells") %>% 
+  ungroup() %>% 
+  mutate(percent_of_cells = round(number_of_cells / total_cells * 100, digits = 1))
+
+head(pct_doubles_df)
+# dim(pct_doubles_df)
+# write.csv(pct_doubles_df, "results/doublet_scores/mack_iPSC_MN_day0-day50_rerun_scDblFinder_percent_doublets.csv", row.names = FALSE)
+```
+
+```{r}
 # pdf("figures/day0_day50/doublets/iPSC_MN_doublet_scores_scDblFinder_barplot.pdf", height = 7, width = 12)
 doublet_scores %>% 
   mutate(class=factor(class, levels=rev(c("doublet","singlet")))) %>% 
 ggplot(., aes(x=sample_id, fill=class)) +
   geom_bar() +
+  # geom_col() +
   scale_fill_manual(values=colors_vector) +
   labs(y="number of cells",x="") +
   theme_classic() +
@@ -1057,28 +1072,47 @@ merged_obj$id <- factor(merged_obj$orig.ident, levels = unique(merged_obj$orig.i
 all_objs_upl <- scuttle::isOutlier(merged_obj$nCount_RNA,
                                      type="higher", 
                                      nmads = 3) #30,157
+```
 
-ggplot(merged_obj@meta.data, aes(x = nCount_RNA)) +
+```{r}
+ncount_hist <- ggplot(merged_obj@meta.data, aes(x = nCount_RNA)) +
   geom_histogram(binwidth = 500) +
-  scale_x_continuous(breaks = seq(0, 5e5, by= 1e4)) +
-  geom_vline(xintercept = c(lib_size_thr), color = "red") +
-  theme(axis.text.x = element_text(angle = 35, vjust = 1, hjust = 1))
+  scale_x_continuous(breaks = seq(0, max(merged_obj@meta.data$nCount_RNA), by= 10000)) +
+  geom_vline(xintercept = c(lib_size_thr), color = "red", linetype = "dashed") +
+  theme(axis.text.x = element_text(angle = 35, vjust = 1, hjust = 1)) +
+  theme_bw()
 
-ggplot(merged_obj@meta.data, 
+ncount_threshold <- ggplot(merged_obj@meta.data, 
        aes(x = id, y = nCount_RNA)) +
   geom_point(aes(color = mt.threshold),
              alpha = 0.75, size = 0.5, position = position_jitter()) +
   geom_violin(fill = "blue", alpha = 0.2)  +
-  geom_hline(yintercept = c(lib_size_thr, 30157), color = "red") +
-  theme(axis.text.x = element_text(angle = 35, vjust = 1, hjust = 1))
+  geom_hline(yintercept = c(lib_size_thr), color = "black", linetype = "dashed") +
+  scale_color_brewer(palette = "Set1") +
+  theme(axis.text.x = element_text(angle = 35, vjust = 1, hjust = 1)) +
+  theme_bw()
 
-ggplot(merged_obj@meta.data, 
+nfeature_boxplot <- ggplot(merged_obj@meta.data, 
        aes(x = id, y = nFeature_RNA)) +
   geom_point(aes(color = mt.threshold),
              alpha = 0.75, size = 0.5, position = position_jitter()) +
   geom_violin(fill = "blue", alpha = 0.2)  +
-  geom_hline(yintercept = c(10461, 200), color = "red") +
-  theme(axis.text.x = element_text(angle = 35, vjust = 1, hjust = 1))
+  scale_color_brewer(palette = "Set1") +
+  geom_hline(yintercept = c(10461, 200), color = "black", linetype = "dashed") +
+  theme(axis.text.x = element_text(angle = 35, vjust = 1, hjust = 1)) +
+  theme_bw()
+
+
+# png("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_nCount_RNA_boxplot.png", height = 10, width = 20, res = 125, units = "in")
+# ncount_threshold
+# dev.off()
+# 
+# pdf("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_nCount_RNA_histogram.pdf", height = 7, width = 10)
+# ncount_hist
+# dev.off()
+# 
+# pdf("figures/day0_day50/filtering/mack_iPSC_motor_neuron_day0-day50_nFeature_RNA_boxplot.pdf", height = 10, width = 20)
+# nfeature_boxplot
 # dev.off()
 ```
 
@@ -1629,7 +1663,10 @@ head(estimates_df)
 ```{r fig.width=15}
 est_df_subset <- estimates_df %>% 
   select(sample_id, rho) %>% 
+  mutate(sample_id = factor(sample_id, levels = unique(sample_id))) %>%
   distinct()
+
+# write.csv(est_df_subset, "results/soupX_counts/mack_iPSC_MN_day0-day50_soupX_contamination_estimates_per_sample.csv", row.names = FALSE)
 
 est_plot <- ggplot(est_df_subset, aes(x =  sample_id, y=rho, fill = sample_id)) +
   geom_col() +
@@ -1846,7 +1883,7 @@ merged_norm_obj$id <- factor(merged_norm_obj$orig.ident, levels=unique(merged_no
 merged_norm_obj$seurat_clusters <- merged_norm_obj$SCT_snn_res.1
 Idents(merged_norm_obj) <- merged_norm_obj$orig.ident
 
-merged_norm_obj
+merged_norm_obj #60470 features across 86,954 samples within 2 assays 
 class(merged_norm_obj[["RNA"]]) #v5
 ```
 
@@ -2090,11 +2127,17 @@ genes_detected <- merged_norm_obj@meta.data %>%
 merged_norm_obj@meta.data %>% 
   summarize(mean = mean(nFeature_RNA),
             median = median(nFeature_RNA))
+
+# head(genes_detected)
+# dim(genes_detected)
+# write.csv(genes_detected, "results/day0_day50/seurat/filtering_stats/mack_iPSC_MN_day0-day50_number_genes_detected_per_sample.csv", row.names = FALSE)
 ```
 
 ```{r fig.height=10}
 meta <- merged_norm_obj@meta.data %>% 
-  mutate(nCount_RNA_lims = ifelse(nCount_RNA > quantile(nCount_RNA, probs = c(0.95)), quantile(nCount_RNA, probs = c(0.95)), nCount_RNA))
+  mutate(nCount_RNA_lims = ifelse(nCount_RNA > quantile(nCount_RNA, probs = c(0.95)), 
+                                  quantile(nCount_RNA, probs = c(0.95)), 
+                                  nCount_RNA))
 
 # png("figures/day0_day50/filtered_merged_results/iPSC_MN_seurat_nFeature_UMAP.png", height = 10, width = 12, units = "in", res = 125)
 ggplot(meta, 
@@ -2215,7 +2258,13 @@ bad integration - too stringent and "forces" the cells from different batches in
 https://github.com/satijalab/seurat/issues/7217
 https://github.com/satijalab/seurat/issues/7318
  
-```{r eval=TRUE}
+```{r}
+merged_rpca_obj <- readRDS("results/day0_day50/seurat/iPSC_MN_time-course_filtered_merged_soupX_normalized_RPCAIntegration_seurat_obj_v5.RDS")
+
+merged_rpca_obj
+```
+ 
+```{r eval=FALSE}
 VERSION = 'v5'
 if(!exists("merged_norm_obj")){
   merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
