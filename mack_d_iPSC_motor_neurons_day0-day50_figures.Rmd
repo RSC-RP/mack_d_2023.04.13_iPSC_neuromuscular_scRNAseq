@@ -37,16 +37,6 @@ library(reticulate)
 library(anndata)
 ```
 
-```{r message=FALSE, warning=FALSE}
-# python modules
-if(Sys.info()["sysname"] != "Linux"){
-  reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "opt/mambaforge/envs/scanvi_scib"))
-  sc <- import("scanpy", convert = FALSE)
-  scvi <- import("scvi", convert = FALSE)
-  scib <- import("scib_metrics.benchmark", convert = FALSE)
-}
-```
-
 ```{r}
 conflicted::conflict_prefer("select", "dplyr")
 conflicted::conflict_prefer("filter","dplyr")
@@ -380,14 +370,15 @@ options(future.rng.onMisuse="ignore")
 
 ```{r}
 ipsc_obj <- 
-   readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS")
-  # readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_ipsc_obj_v5.RDS")
+  readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_B124_seurat_obj_v5.RDS")
+   # readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS")
   # readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
 
 # Add metadata
 ipsc_obj$time_category <- case_when(ipsc_obj$batch == "batch1" ~ "early phase", 
                                     ipsc_obj$batch == "batch2" ~ "intermediate phase",
-                                    ipsc_obj$batch == "batch3" ~ "late phase")
+                                    ipsc_obj$batch == "batch3" ~ "late phase",
+                                    ipsc_obj$batch == "batch4" ~ "late phase")
 ipsc_obj@meta.data$time_point_day <- gsub("iPSC_","", ipsc_obj@meta.data$id) %>% 
   factor(., levels = unique(.))
 

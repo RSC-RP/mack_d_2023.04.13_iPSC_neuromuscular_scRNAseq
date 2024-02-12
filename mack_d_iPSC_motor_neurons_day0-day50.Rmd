@@ -2289,10 +2289,13 @@ table(merged_subset_obj$batch)
 ```
 
 ```{r fig.width=10, fig.height=10}
-DimPlot(merged_subset_obj,
-        reduction = "umap", 
-        group.by = "id", 
-        cols = colors_vector)
+# pdf("figures/day0_day50/filtered_merged_results/batches_124/iPSC_MN_day0-day50_filtered_merged_soupX_normalized_B124_UMAP.pdf", height = 15, width = 15)
+custom_dimplot(metadata = merged_subset_obj@meta.data,
+               dimred_colnames = "umap",
+               label_samples = FALSE,
+               custom_colors = sample_id_colors,
+               colorby = "id")
+# dev.off()
 ```
 
 # Batch Effect Correction 
