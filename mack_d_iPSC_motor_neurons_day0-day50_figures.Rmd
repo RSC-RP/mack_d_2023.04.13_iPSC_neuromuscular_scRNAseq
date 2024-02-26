@@ -58,6 +58,8 @@ colors_vector <- c(RColorBrewer::brewer.pal(12, "Paired"),
   c(ggsci::pal_igv()(51))
 
 length(colors_vector)
+
+sample_id_colors <- c("black",colors_vector[1:18])
 ```
 
 ```{r}
@@ -99,20 +101,43 @@ make_3D_umap <- function(metadata, idents_column, extra_label_cols=NULL, selecte
 
 ```{r}
 custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
-                           lab_size = 6, ny = 0, custom_lab_fill = NULL,
+                           lab_size = 6,
+                           ny = 0, nx = 0,
+                           nbins = 4,
+                           custom_lab_fill = NULL,
+                           label_samples = TRUE,
                            color_text_grp = FALSE,
-                           add_text = TRUE, seed = 2023){
+                           add_text = TRUE, 
+                           seed = 2023){
   
   # define x and y column names
   x_names <- paste0(dimred_colnames, "_1")
   y_names <- paste0(dimred_colnames, "_2")
   
+  # function to split the bins factor into numeric values
+  find_max_bin <- function(bins){
+    tab <- table(bins)
+    tab_max <- tab[tab== max(tab)]
+    
+    names(tab_max)  %>%
+      gsub("\\((.+),(.+)\\]", "\\1,\\2", .) %>% 
+      str_split(., ",", n = 2) %>% 
+      unlist() %>% 
+      as.numeric() %>% 
+      mean()
+  }
+
   # define labels positions
-  labs_df <- metadata %>%
+  labs_df <- metadata %>% 
     select(all_of(c(colorby, x_names, y_names))) %>%
+    # summarise(x = mean(!! as.name(x_names)),
+    #           y = mean(!! as.name(y_names)))
+    mutate(x_bins = cut(!! as.name(x_names), breaks = nbins),
+           y_bins = cut(!! as.name(y_names), breaks = nbins)) %>% 
     group_by(!! as.name(colorby)) %>% 
-    summarise(x = mean(!! as.name(x_names)),
-              y = mean(!! as.name(y_names)))
+    summarize(x = find_max_bin(x_bins), 
+              y = find_max_bin(y_bins)) %>% 
+    ungroup()
   
    # define point sizes based on how many total cells in data
    ncells <- nrow(metadata)
@@ -124,19 +149,16 @@ custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
    # Make the scatterplot
    plot <- ggplot(metadata, 
          aes_string(x = x_names, y = y_names)) +
-    geom_point(aes_string(color = colorby), size = pt_size, alpha = 0.6) +
+    geom_point(aes_string(color = colorby),
+               size = pt_size, alpha = 0.4) +
     scale_color_manual(values = custom_colors) +
     guides(color = guide_legend(override.aes = list(alpha = 1, size = 2))) +
     theme_classic() +
     theme(legend.position = "top")
    
    # customize label positions
-   if(is.character(ny)){
-     y_val <-  ifelse(grepl(ny, labs_df[[colorby]]), 1.5, 0)
-   }else{
-     y_val <- ny
-   }
-   
+   y_val <- ny
+   x_val <- nx
    if(is.null(custom_lab_fill)){
      fill_val <-  "white"
    }else{
@@ -150,21 +172,23 @@ custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
      mapping <- aes_string(x = "x", y = "y", label = colorby)
    }
   
-   if(add_text){
+   if( all(add_text & label_samples) ){
      plot <- plot + 
            ggrepel::geom_text_repel(data = labs_df, 
                              mapping = aes_string(x = "x", y = "y", label = colorby),
                              color = "black",
                              nudge_y = y_val,
+                              nudge_x = x_val,
                              segment.colour = NA,
                              size = lab_size,
                              seed = seed)
-   }else{
+   }else if ( label_samples ) {
       plot <- plot + 
          ggrepel::geom_label_repel(data = labs_df, 
                            mapping = mapping,
                            fill = fill_val,
                            nudge_y = y_val,
+                            nudge_x = x_val,
                            segment.colour = NA,
                            label.size = 0.5,
                            size = lab_size,
@@ -379,11 +403,25 @@ ipsc_obj$time_category <- case_when(ipsc_obj$batch == "batch1" ~ "early phase",
                                     ipsc_obj$batch == "batch2" ~ "intermediate phase",
                                     ipsc_obj$batch == "batch3" ~ "late phase",
                                     ipsc_obj$batch == "batch4" ~ "late phase")
-ipsc_obj@meta.data$time_point_day <- gsub("iPSC_","", ipsc_obj@meta.data$id) %>% 
+ipsc_obj@meta.data$time_point_day <- gsub("iPSC_|rerun_","", ipsc_obj@meta.data$id) %>% 
   factor(., levels = unique(.))
 
 
 ipsc_obj
+table(ipsc_obj$time_category)
+table(ipsc_obj$time_point_day)
+```
+
+## Add Celltype Annotations
+
+```{r}
+if(is.null(ipsc_obj@meta.data$subtype_standardized)){
+  annots <- read.csv("results/day0_day50/scanvi/iPSC_motor_neuron_day0-day50_time-course_scanvi_predictions.csv", row.names = 1)
+  annots <- annots[colnames(ipsc_obj), ]
+  ipsc_obj <- AddMetaData(ipsc_obj, metadata = annots)
+}
+
+table(ipsc_obj$subtype_standardized)
 ```
 
 ## Update Data Dimension Reduction 
@@ -424,11 +462,11 @@ ipsc_obj <- AddMetaData(ipsc_obj,as.data.frame(ipsc_obj@reductions$umap@cell.emb
 
 ### Review Clustering plots
 
-```{r fig.height=5, fig.width=5}
+```{r fig.height=7, fig.width=7}
 DimPlot(ipsc_obj, 
         reduction = "umap",
         label = TRUE,
-        label.size = 8,
+        label.size = 5,
         repel = TRUE,
         dims = c(1,2)) +
   scale_color_manual(values = colors_vector) +
@@ -439,7 +477,7 @@ DimPlot(ipsc_obj,
         reduction = "umap",
         group.by = 'SCT_snn_res.1',
         label = TRUE,
-        label.size = 10,
+        label.size = 5,
         repel = TRUE,
         dims = c(1,2)) +
   scale_color_manual(values = colors_vector) +
@@ -451,7 +489,7 @@ filt_d1 <- DimPlot(ipsc_obj,
         group.by = c("batch","id"),
         label = T, 
         repel = T,
-        label.size = 7) + 
+        label.size = 4) + 
   scale_color_manual(values = colors_vector)
 
 filt_s1 <- DimPlot(ipsc_obj, 
@@ -459,15 +497,17 @@ filt_s1 <- DimPlot(ipsc_obj,
         split.by = "batch",
         label = T, 
         repel = T,
-        label.size = 7) + 
+        label.size = 4) + 
   scale_color_manual(values = colors_vector)
 
+# pdf("figures/day0_day50/filtered_merged_results/batches_124/iPSC_MN_day0-day50_filtered_merged_soupX_normalized_B124_batch_id_UMAP.pdf", height = 10, width = 15)
 filt_d1
+# dev.off()
+
+# pdf("figures/day0_day50/filtered_merged_results/batches_124/iPSC_MN_day0-day50_filtered_merged_soupX_normalized_B124_split_batch_id_UMAP.pdf", height = 10, width = 15)
 filt_s1
+# dev.off()
 ```
-
-
-# CTMR 
 
 ## Overview 
 
@@ -481,6 +521,8 @@ time_cat_umap <- custom_dimplot(metadata = ipsc_obj@meta.data,
                colorby = "time_category",
                lab_size = 10,
                add_text = FALSE,
+               # ny = c(1.5,0,0),
+               # nx = c(-1,0,0),
                color_text_grp = FALSE,
                # custom_lab_fill = c("black","grey90","white"),
                custom_colors = ggpubr::get_palette("simpsons", 3)) +
@@ -491,17 +533,30 @@ time_cat_umap <- custom_dimplot(metadata = ipsc_obj@meta.data,
   guides(color = guide_legend(ncol=3, override.aes = list(size = 6, alpha = 1)))
 
 
-# pdf("figures/day0_day50/CTMR/iPSC_day0-day50_time_category_blackText_UMAP.pdf", height = 10, width = 10)
-# png("figures/day0_day50/CTMR/iPSC_day0-day50_time_category_UMAP.png", height = 10, width = 10, units = "in", res = 150)
+# pdf("figures/day0_day50/filtered_merged_results/batches_124/iPSC_day0-day50_time_category_blackText_UMAP.pdf", height = 10, width = 10)
 time_cat_umap
 # dev.off()
 ```
 
-```{r fig.height=10}
+
+```{r fig.height=15}
+cats <- unique(ipsc_obj@meta.data$time_point_day)
+y_vals <-  rep(0,length(cats)) %>% 
+  set_names(cats)
+y_vals['day35'] <- 0.75
+y_vals[c('day45','day50')] <- -2
+
+# x_vals <-  rep(0,length(cats)) %>% 
+#   set_names(cats)
+# x_vals[c('day45','day50')] <- 1
+
 time_pt_umap <- custom_dimplot(ipsc_obj@meta.data, 
                dimred_colnames = "umap", 
                colorby = "time_point_day",
                lab_size = 6,
+               ny = y_vals,
+               # nx = x_vals,
+               nbins = 15,
                add_text = FALSE,
                color_text_grp=TRUE,
                custom_colors = tail(colors_vector, n = 15)) +
@@ -509,29 +564,62 @@ time_pt_umap <- custom_dimplot(ipsc_obj@meta.data,
         axis.text = element_text(size=14), 
         legend.title = element_blank(),
         legend.text = element_text(size = 18)) +
+  scale_y_continuous(breaks = seq(-7,7, by = 1)) +
+  scale_x_continuous(breaks = seq(-8,6, by = 1)) +
   guides(color = guide_legend(ncol=8, override.aes = list(size = 6, alpha = 1)))
 
 
-# png("figures/day0_day50/CTMR/iPSC_day0-day50_time_point_day_UMAP.png", height = 10, width = 10, units = "in", res = 150)
-# pdf("figures/day0_day50/CTMR/iPSC_day0-day50_time_point_day_textColor_UMAP.pdf", height = 10, width = 10)
+pdf("figures/day0_day50/filtered_merged_results/batches_124/iPSC_day0-day50_time_point_day_textColor_v2_UMAP.pdf", height = 10, width = 10)
 time_pt_umap
-# dev.off()
+dev.off()
 ```
 
 ## Annotations 
 
+```{r}
+ct_colors <- viridis::turbo(n = 8) %>% 
+  set_names(value = c("astrocyte","dorsal\ninterneuron 3","dorsal\ninterneuron 4",
+                      "microglia","motor neuron","neuroglial\nprogenitor","","oligodendrocytes"))
+
+par(mar = c(10,2,2,2))
+barplot(rep(1,length(ct_colors)), las = 2, names.arg = names(ct_colors), col = ct_colors)
+```
+
+```{r}
+ipsc_obj@meta.data %>% 
+  select(subtype_standardized, subtype_labels) %>% 
+  distinct()
+```
 
 ```{r fig.height=10, fig.width=10}
 set.seed(2023)
+
+ipsc_obj@meta.data$subtype_labels <- factor(ipsc_obj@meta.data$subtype_labels,
+                                            levels = unique(ipsc_obj@meta.data$subtype_labels))
+cell_cats <- unique(ipsc_obj@meta.data$subtype_labels)
+y_vals <-  rep(0,length(cell_cats)) %>% 
+  set_names(cell_cats)
+y_vals['neuroglial\nprogenitor'] <- 2
+y_vals['astrocyte'] <- -0.5
+y_vals['dorsal\ninterneuron 3'] <- -1
+y_vals['dorsal\ninterneuron 4'] <- 1
+# y_vals
+
+x_vals <-  rep(0,length(cell_cats)) %>% 
+  set_names(cell_cats)
+x_vals['neuroglial\nprogenitor'] <- -1
+x_vals['oligodendrocytes'] <- -1
 
 umap_scanvi_plot <- custom_dimplot(metadata = ipsc_obj@meta.data, 
                dimred_colnames = "umap", 
                colorby = "subtype_labels",
                add_text = FALSE,
-               ny = "oligod",
+               ny = y_vals,
+               nx = x_vals,
+               lab_size = 5,
                color_text_grp = TRUE,
-               custom_lab_fill = c("white", rep("black",5), rep("white", 2)),
-               custom_colors = viridis::turbo(8)) +
+               custom_lab_fill = c(rep("black",4), rep("white",1), rep("black",1),"white"),
+               custom_colors = ct_colors) +
   theme(axis.title = element_text(size=14),
         axis.text = element_text(size=14), 
         legend.title = element_blank(),
@@ -539,8 +627,7 @@ umap_scanvi_plot <- custom_dimplot(metadata = ipsc_obj@meta.data,
         legend.text = element_text(size = 16)) +
   guides(color = guide_legend(ncol=4,override.aes = list(size = 4, alpha = 1)))
   
-# png("figures/day0_day50/CTMR/iPSC_day0-day50_scanvi_celltype_annots_UMAP.png", height = 10, width = 10, units = "in", res = 150)
-# pdf("figures/day0_day50/CTMR/iPSC_day0-day50_scanvi_celltype_annots_UMAP.pdf", height = 10, width = 10)
+# pdf("figures/day0_day50/filtered_merged_results/batches_124/iPSC_day0-day50_scanvi_celltype_annots_UMAP.pdf", height = 10, width = 10)
 umap_scanvi_plot
 # dev.off()
 ```

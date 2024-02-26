@@ -126,7 +126,9 @@ make_3D_umap <- function(metadata, idents_column, label_cols, selected_colors=NU
 
 ```{r}
 custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
-                           lab_size = 6, ny = 0, custom_lab_fill = NULL,
+                           lab_size = 6,
+                           ny = 0, nx = 0,
+                           custom_lab_fill = NULL,
                            label_samples = TRUE,
                            color_text_grp = FALSE,
                            add_text = TRUE, 
@@ -167,6 +169,12 @@ custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
      y_val <- ny
    }
    
+   if(is.character(nx)){
+     x_val <-  ifelse(grepl(nx, labs_df[[colorby]]), 1.5, 0)
+   }else{
+     x_val <- nx
+   }
+   
    if(is.null(custom_lab_fill)){
      fill_val <-  "white"
    }else{
@@ -186,6 +194,7 @@ custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
                              mapping = aes_string(x = "x", y = "y", label = colorby),
                              color = "black",
                              nudge_y = y_val,
+                              nudge_x = x_val,
                              segment.colour = NA,
                              size = lab_size,
                              seed = seed)
@@ -195,6 +204,7 @@ custom_dimplot <- function(metadata, colorby, dimred_colnames, custom_colors,
                            mapping = mapping,
                            fill = fill_val,
                            nudge_y = y_val,
+                            nudge_x = x_val,
                            segment.colour = NA,
                            label.size = 0.5,
                            size = lab_size,
@@ -2211,8 +2221,13 @@ for(VERSION in versions){
 
   # remove MT genes
   temp <- merged_filt_obj[grep("^MT-", rownames(merged_filt_obj), invert = TRUE), ]
-  temp <- subset(temp, subset = batch != "batch3")
+  bc <- temp@meta.data %>% 
+    filter(batch != "batch3" | time_point == 30) %>%
+    pull(barcode) 
+  
+  temp <- subset(temp, cells = bc)
   print(table(temp$batch))
+  print(table(temp$orig.ident))
   
   # object version 
   seurat_class <- class(temp[['RNA']])
@@ -2268,9 +2283,11 @@ for(VERSION in versions){
     merged_subset_obj <- AddMetaData(merged_subset_obj,
                                    as.data.frame(merged_subset_obj@reductions$umap@cell.embeddings))
     
-    saveRDS(merged_subset_obj, glue("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_B124_seurat_obj_{VERSION}.RDS"))
+    job::job({
+          saveRDS(merged_subset_obj, glue("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_B124_seurat_obj_{VERSION}.RDS"))
+    }, import = c("merged_subset_obj"))
 }
-rm(merged_subset_obj)
+rm(merged_filt_obj)
 ```
 
 ```{r}
@@ -2286,6 +2303,7 @@ Idents(merged_subset_obj) <- merged_subset_obj$orig.ident
 
 merged_subset_obj #60184 features across 62,544 samples within 2 assays 
 table(merged_subset_obj$batch)
+table(merged_subset_obj$time_point)
 ```
 
 ```{r fig.width=10, fig.height=10}

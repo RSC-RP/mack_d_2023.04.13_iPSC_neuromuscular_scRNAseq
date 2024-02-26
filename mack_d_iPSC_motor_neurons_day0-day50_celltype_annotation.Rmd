@@ -35,22 +35,47 @@ library(RColorBrewer)
 library(Seurat)
 library(reticulate)
 library(anndata)
-```
 
-```{r message=FALSE, warning=FALSE}
+
 # python modules
-if( Sys.info()[["nodename"]] == "pdlposit-0" ) {
-  print(Sys.getenv("LD_LIBRARY_PATH"))
-  mamba_path <- "miniforge3/envs/scanvi_scib"
-}else{
+if( Sys.info()[["nodename"]] == "pdlposit-0" ){
+  mamba_path <- "miniforge3/envs/for_reticulate"
+  # new_ldd_path <- paste(Sys.getenv("LD_LIBRARY_PATH"),
+  #                       "/home/jsmi26/miniforge3/envs/scanvi/lib",
+  #                       "/home/jsmi26/miniforge3/lib",
+  #                       sep = ":")
+  #  Sys.setenv(LD_LIBRARY_PATH=new_ldd_path)
+  # print(Sys.getenv("LD_LIBRARY_PATH"))
+} else {
   mamba_path <- "opt/mambaforge/envs/scanvi_scib"
 }
 
 reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), mamba_path))
-sc <- import("scanpy", convert = FALSE)
-scvi <- import("scvi", convert = FALSE)
-scib <- import("scib_metrics.benchmark", convert = FALSE)
+# pd <- reticulate::import("pandas", convert = FALSE)
+sc <- reticulate::import("scanpy", convert = FALSE)
+scvi <- reticulate::import("scvi", convert = FALSE)
+# scib <- reticulate::import("scib_metrics.benchmark", convert = FALSE)
 ```
+
+```{bash, eval=FALSE}
+#OpenSSL 3.0.2 15 Mar 2022 (Library: OpenSSL 3.0.2 15 Mar 2022)
+openssl version
+# in terminal - OpenSSL 3.0.2 15 Mar 2022 (Library: OpenSSL 3.0.2 15 Mar 2022)
+
+#List symbols in [file(s)] (a.out by default)
+nm -D /usr/lib/x86_64-linux-gnu/libssl.so.3 | grep -c "3.0.2" #0 counts
+nm -D /usr/lib/x86_64-linux-gnu/libssl.so.3 | grep -c "3.0.0" #998 counts
+
+which openssl #/usr/bin/openssl
+```
+
+Fresh session - Error in py_module_import(module, convert = convert) : 
+  ImportError: /usr/lib/x86_64-linux-gnu/libssl.so.3: version `OPENSSL_3.2.0' not found (required by /home/jsmi26/miniforge3/envs/scanvi/lib/python3.11/site-packages/h5py/../../.././libcurl.so.4)
+Run `reticulate::py_last_error()` for details.
+
+restart session - Error in py_module_import(module, convert = convert) : 
+  ImportError: /usr/lib/x86_64-linux-gnu/libssl.so.3: version `OPENSSL_3.2.0' not found (required by /home/jsmi26/miniforge3/envs/scanvi/lib/python3.11/site-packages/h5py/../../.././libcurl.so.4)
+Run `reticulate::py_last_error()` for details.
 
 ```{r}
 conflicted::conflict_prefer("select", "dplyr")
@@ -72,6 +97,7 @@ colors_vector <- c(RColorBrewer::brewer.pal(12, "Paired"),
   c("mediumpurple4","magenta", "peru") %>% 
   c(ggsci::pal_igv()(51))
 
+sample_id_colors <- c("black",colors_vector[1:18])
 length(colors_vector) 
 ```
 
@@ -207,21 +233,12 @@ plan()
 options(future.globals.maxSize = 60000 * 1024^2)
 ```
 
-# Genomic References 
-
-```{r}
-
-```
-
 # Celltype Reference 
 
-```{r eval=FALSE}
+```{r eval=TRUE}
 cell_ref_adata <- anndata::read_h5ad("results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_scanvi_benchmarking_adata.h5ad")
 
 # cell_ref_adata
-```
-
-```{r eval=FALSE}
 scanvi_dir <- "results/integrated_ref/scanvi/"
 if(!exists("scanvi_model")){
   scanvi_model <- scvi$model$SCANVI$load(dir_path = scanvi_dir, 
@@ -253,15 +270,21 @@ options(future.rng.onMisuse="ignore")
 ```
 
 ```{r}
-ipsc_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_harmonyIntegration_seurat_obj_v5.RDS")
+ipsc_obj <- readRDS("results/day0_day50/seurat/iPSC_MN_time-course_filtered_merged_soupX_normalized_RPCAIntegration_seurat_obj_v5.RDS")
 
-ipsc_obj
+ipsc_obj #60470 features across 86,954 samples within 2 assays
 # Add metadata and idents
 ipsc_obj$id <- factor(ipsc_obj$orig.ident, levels=unique(ipsc_obj$orig.ident))
 ipsc_obj$seurat_clusters <- ipsc_obj$SCT_snn_res.1
 Idents(ipsc_obj) <- ipsc_obj$orig.ident
 ```
 
+```{r fig.height=10, fig.width=10}
+DimPlot(ipsc_obj, 
+        group.by = "id",
+        cols = sample_id_colors,
+        reduction = "umap.rpca")
+```
 
 # SCANVI Transfer Labels 
 
@@ -285,17 +308,17 @@ ispc_adata$obs$dataset <- "iPSC"
 ispc_adata$obs$donor <- ispc_adata$obs$orig.ident
 # ispc_adata
 
-anndata::write_h5ad(ispc_adata, "results/day0_day50/scanvi/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_adata_obj.h5ad")
+# anndata::write_h5ad(ispc_adata, "results/day0_day50/scanvi/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_adata_obj.h5ad")
 ```
 
 ```{r eval=FALSE}
 # these are not integer counts after processing with soupX, so a warning is thinking the counts are normalized.
 quantile(ispc_adata$layers['counts'])
-    #   0%      25%      50%      75%     100% 
-    # 0.00     0.00     0.00     0.00 12450.19
+#   0%     25%     50%     75%    100% 
+# 0.00    0.00    0.00    0.00 3861.38
 quantile(ispc_adata$X)
-#       0%      25%      50%      75%     100% 
-# 0.000000 0.000000 0.000000 0.000000 8.057314 
+#  0%      25%      50%      75%     100% 
+# 0.000000 0.000000 0.000000 0.000000 8.057582 
 ```
 
 ### Train Query Model 
