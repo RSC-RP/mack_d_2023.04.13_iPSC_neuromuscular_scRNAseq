@@ -490,12 +490,25 @@ job::job({
 
 ```
 
+## Celltype Frequency 
+
 ```{r}
 if(!exists("ipsc_obj")){
   ipsc_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS")
 }
 
 ipsc_obj
+table(ipsc_obj@meta.data$subtype_standardized)
+```
+
+```{r}
+celltype_annots <- ipsc_obj@meta.data %>% 
+  select(subtype_standardized, subtype_labels) %>% 
+  rownames_to_column("barcode")
+
+head(celltype_annots)
+dim(celltype_annots) #87870     3
+# write.csv(celltype_annots, "results/day0_day50/scanvi/iPSC_motor_neuron_day0-day50_time-course_scanvi_predictions.csv", row.names = FALSE)
 ```
 
 ```{r}
