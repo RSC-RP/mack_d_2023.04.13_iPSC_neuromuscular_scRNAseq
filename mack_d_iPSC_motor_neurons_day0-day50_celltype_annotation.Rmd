@@ -36,25 +36,36 @@ library(Seurat)
 library(reticulate)
 library(anndata)
 
-
 # python modules
-if( Sys.info()[["nodename"]] == "pdlposit-0" ){
-  mamba_path <- "miniforge3/envs/for_reticulate"
-  # new_ldd_path <- paste(Sys.getenv("LD_LIBRARY_PATH"),
-  #                       "/home/jsmi26/miniforge3/envs/scanvi/lib",
-  #                       "/home/jsmi26/miniforge3/lib",
-  #                       sep = ":")
-  #  Sys.setenv(LD_LIBRARY_PATH=new_ldd_path)
-  # print(Sys.getenv("LD_LIBRARY_PATH"))
-} else {
-  mamba_path <- "opt/mambaforge/envs/scanvi_scib"
-}
+# if( Sys.info()[["nodename"]] == "pdlposit-0" ){
+#   mamba_path <- "miniforge3/envs/for_reticulate"
+#   # new_ldd_path <- paste(Sys.getenv("LD_LIBRARY_PATH"),
+#   #                       "/home/jsmi26/miniforge3/envs/scanvi/lib",
+#   #                       "/home/jsmi26/miniforge3/lib",
+#   #                       sep = ":")
+#   #  Sys.setenv(LD_LIBRARY_PATH=new_ldd_path)
+#   # print(Sys.getenv("LD_LIBRARY_PATH"))
+# } else {
+#   mamba_path <- "opt/mambaforge/envs/scanvi_scib"
+# }
 
-reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), mamba_path))
-# pd <- reticulate::import("pandas", convert = FALSE)
+# reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), mamba_path))
+reticulate::use_virtualenv(virtualenv = file.path(getwd(),".venv"))
 sc <- reticulate::import("scanpy", convert = FALSE)
 scvi <- reticulate::import("scvi", convert = FALSE)
-# scib <- reticulate::import("scib_metrics.benchmark", convert = FALSE)
+scib <- reticulate::import("scib_metrics.benchmark", convert = FALSE)
+
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter","dplyr")
+conflicted::conflict_prefer("saveRDS","base")
+```
+
+```{bash, eval=FALSE}
+/opt/python/3.11.3/bin/python -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip #Successfully installed pip-24.0
+#python3 -m pip install -r env/testing_requirements.txt #Successfully installed
+python3 -m pip install -r env/scanvi_scib_requirements.txt #Successfully installed
 ```
 
 ```{bash, eval=FALSE}
@@ -65,23 +76,9 @@ openssl version
 #List symbols in [file(s)] (a.out by default)
 nm -D /usr/lib/x86_64-linux-gnu/libssl.so.3 | grep -c "3.0.2" #0 counts
 nm -D /usr/lib/x86_64-linux-gnu/libssl.so.3 | grep -c "3.0.0" #998 counts
-
 which openssl #/usr/bin/openssl
 ```
 
-Fresh session - Error in py_module_import(module, convert = convert) : 
-  ImportError: /usr/lib/x86_64-linux-gnu/libssl.so.3: version `OPENSSL_3.2.0' not found (required by /home/jsmi26/miniforge3/envs/scanvi/lib/python3.11/site-packages/h5py/../../.././libcurl.so.4)
-Run `reticulate::py_last_error()` for details.
-
-restart session - Error in py_module_import(module, convert = convert) : 
-  ImportError: /usr/lib/x86_64-linux-gnu/libssl.so.3: version `OPENSSL_3.2.0' not found (required by /home/jsmi26/miniforge3/envs/scanvi/lib/python3.11/site-packages/h5py/../../.././libcurl.so.4)
-Run `reticulate::py_last_error()` for details.
-
-```{r}
-conflicted::conflict_prefer("select", "dplyr")
-conflicted::conflict_prefer("filter","dplyr")
-conflicted::conflict_prefer("saveRDS","base")
-```
 
 # Define Functions
 

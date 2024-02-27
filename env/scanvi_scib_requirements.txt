@@ -1,0 +1,9 @@
+pandas==2.1.0
+scanpy==1.9.5
+leidenalg==0.10.1
+pymde==0.1.18
+scvi-tools==1.0.4
+scikit-misc==0.3.0
+scib-metrics==0.4.0
+jax[cpu]==0.4.14
+jaxlib==0.4.14

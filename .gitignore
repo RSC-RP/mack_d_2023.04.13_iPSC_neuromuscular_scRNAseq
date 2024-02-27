@@ -35,6 +35,8 @@ samples
 00_archive
 
 
+venv_ok/
+requirements_02.27.2024.txt
 env/testing_requirements.txt
 env/testing.yaml
 openssl_versions.txt
