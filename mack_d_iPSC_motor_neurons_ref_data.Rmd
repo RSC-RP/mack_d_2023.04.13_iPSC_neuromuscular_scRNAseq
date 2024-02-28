@@ -1987,6 +1987,12 @@ model$save(dir_path = model_dir,
            prefix = 'embryonic_adult_spinal_cord_motor_cortex', 
            save_anndata = TRUE, overwrite=TRUE)
 # model
+```
+
+```{r, eval=FALSE}
+adata <- anndata::read_h5ad(
+    filename = "results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortexadata.h5ad"
+)
 
 # load the trained model
 model <- scvi$model$SCVI$load(dir_path = "results/integrated_ref/scanvi", 
@@ -2027,37 +2033,37 @@ sc$tl$pca(adata_update, n_comps=30L, use_highly_variable=TRUE)
 sc$pp$neighbors(adata_update, n_pcs=30L, n_neighbors=20L)
 sc$tl$umap(adata_update, min_dist=0.3)
 
-pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_subtype_standardized_unintegrated_UMAP.pdf", height = 15, width = 20)
+# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_subtype_standardized_unintegrated_UMAP.pdf", height = 15, width = 20)
 sc$pl$umap(
     adata_update,
     color=c("subtype_standardized"),
     frameon=TRUE,
 )
-dev.off()
+# dev.off()
 
-pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_dataset_donor_unintegrated_UMAP.pdf", height = 10, width = 20)
+# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_dataset_donor_unintegrated_UMAP.pdf", height = 10, width = 20)
 sc$pl$umap(
     adata_update,
     color= c('dataset','donor'),
     ncols=2L,
     frameon=TRUE,
 )
-dev.off()
+# dev.off()
 
 # use scVI latent space for UMAP generation
 #  We see that this dataset is quite complex, where only some batches contain certain cell types.
 sc$pp$neighbors(adata_update, use_rep=SCVI_LATENT_KEY)
 sc$tl$umap(adata_update, min_dist=0.3)
 
-pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_subtype_standardized_scvi_UMAP.pdf", height = 15, width = 20)
+# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_subtype_standardized_scvi_UMAP.pdf", height = 15, width = 20)
 sc$pl$umap(
     adata_update,
     color=c("subtype_standardized"),
     frameon=TRUE,
 )
-dev.off()
+# dev.off()
 
-pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_dataset_donor_scvi_UMAP.pdf", height = 10, width = 20)
+# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_dataset_donor_scvi_UMAP.pdf", height = 10, width = 20)
 sc$pl$umap(
     adata_update,
     color=c('dataset','donor'),
@@ -2066,13 +2072,13 @@ sc$pl$umap(
 )
 dev.off()
 
-pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_motorneuron_scvi_UMAP.pdf", height = 10, width = 12)
+# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_motorneuron_scvi_UMAP.pdf", height = 10, width = 12)
 sc$pl$umap(
     adata_update,
     color=c('motorneuron'),
     frameon=TRUE,
 )
-dev.off()
+# dev.off()
 ```
 
 ```{r eval=FALSE}
