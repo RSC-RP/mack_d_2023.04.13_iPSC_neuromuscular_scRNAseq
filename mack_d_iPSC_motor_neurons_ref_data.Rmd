@@ -23,6 +23,13 @@ options(Seurat.object.assay.version = "v5")
 table = function (..., useNA = 'ifany') base::table(..., useNA = useNA)
 ```
 
+```{bash, eval=FALSE}
+/opt/python/3.11.3/bin/python -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip #Successfully installed pip-24.0
+python3 -m pip install -r env/scanvi_scib_cellrank_requirements.txt #Successfully installed
+```
+
 ```{r message=FALSE,warning=FALSE}
 library(dplyr)
 library(tidyr)

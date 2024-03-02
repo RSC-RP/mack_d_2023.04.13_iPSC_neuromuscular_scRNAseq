@@ -66,19 +66,8 @@ scib <- reticulate::import("scib_metrics.benchmark", convert = FALSE)
 conflicted::conflict_prefer("select", "dplyr")
 conflicted::conflict_prefer("filter","dplyr")
 conflicted::conflict_prefer("saveRDS","base")
+conflicted::conflicts_prefer(SeuratObject::Layers)
 ```
-
-```{bash, eval=FALSE}
-#OpenSSL 3.0.2 15 Mar 2022 (Library: OpenSSL 3.0.2 15 Mar 2022)
-openssl version
-# in terminal - OpenSSL 3.0.2 15 Mar 2022 (Library: OpenSSL 3.0.2 15 Mar 2022)
-
-#List symbols in [file(s)] (a.out by default)
-nm -D /usr/lib/x86_64-linux-gnu/libssl.so.3 | grep -c "3.0.2" #0 counts
-nm -D /usr/lib/x86_64-linux-gnu/libssl.so.3 | grep -c "3.0.0" #998 counts
-which openssl #/usr/bin/openssl
-```
-
 
 # Define Functions
 
@@ -287,10 +276,80 @@ DimPlot(ipsc_obj,
 
 ### Prepare iPSC Anndata Object 
 
-```{r eval=FALSE}
+https://github.com/satijalab/seurat/issues/8146
+Correction during integration happens in scale.data and not in data slot.
+
+https://github.com/satijalab/seurat/issues/6680
+Sorry about that, they are in "scale.data" slot
+Anyhow, "integrated" assay is useful for clustering etc.. Any downstream analysis should be done on "RNA" or "SCT" assays
+This issue #283 is related
+
+```{r eval=TRUE}
 # logNormalize to be consistent with the reference dataset
 DefaultAssay(ipsc_obj) <- 'RNA'
 ipsc_obj <- NormalizeData(ipsc_obj, normalization.method = "LogNormalize")
+ipsc_obj <- FindVariableFeatures(ipsc_obj, nfeatures = 3000)
+ipsc_obj <- ScaleData(ipsc_obj, features = VariableFeatures(ipsc_obj))
+ipsc_obj
+```
+
+```{r}
+rna_before_int <- ipsc_obj[["RNA"]]
+
+ipsc_obj <-  IntegrateLayers(
+      object = ipsc_obj,
+      method = RPCAIntegration,
+      orig.reduction = "pca",
+      new.reduction = "rpca_lognorm",
+      reference = c(1:11), # select iPSC day0 to day35 as reference datasets
+      normalization.method = 'LogNormalize', #why is this required?
+      assay = "RNA",
+      k.anchor = 5,
+      k.weight = 100, #default
+      preserve.order = FALSE, # merge by largest sized dataset
+      verbose = TRUE) 
+# Building integrated reference
+# Merging dataset 10 into 9
+# Extracting anchors for merged samples
+# Finding integration vectors
+# Finding integration vector weights
+# [...]
+# Integrating dataset 18 with reference dataset
+# Finding integration vectors
+# Finding integration vector weights
+
+rna_after_int <- ipsc_obj[["RNA"]]
+rna_after_int_join <- JoinLayers(ipsc_obj[["RNA"]])
+```
+
+```{r}
+# rna_before_int@layers$counts.iPSC_ipsc
+# rna_before_int@layers$data.iPSC_ipsc
+# rna_before_int@cells@.Data[,"counts.iPSC_ipsc"]
+table(rna_before_int@cells@.Data[,"counts.iPSC_ipsc"]) #86954
+
+dim(rna_before_int@layers$scale.data) #3000 86954
+dim(rna_after_int@layers$scale.data) #3000 86954
+
+# data and counts before and after integration within layers is identical values 
+identical(rna_after_int@layers$counts.iPSC_ipsc, rna_before_int@layers$counts.iPSC_ipsc) # TRUE
+identical(rna_after_int@layers$data.iPSC_ipsc, rna_before_int@layers$data.iPSC_ipsc) # TRUE
+
+# data before and after integration + join is. identical values
+identical(rna_after_int_join@layers$data[,rna_before_int@cells@.Data[,"counts.iPSC_ipsc"]],
+          rna_before_int@layers$data.iPSC_ipsc)  # TRUE
+# counts before and after integration + join is. identical values
+identical(rna_after_int_join@layers$counts[,rna_before_int@cells@.Data[,"counts.iPSC_ipsc"]], 
+          rna_before_int@layers$counts.iPSC_ipsc) # TRUE
+
+# So even scale data is NOT batch corrected in any way?? WTF
+# scale.data integration is. identical values
+identical(rna_after_int@layers$scale.data, rna_before_int@layers$scale.data) # TRUE?? 
+# scale.data integration + join is. identical values
+identical(rna_after_int_join@layers$scale.data , rna_before_int@layers$scale.data) # TRUE??
+```
+
+```{r eval=FALSE}
 # join layers to export the full raw counts matrix for all samples (layers)
 ipsc_obj[["RNA"]] <- JoinLayers(ipsc_obj[["RNA"]])
 
