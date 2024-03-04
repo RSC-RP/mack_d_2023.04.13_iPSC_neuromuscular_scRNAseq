@@ -24,10 +24,14 @@ table = function (..., useNA = 'ifany') base::table(..., useNA = useNA)
 ```
 
 ```{bash, eval=FALSE}
+# using venv
 /opt/python/3.11.3/bin/python -m venv .venv
 source .venv/bin/activate
 python3 -m pip install --upgrade pip #Successfully installed pip-24.0
 python3 -m pip install -r env/scanvi_scib_cellrank_requirements.txt #Successfully installed
+
+# using conda/mamba
+mamba env create -f env/scanvi_scib.yaml
 ```
 
 ```{r message=FALSE,warning=FALSE}
@@ -48,13 +52,14 @@ library(SeuratDisk)
 library(ontologyIndex)
 library(reticulate)
 
-library(sceasy)
+# library(sceasy)
 library(anndata)
 ```
 
 ```{r message=FALSE, warning=FALSE}
 # python modules
-reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "opt/mambaforge/envs/scanvi_scib"))
+# reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "opt/mambaforge/envs/scanvi_scib"))
+reticulate::use_virtualenv(virtualenv = file.path(getwd(),".venv"))
 sc <- import("scanpy", convert = FALSE)
 scvi <- import("scvi", convert = FALSE)
 scib <- import("scib_metrics.benchmark", convert = FALSE)
@@ -97,6 +102,7 @@ plan()
 # plan()
 options(future.globals.maxSize = 10000 * 1024^2)
 ```
+
 # Define Functions
 
 ```{r}
@@ -1809,10 +1815,6 @@ scANVI requires:
   * the sample identifier for each cell (as in scVI)
   * the cell type/state for each cell
 
-```{bash eval=FALSE}
-mamba env create -f env/scanvi.yaml
-```
-
 ```{r message = FALSE, warning=FALSE}
 py_config()
 # python:         /Users/jsmi26/opt/mambaforge/envs/scanvi_scib/bin/python
@@ -1832,7 +1834,7 @@ https://docs.scvi-tools.org/en/stable/tutorials/notebooks/quick_start/api_overvi
 ```{r}
 if(!exists("merged_split_obj")){
   # start with the subsetted dataset
-  merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj_v4.RDS")
+  merged_split_obj <- readRDS("results/integrated_ref/intermediate_objs/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj_v4.RDS")
   merged_split_obj <- clean_standardize_annots(merged_split_obj)
 }
 
