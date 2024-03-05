@@ -719,7 +719,7 @@ ref_motor_cortex <- ref_motor_cortex %>%
 # saveRDS(ref_motor_cortex,"resources/cell_refs/allen_institute/M1/human_M1_normalized_seurat_object.RDS")
 ```
 
-```{r}
+```{r eval=FALSE}
 ref_motor_cortex <- readRDS("resources/cell_refs/allen_institute/M1/human_M1_normalized_seurat_object.RDS")
 
 new_meta <- ref_motor_cortex@meta.data %>% 
@@ -1831,7 +1831,7 @@ https://docs.scvi-tools.org/en/stable/tutorials/notebooks/quick_start/api_overvi
 * perform feature selection, to reduce the number of features (genes in this case) used as input to the scvi-tools model
 * we recommend anywhere from 1,000 to 10,000 HVGs, but it will be context-dependent.
 
-```{r}
+```{r eval=FALSE}
 if(!exists("merged_split_obj")){
   # start with the subsetted dataset
   merged_split_obj <- readRDS("results/integrated_ref/intermediate_objs/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_seurat_obj_v4.RDS")
@@ -1857,7 +1857,7 @@ gc()
 # table(merged_scanvi_obj$dataset)
 ```
 
-```{r}
+```{r eval=FALSE}
 cell_type_table <- merged_scanvi_obj@meta.data %>% 
   group_by(dataset, subtype_standardized) %>% 
   dplyr::count() %>% 
@@ -1915,7 +1915,8 @@ adata <- anndata::AnnData(
   X = tr_norm_mat, 
   obs = as.data.frame(merged_scanvi_obj@meta.data),
   var = as.data.frame(merged_scanvi_obj@assays$RNA@meta.features),
-  layers = list(counts = tr_counts_mat)
+  layers = list(counts = tr_counts_mat,
+                lognorm = tr_norm_mat)
 )
 # remove large objects from memory
 rm(tr_counts_mat)
@@ -1923,8 +1924,7 @@ rm(merged_scanvi_obj)
 gc()
 
 # save another copy of the raw dataset in the object 
-adata$raw = adata
-# adata
+# adata$raw = adata
 # class(adata) #"AnnDataR6" "R6"
 
 # verbosity to max
@@ -1933,8 +1933,11 @@ sc$settings$verbosity = 4L
 # retain genes expressed in at least 10 cells
 sc$pp$filter_genes(adata, min_cells = 10)
 # filtered out 1970 genes that are detected in less than 10.0 cells
-dim(adata) # 87603 by 18,273 genes
+dim(adata) # 18,273 genes
 
+# find highly variable genes using pearson residuals
+# will replace adata.X with pearson residuals
+#https://scanpy.readthedocs.io/en/stable/generated/scanpy.experimental.pp.highly_variable_genes.html
 sc$experimental$pp$highly_variable_genes(
     adata,
     n_top_genes=5000L,
@@ -1943,6 +1946,7 @@ sc$experimental$pp$highly_variable_genes(
     flavor="pearson_residuals",
     batch_key="donor",
 )
+# https://scanpy.readthedocs.io/en/stable/generated/scanpy.pp.highly_variable_genes.html
 # sc$pp$highly_variable_genes(
 #     adata,
 #     n_top_genes=5000,
@@ -1952,18 +1956,12 @@ sc$experimental$pp$highly_variable_genes(
 #     batch_key="dataset",
 # )
 
+# Save the Highly variable gene list for reference later 
+# write.csv(adata$var, "results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_pearson_residuals_HVG.csv")
 dim(adata) # 87711 by  5000 genes
 
-# set seed for randomization 
-scvi$settings$seed <- as.integer(20231030)
-
-# Additional settings
-# verbosity < 20 is INFO and verbosity < 10 is DEBUG
-scvi$settings$verbosity <- as.integer(1)
-scvi$settings$num_threads <- as.integer(20)
-
 # run setup_anndata, use column  dataset for batch and donor 
-# https://scanpy.readthedocs.io/en/stable/generated/scanpy.pp.highly_variable_genes.html
+# specify to use raw counts layer in model training, since it does its own normalization internally
 scvi$model$SCVI$setup_anndata(adata,
                               layer="counts", 
                               batch_key = "donor",
@@ -1973,9 +1971,24 @@ scvi$model$SCVI$setup_anndata(adata,
 
 # adata
 # min(round((20000 / adata$shape[1]) * 400), 400) # 91 max_epochs by default for training
+
+# Save the adata object
+# anndata::write_h5ad(adata, 
+                    # filename = file.path("results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_pre-training_adata.h5ad"))
 ```
 
-```{r}
+```{r eval=FALSE}
+if (!exists("adata")){
+  adata <- anndata::read_h5ad(file.path("results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_pre-training_adata.h5ad"))
+}
+
+# set seed for randomization 
+scvi$settings$seed <- as.integer(20231030)
+
+# Additional training settings
+scvi$settings$verbosity <- as.integer(1) # verbosity < 20 is INFO and verbosity < 10 is DEBUG
+scvi$settings$num_threads <- as.integer(40)
+
 # create the model
 # single-cell Variational Inference params recommended by authors
 # n_layers=2, # Number of hidden layers used for encoder and decoder NNs
@@ -1997,30 +2010,24 @@ model
 model$train(accelerator = 'cpu', 
             devices = 'auto',
             max_epochs = 400L,
-            batch_size = 1024L,
+            batch_size = as.integer(1024*4),
             train_size = 0.9)
 
 # Saving consists of saving the model neural network weights, as well as parameters used to initialize the model.
+# time: 3:01:55 hrs
 model_dir <- "results/integrated_ref/scanvi"
 model$save(dir_path = model_dir, 
            prefix = 'embryonic_adult_spinal_cord_motor_cortex', 
            save_anndata = TRUE, overwrite=TRUE)
-# model
+model
 ```
 
 ```{r, eval=FALSE}
-adata <- anndata::read_h5ad(
-    filename = "results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortexadata.h5ad"
-)
+adata <- anndata::read_h5ad(filename = "results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortexadata.h5ad")
 
 # load the trained model
 model <- scvi$model$SCVI$load(dir_path = "results/integrated_ref/scanvi", 
                               prefix = 'embryonic_adult_spinal_cord_motor_cortex')
-
-# reading in the adata obj using reticulate changes the data structure/class. 
-#sc$read_h5ad(path) #"anndata._core.anndata.AnnData" "python.builtin.object"
-# adata <- anndata::read_h5ad("results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortexadata.h5ad")
-# class(adata)
 
 SCVI_NORMALIZED_KEY <- "scvi_normalized"
 SCVI_LATENT_KEY <- "X_scVI"
@@ -2037,6 +2044,7 @@ adata_update <- AnnData(
   uns = adata$uns,
   obsm = list("X_scVI" = latent), 
   layers = list("counts" = adata$layers['counts'],
+                "lognorm" = adata$layers['lognorm'],
                 "scvi_normalized" = norm_cts)
 )
 
@@ -2052,37 +2060,37 @@ sc$tl$pca(adata_update, n_comps=30L, use_highly_variable=TRUE)
 sc$pp$neighbors(adata_update, n_pcs=30L, n_neighbors=20L)
 sc$tl$umap(adata_update, min_dist=0.3)
 
-# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_subtype_standardized_unintegrated_UMAP.pdf", height = 15, width = 20)
+pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_subtype_standardized_unintegrated_UMAP.pdf", height = 15, width = 20)
 sc$pl$umap(
     adata_update,
     color=c("subtype_standardized"),
     frameon=TRUE,
 )
-# dev.off()
+dev.off()
 
-# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_dataset_donor_unintegrated_UMAP.pdf", height = 10, width = 20)
+pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_dataset_donor_unintegrated_UMAP.pdf", height = 10, width = 20)
 sc$pl$umap(
     adata_update,
     color= c('dataset','donor'),
     ncols=2L,
     frameon=TRUE,
 )
-# dev.off()
+dev.off()
 
 # use scVI latent space for UMAP generation
 #  We see that this dataset is quite complex, where only some batches contain certain cell types.
 sc$pp$neighbors(adata_update, use_rep=SCVI_LATENT_KEY)
 sc$tl$umap(adata_update, min_dist=0.3)
 
-# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_subtype_standardized_scvi_UMAP.pdf", height = 15, width = 20)
+pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_subtype_standardized_scvi_UMAP.pdf", height = 15, width = 20)
 sc$pl$umap(
     adata_update,
     color=c("subtype_standardized"),
     frameon=TRUE,
 )
-# dev.off()
+dev.off()
 
-# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_dataset_donor_scvi_UMAP.pdf", height = 10, width = 20)
+pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_dataset_donor_scvi_UMAP.pdf", height = 10, width = 20)
 sc$pl$umap(
     adata_update,
     color=c('dataset','donor'),
@@ -2091,13 +2099,13 @@ sc$pl$umap(
 )
 dev.off()
 
-# pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_motorneuron_scvi_UMAP.pdf", height = 10, width = 12)
+pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_motorneuron_scvi_UMAP.pdf", height = 10, width = 12)
 sc$pl$umap(
     adata_update,
     color=c('motorneuron'),
     frameon=TRUE,
 )
-# dev.off()
+dev.off()
 ```
 
 ```{r eval=FALSE}
@@ -2110,15 +2118,30 @@ scanvi_model <- scvi$model$SCANVI$from_scvi_model(
 )
 scanvi_model
 
+# set seed for randomization 
+scvi$settings$seed <- as.integer(20231030)
+
+# Additional training settings
+scvi$settings$verbosity <- as.integer(1) # verbosity < 20 is INFO and verbosity < 10 is DEBUG
+scvi$settings$num_threads <- as.integer(40)
+
 scanvi_model$train(accelerator = 'cpu', 
-            devices = 'auto',
-            max_epochs = 50L,
-            train_size = 0.9)
+                  devices = 'auto',
+                  max_epochs = 50L,
+                  batch_size = as.integer(1024*4),
+                  train_size = 0.9)
 
 # Saving consists of saving the model neural network weights, as well as parameters used to initialize the model.
+# model_dir <- "results/integrated_ref/scanvi"
+# scanvi_model$save(dir_path = model_dir,
+#                   prefix = 'embryonic_adult_spinal_cord_motor_cortex_scanvi_', 
+#                   save_anndata = TRUE, overwrite=TRUE)
+# scanvi_model
+```
+```{r}
 model_dir <- "results/integrated_ref/scanvi"
 scanvi_model$save(dir_path = model_dir,
-                  prefix = 'embryonic_adult_spinal_cord_motor_cortex_scanvi_', 
+                  prefix = 'embryonic_adult_spinal_cord_motor_cortex_scanvi_',
                   save_anndata = TRUE, overwrite=TRUE)
 scanvi_model
 ```
@@ -2158,7 +2181,7 @@ adata_update <- AnnData(
                 )
 )
 # adata_update
-# anndata::write_h5ad(adata_update, filename = file.path(scanvi_dir, "embryonic_adult_spinal_cord_motor_cortex_scanvi_benchmarking_adata.h5ad"))
+anndata::write_h5ad(adata_update, filename = file.path(scanvi_dir, "embryonic_adult_spinal_cord_motor_cortex_scanvi_benchmarking_adata.h5ad"))
 ```
 
 ```{r eval=FALSE}
