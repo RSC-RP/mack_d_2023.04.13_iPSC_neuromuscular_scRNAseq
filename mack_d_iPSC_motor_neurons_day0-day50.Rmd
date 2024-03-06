@@ -2647,6 +2647,66 @@ purrr::map(names(marker_genes_iPSC), function(type){
 })
 ```
 
+### Examine logNormalized Integration 
+
+```{r eval=FALSE}
+ipsc_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
+
+# exmine if this object should be integrated prior to celltype annotations
+rna_before_int <- ipsc_obj[["RNA"]]
+
+ipsc_obj <-  IntegrateLayers(
+      object = ipsc_obj,
+      method = RPCAIntegration,
+      orig.reduction = "pca",
+      new.reduction = "rpca_lognorm",
+      reference = c(1:11), # select iPSC day0 to day35 as reference datasets
+      normalization.method = 'LogNormalize', #why is this required?
+      assay = "RNA",
+      k.anchor = 5,
+      k.weight = 100, #default
+      preserve.order = FALSE, # merge by largest sized dataset
+      verbose = TRUE) 
+# Building integrated reference
+# Merging dataset 10 into 9
+# Extracting anchors for merged samples
+# Finding integration vectors
+# Finding integration vector weights
+# [...]
+# Integrating dataset 18 with reference dataset
+# Finding integration vectors
+# Finding integration vector weights
+
+rna_after_int <- ipsc_obj[["RNA"]]
+rna_after_int_join <- JoinLayers(ipsc_obj[["RNA"]])
+```
+
+```{r eval=FALSE}
+# rna_before_int@layers$counts.iPSC_ipsc
+# rna_before_int@layers$data.iPSC_ipsc
+# rna_before_int@cells@.Data[,"counts.iPSC_ipsc"]
+table(rna_before_int@cells@.Data[,"counts.iPSC_ipsc"]) #86954
+
+dim(rna_before_int@layers$scale.data) #3000 86954
+dim(rna_after_int@layers$scale.data) #3000 86954
+
+# data and counts before and after integration within layers is identical values 
+identical(rna_after_int@layers$counts.iPSC_ipsc, rna_before_int@layers$counts.iPSC_ipsc) # TRUE
+identical(rna_after_int@layers$data.iPSC_ipsc, rna_before_int@layers$data.iPSC_ipsc) # TRUE
+
+# data before and after integration + join is. identical values
+identical(rna_after_int_join@layers$data[,rna_before_int@cells@.Data[,"counts.iPSC_ipsc"]],
+          rna_before_int@layers$data.iPSC_ipsc)  # TRUE
+# counts before and after integration + join is. identical values
+identical(rna_after_int_join@layers$counts[,rna_before_int@cells@.Data[,"counts.iPSC_ipsc"]], 
+          rna_before_int@layers$counts.iPSC_ipsc) # TRUE
+
+# So even scale data is NOT batch corrected in any way?? WTF
+# scale.data integration is. identical values
+identical(rna_after_int@layers$scale.data, rna_before_int@layers$scale.data) # TRUE?? 
+# scale.data integration + join is. identical values
+identical(rna_after_int_join@layers$scale.data , rna_before_int@layers$scale.data) # TRUE??
+```
 
 ## Harmony 
 

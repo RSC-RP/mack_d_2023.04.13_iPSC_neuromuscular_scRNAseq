@@ -280,62 +280,6 @@ ipsc_obj <- ScaleData(ipsc_obj, features = VariableFeatures(ipsc_obj))
 ipsc_obj
 ```
 
-```{r}
-rna_before_int <- ipsc_obj[["RNA"]]
-
-ipsc_obj <-  IntegrateLayers(
-      object = ipsc_obj,
-      method = RPCAIntegration,
-      orig.reduction = "pca",
-      new.reduction = "rpca_lognorm",
-      reference = c(1:11), # select iPSC day0 to day35 as reference datasets
-      normalization.method = 'LogNormalize', #why is this required?
-      assay = "RNA",
-      k.anchor = 5,
-      k.weight = 100, #default
-      preserve.order = FALSE, # merge by largest sized dataset
-      verbose = TRUE) 
-# Building integrated reference
-# Merging dataset 10 into 9
-# Extracting anchors for merged samples
-# Finding integration vectors
-# Finding integration vector weights
-# [...]
-# Integrating dataset 18 with reference dataset
-# Finding integration vectors
-# Finding integration vector weights
-
-rna_after_int <- ipsc_obj[["RNA"]]
-rna_after_int_join <- JoinLayers(ipsc_obj[["RNA"]])
-```
-
-```{r}
-# rna_before_int@layers$counts.iPSC_ipsc
-# rna_before_int@layers$data.iPSC_ipsc
-# rna_before_int@cells@.Data[,"counts.iPSC_ipsc"]
-table(rna_before_int@cells@.Data[,"counts.iPSC_ipsc"]) #86954
-
-dim(rna_before_int@layers$scale.data) #3000 86954
-dim(rna_after_int@layers$scale.data) #3000 86954
-
-# data and counts before and after integration within layers is identical values 
-identical(rna_after_int@layers$counts.iPSC_ipsc, rna_before_int@layers$counts.iPSC_ipsc) # TRUE
-identical(rna_after_int@layers$data.iPSC_ipsc, rna_before_int@layers$data.iPSC_ipsc) # TRUE
-
-# data before and after integration + join is. identical values
-identical(rna_after_int_join@layers$data[,rna_before_int@cells@.Data[,"counts.iPSC_ipsc"]],
-          rna_before_int@layers$data.iPSC_ipsc)  # TRUE
-# counts before and after integration + join is. identical values
-identical(rna_after_int_join@layers$counts[,rna_before_int@cells@.Data[,"counts.iPSC_ipsc"]], 
-          rna_before_int@layers$counts.iPSC_ipsc) # TRUE
-
-# So even scale data is NOT batch corrected in any way?? WTF
-# scale.data integration is. identical values
-identical(rna_after_int@layers$scale.data, rna_before_int@layers$scale.data) # TRUE?? 
-# scale.data integration + join is. identical values
-identical(rna_after_int_join@layers$scale.data , rna_before_int@layers$scale.data) # TRUE??
-```
-
 ```{r eval=FALSE}
 # join layers to export the full raw counts matrix for all samples (layers)
 ipsc_obj[["RNA"]] <- JoinLayers(ipsc_obj[["RNA"]])
@@ -377,6 +321,13 @@ weight_decay of 0.0
  *  ensures the latent representation of  reference cells will remain exactly the same
 
 ```{r eval=FALSE}
+# set seed for randomization 
+scvi$settings$seed <- as.integer(20231030)
+
+# Additional training settings
+scvi$settings$verbosity <- as.integer(1) # verbosity < 20 is INFO and verbosity < 10 is DEBUG
+scvi$settings$num_threads <- as.integer(40)
+
 # prepare the query dataset
 scanvi_model$prepare_query_anndata(adata = ispc_adata,
                                    reference_model =  scanvi_model)
@@ -395,8 +346,9 @@ ispc_adata$obs$subtype_standardized %>% table()
 # train the query model
 scanvi_query$train(accelerator = 'cpu',
                    devices = 'auto',
-                   max_epochs=200L, 
-                   plan_kwargs=list("weight_decay" = 0.0))
+                   max_epochs = 200L, 
+                   batch_size = as.integer(1024*4),
+                   plan_kwargs = list("weight_decay" = 0.0))
 
 # scanvi_query
 
@@ -450,19 +402,6 @@ sc$pl$umap(
 )
 
 anndata::write_h5ad(ispc_adata, "results/day0_day50/scanvi/iPSC_motor_neuron_day0-day50_time-course_scanvi_predictions_adata.h5ad")
-
-
-# Update an anndata object & Add the latent representation to the adata object
-# ispc_adata2 <- AnnData(
-#   X = ispc_adata$X, 
-#   obs = ispc_adata$obs,
-#   uns = ispc_adata$uns,
-#   obsp = ispc_adata$obsp,
-#   obsm = list(X_scANVI = ipsc_adata$obsm['X_scANVI'])
-#               # X_umap = ispc_adata$obsm['X_umap'])
-#   # layers = list(counts = ispc_adata$layers['counts'],
-#   #               scanvi_norm = scanvi_query$get_normalized_expression())
-# )
 ```
 
 
