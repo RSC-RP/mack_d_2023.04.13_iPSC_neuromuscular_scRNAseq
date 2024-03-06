@@ -24,7 +24,6 @@ table = function (..., useNA = 'ifany') base::table(..., useNA = useNA)
 /opt/python/3.11.3/bin/python -m venv .venv
 source .venv/bin/activate
 python3 -m pip install --upgrade pip #Successfully installed pip-24.0
-#python3 -m pip install -r env/testing_requirements.txt #Successfully installed
 python3 -m pip install -r env/scanvi_scib_cellrank_requirements.txt #Successfully installed
 ```
 
@@ -44,20 +43,8 @@ library(Seurat)
 library(reticulate)
 library(anndata)
 
-# python modules
-# if( Sys.info()[["nodename"]] == "pdlposit-0" ){
-#   mamba_path <- "miniforge3/envs/for_reticulate"
-#   # new_ldd_path <- paste(Sys.getenv("LD_LIBRARY_PATH"),
-#   #                       "/home/jsmi26/miniforge3/envs/scanvi/lib",
-#   #                       "/home/jsmi26/miniforge3/lib",
-#   #                       sep = ":")
-#   #  Sys.setenv(LD_LIBRARY_PATH=new_ldd_path)
-#   # print(Sys.getenv("LD_LIBRARY_PATH"))
-# } else {
-#   mamba_path <- "opt/mambaforge/envs/scanvi_scib"
-# }
 
-# reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), mamba_path))
+# reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "mambaforge/envs/scanvi_scib")
 reticulate::use_virtualenv(virtualenv = file.path(getwd(),".venv"))
 sc <- reticulate::import("scanpy", convert = FALSE)
 scvi <- reticulate::import("scvi", convert = FALSE)
