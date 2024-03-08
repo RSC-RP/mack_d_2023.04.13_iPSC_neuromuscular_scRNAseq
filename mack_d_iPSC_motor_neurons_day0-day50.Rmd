@@ -2647,7 +2647,70 @@ purrr::map(names(marker_genes_iPSC), function(type){
 })
 ```
 
-### Examine logNormalized Integration 
+
+### Investigate Outliers 
+
+```{r}
+outliers <- subset(ipsc_obj, subset = umapharmony_2 > 8)
+
+# outliers
+table(outliers$harmony_clusters)[table(outliers$harmony_clusters) != 0]
+```
+
+```{r fig.height=10, fig.width=10}
+custom_dimplot(metadata = outliers@meta.data, 
+               colorby = "batch",label_samples = FALSE,
+               dimred_colnames = "umapharmony", 
+               custom_colors = ggpubr::get_palette("jco",4))
+```
+
+```{r}
+quantile(ipsc_obj$log2_nCount_RNA, probs = seq(0.5,1, length.out = 11))
+FeaturePlot(ipsc_obj,
+            reduction = "umap.harmony", 
+            cols = c("azure","red"),
+            max.cutoff = 14.87302,
+            features = "log2_nCount_RNA")
+
+FeaturePlot(outliers,
+            reduction = "umap.harmony",
+            max.cutoff = 14.87302,
+            features = "log2_nCount_RNA")
+
+FeaturePlot(ipsc_obj,
+            reduction = "umap.harmony", 
+            cols = c("azure","red"),
+            features = "nFeature_RNA")
+
+FeaturePlot(outliers,
+            reduction = "umap.harmony",
+            features = "nFeature_RNA")
+
+FeaturePlot(ipsc_obj,
+            reduction = "umap.harmony", 
+            cols = c("azure","red"),
+            features = "percent.mt")
+FeaturePlot(outliers,
+            reduction = "umap.harmony",
+            features = "percent.mt")
+```
+
+```{r}
+table(table(outliers$orig.ident)  == 1 )
+```
+
+```{r fig.height=10}
+# outliers[["RNA"]] <- split(outliers[["RNA"]], f = outliers$orig.ident)
+umi_counts_c20 <-  sapply(grep("counts",SeuratObject::Layers(outliers@assays$RNA), value = TRUE), function(x) {
+   colSums(outliers@assays$RNA[[x]] > 0)
+})
+
+sapply(umi_counts_c20, quantile) %>% 
+  as.data.frame() %>% 
+  pheatmap::pheatmap(mat = ., cluster_rows = FALSE)
+```
+
+## RPCA logNormalized Integration 
 
 ```{r eval=FALSE}
 ipsc_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")

@@ -977,9 +977,6 @@ MNs_df %>%
               label_cols = c("motorneuron_subclusters","id","batch"),
               selected_colors = colors_vector)
 
-# rm(MNs)
-# rm(prog)
-
 # define the subclusters
 # create new subtype labels with the unsupervised subclusters
 mn_prog_subclusts <- prog_df %>% 
@@ -1008,6 +1005,8 @@ length(unique(ipsc_obj$subtype_standardized_subclusters)) #22
 job::job({
   saveRDS(ipsc_obj,"results/day0_day50/seurat/iPSC_MN_day0-day50_time-course_filtered_merged_soupX_normalized_RPCA_anno_subclust_seurat_obj_v5.RDS")
 }, import = c("ipsc_obj"))
+
+rm(MNs, prog)
 ```
 
 ```{r}
@@ -1190,7 +1189,11 @@ GroupCorrelationPlot(
   cor = "nCount_RNA_cor"
 )
 
+
+
 # Seurat Transfer Labels 
+
+NOTE: not used! 
 
 https://github.com/satijalab/seurat/issues/6675
 https://github.com/satijalab/seurat/issues/6054

@@ -40,7 +40,7 @@ library(anndata)
 reticulate::use_virtualenv(virtualenv = file.path(getwd(),".venv"))
 sc <- reticulate::import("scanpy", convert = FALSE)
 cr <- import("cellrank", convert = FALSE)
-mt <- import("moscot", convert = FALSE)
+mt <- import("moscot.problems.time", convert = FALSE)
 
 conflicted::conflict_prefer("select", "dplyr")
 conflicted::conflict_prefer("filter","dplyr")
@@ -417,41 +417,6 @@ ipsc_obj@meta.data$log2_nCount_RNA <- log2(ipsc_obj@meta.data$nCount_RNA)
 ipsc_obj
 ```
 
-```{r}
-# logNormalize to be consistent with the reference dataset
-DefaultAssay(ipsc_obj) <- 'RNA'
-
-# split to normalize each individually
-ipsc_obj <- NormalizeData(ipsc_obj, normalization.method = "LogNormalize") %>% 
-  FindVariableFeatures() %>% 
-  ScaleData() %>% 
-  RunPCA(npcs = 50, 
-         reduction.name = "pca_lognorm")
-
-# join layers to export the full raw counts matrix for all samples (layers)
-ipsc_obj[["RNA"]] <- JoinLayers(ipsc_obj[["RNA"]])
-```
-
-```{r}
-# find clusters with harmony integrated UMAP
-DefaultAssay(ipsc_obj) <- "SCT"
-
-ipsc_obj <- ipsc_obj %>% 
-  FindNeighbors(reduction = "harmony",
-                dims = 1:50, 
-                k.param = 20, #default
-                graph.name = c("harmony_nn","harmony_snn")) %>% 
-  FindClusters(resolution = 1, 
-               algorithm = 3, 
-               cluster.name = "harmony_clusters",
-               group.singletons = TRUE)
-```
-
-```{r}
-table(ipsc_obj$harmony_clusters)
-#29 clusters
-```
-
 ## Visualization 
 
 ```{r}
@@ -461,147 +426,29 @@ table(ipsc_obj$subtype_standardized)
 ```{r fig.height=10, fig.width=10}
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                colorby = "batch", 
-               dimred_colnames = "umapharmony", 
+               dimred_colnames = "umaprpca", 
                custom_colors = ggpubr::get_palette("jco", 4))
 
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                colorby = "subtype_standardized", 
-               dimred_colnames = "umapharmony", 
-               custom_colors = ggpubr::get_palette("simpsons", 7))
+               dimred_colnames = "umaprpca", 
+               custom_colors = ggpubr::get_palette("npg", 7))
 
 custom_dimplot(metadata = ipsc_obj@meta.data, 
-               colorby = "harmony_clusters", 
-               dimred_colnames = "umapharmony", 
-               custom_colors = ggpubr::get_palette("simpsons", 29))
+               colorby = "rpca_snn_res0.6", 
+               dimred_colnames = "umaprpca", 
+               custom_colors = ggpubr::get_palette("simpsons", length(unique( ipsc_obj@meta.data$rpca_snn_res0.6))))
+
 ```
 
-## Investigate Outliers 
+```{r fig.height=15, fig.width=15}
+# ipsc_obj$time_point %>% head()
+# ipsc_obj$time_point_factor %>% head()
 
-```{r}
-outliers <- subset(ipsc_obj, subset = umapharmony_2 > 8)
-
-outliers
-table(outliers$harmony_clusters)[table(outliers$harmony_clusters) != 0]
-```
-
-```{r fig.height=10, fig.width=10}
-custom_dimplot(metadata = outliers@meta.data, 
-               colorby = "batch",label_samples = FALSE,
-               dimred_colnames = "umapharmony", 
-               custom_colors = ggpubr::get_palette("jco",4))
-```
-
-```{r}
-quantile(ipsc_obj$log2_nCount_RNA, probs = seq(0.5,1, length.out = 11))
-FeaturePlot(ipsc_obj,
-            reduction = "umap.harmony", 
-            cols = c("azure","red"),
-            max.cutoff = 14.87302,
-            features = "log2_nCount_RNA")
-
-FeaturePlot(outliers,
-            reduction = "umap.harmony",
-            max.cutoff = 14.87302,
-            features = "log2_nCount_RNA")
-
-FeaturePlot(ipsc_obj,
-            reduction = "umap.harmony", 
-            cols = c("azure","red"),
-            features = "nFeature_RNA")
-
-FeaturePlot(outliers,
-            reduction = "umap.harmony",
-            features = "nFeature_RNA")
-
-FeaturePlot(ipsc_obj,
-            reduction = "umap.harmony", 
-            cols = c("azure","red"),
-            features = "percent.mt")
-FeaturePlot(outliers,
-            reduction = "umap.harmony",
-            features = "percent.mt")
-```
-
-```{r}
-table(table(outliers$orig.ident)  == 1 )
-```
-
-```{r fig.height=10}
-# outliers[["RNA"]] <- split(outliers[["RNA"]], f = outliers$orig.ident)
-umi_counts_c20 <-  sapply(grep("counts",SeuratObject::Layers(outliers@assays$RNA), value = TRUE), function(x) {
-   colSums(outliers@assays$RNA[[x]] > 0)
-})
-
-sapply(umi_counts_c20, quantile) %>% 
-  as.data.frame() %>% 
-  pheatmap::pheatmap(mat = ., cluster_rows = FALSE)
-```
-
-# Subset (?)
-
-removed 586 cells total 
-
-```{r}
-# remove cluster 20 outliers for now. Need to determine what is driving their VERY different expression profile. But the cells looks so clustered so close that I also think it could be technical artifacts that could be making them cluster like that. 
-ipsc_obj_subset <- subset(ipsc_obj, subset =  umapharmony_2 < 8)
-DefaultAssay(ipsc_obj_subset) <- "SCT"
-ipsc_obj_subset
-```
-
-```{r}
-# re-run find neighbors, UMAP reduction, and clustering on the subset object
-dims <- 1:30
-ipsc_obj_subset <- ipsc_obj_subset %>% 
-    FindNeighbors(reduction = "harmony",
-                dims = dims, 
-                k.param = 20, #default
-                ) %>% 
-    FindClusters(resolution = 0.7, 
-                 algorithm = 3, 
-                 cluster.name = "subset_harmony_clusters",
-                 group.singletons = FALSE
-                 ) %>% 
-     RunUMAP(reduction = "harmony",
-           n.components = 3,
-           dims = dims,
-           n.neighbors = 30,# default 30
-           metric = "cosine",
-           min.dist = 0.1, # default 0.3
-           # negative.sample.rate = 10,
-           n.epochs = 500,
-           reduction.name = "umap_harmony_subset")
-
-# ipsc_obj
-ipsc_obj_subset <- AddMetaData(ipsc_obj_subset, 
-                        metadata = ipsc_obj_subset@reductions$umap_harmony_subset@cell.embeddings)
-
-table(ipsc_obj_subset$subset_harmony_clusters) # 22 clusters 
-```
-
-
-
-```{r fig.height=10, fig.width=10}
-custom_dimplot(metadata = ipsc_obj_subset@meta.data, 
-               colorby = "batch", 
-               dimred_colnames = "umapharmonysubset", 
-               custom_colors = ggpubr::get_palette("jco", 4))
-
-custom_dimplot(metadata = ipsc_obj_subset@meta.data, 
-               colorby = "subtype_standardized", 
-               add_text = FALSE,
-               dimred_colnames = "umapharmonysubset", 
-               custom_colors = brewer.pal(7,"Set3"))
-
-custom_dimplot(metadata = ipsc_obj_subset@meta.data, 
-               colorby = "subset_harmony_clusters", 
-               dimred_colnames = "umapharmonysubset", 
-               custom_colors = ggpubr::get_palette("simpsons", 22))
-
-custom_dimplot(metadata = ipsc_obj_subset@meta.data, 
-               colorby = "id",
-               label_samples = FALSE,
-               dimred_colnames = "umapharmonysubset", 
-               custom_colors = viridis::turbo(19))
+ggplot(ipsc_obj@meta.data, aes(x = umaprpca_1, y = umaprpca_2)) +
+  geom_point(aes(color = time_point), alpha = 0.5, size = 0.1) +
+  scale_color_viridis_c() +
+  theme_bw()
 ```
 
 # Trajectories
@@ -615,7 +462,7 @@ However, there are cases where the dynamics of the process being studied is unkn
 
 OK - slingshot
    - Monocle3
-   - CellRank
+   - CellRank / Moscot
 No
 - PRESCIENT (8 citations, not maintained in 3 yrs)
 - psupertime (not maintained in 4yrs, only 11 citations)
@@ -720,6 +567,10 @@ plot_cells(cds,
 
 ## Slingshot
 
+https://bioconductor.org/packages/release/bioc/html/slingshot.html
+
+Provides functions for inferring continuous, branching lineage structures in low-dimensional data. Slingshot was designed to model developmental trajectories in single-cell RNA sequencing data and serve as a component in an analysis pipeline after dimensionality reduction and clustering. It is flexible enough to handle arbitrarily many branching events and allows for the incorporation of prior knowledge through supervised graph construction.
+
 ```{r}
 library(slingshot)
 ```
@@ -743,13 +594,12 @@ sce
 potential labels
 1) subtype (N=7)
 2) unsupervised clusters (N=22)
-* subset_harmony_clusters
 3) subtype + unsupervised clusters
 
 ```{r}
 sce$subtype_standardized_subclusters %>% table()
 reducedDims(sce)
-head(reducedDim(sce, "UMAP.HARMONY"))
+head(reducedDim(sce, "UMAP.RPCA"))
 ```
 
 All of the results are stored in a PseudotimeOrdering object, which is added to the colData of the original object and can be accessed via colData(sce)$slingshot
@@ -761,6 +611,12 @@ to extact all slingshot objects/results
 
 omega
 This value is provided as a potentially useful rule of thumb for datasets with outlying clusters or multiple, distinct trajectories. 
+-  In practice, this makes omega the maximum allowable distance between two connected clusters.
+- omega_scale, default = 3
+
+approx_points
+ - sets the number of points to be used for each curve, can have a large effect on computation time.
+ - set the default value to 150 whenever the input dataset contains more than that many cells. 
 
 lineages without defined start cluster
 - If we do not specify a starting point, slingshot selects one based on parsimony, maximizing the number of clusters shared between lineages before a split.
@@ -771,50 +627,49 @@ lineages without defined start cluster
   - clusters as **terminal** states will be constrained to have only one connection when the MST 
   
 
+The fundamental assumption of slingshot is that cells which are transcriptionally similar will be close to each other in some reduced-dimensional space. Since we use Euclidean distances in constructing lineages and measuring pseudotime, it is important to have a low-dimensional representation of the data.
+
 ```{r}
+sce$subtype_standardized_subclusters %>% 
+  unique() %>% 
+  grep("progenitor", ., value=TRUE)
+```
+
+
+```{r}
+# or use the full RPCA dimensions - the authors show using just 1 or 2 dims? 
 sce <- slingshot(sce, 
                  clusterLabels = 'subtype_standardized_subclusters',
-                 reducedDim = 'HARMONY',
+                 reducedDim = 'UMAP.RPCA', 
                  time = sce$time_point,
                  start.clus = NULL,
                  end.clus = NULL,
                  dist.method = "slingshot",
-                 use.median = FALSE, 
+                 use.median = FALSE, # FALSE is default
+                 omega = FALSE,
+                 omega_scale = 1.5,
                  reassign = TRUE, 
-                 allow.breaks = TRUE)
+                 allow.breaks = TRUE, # TRUE is default
+                 reweight = TRUE # TRUE is default
+                 ) 
 ```
 
+
+
 ```{r}
+# checkout the coldata pseudotime (?) values
+colData(sce)$slingshot
+
+# convert to Slingshot Dataset
 slingshot_data <- SlingshotDataSet(sce)
-
-# slingshot_data
-# sce
-slingshot_data@lineages %>% head()
+# slingshot_data@lineages %>% head()
+slingshot_data
 ```
-
 ```{r}
-sce2 <- slingshot(sce, 
-                 clusterLabels = 'subtype_standardized_subclusters',
-                 reducedDim = 'UMAP.HARMONY',
-                 time = sce$time_point,
-                 start.clus = NULL,
-                 end.clus = NULL,
-                 dist.method = "slingshot",
-                 use.median = FALSE, 
-                 reassign = TRUE, 
-                 allow.breaks = TRUE)
+summary(colData(sce)$slingPseudotime_1) # lots of NAs...
+
+colnames(colData(sce)) %>% grep("slingPseudotime_", ., value=TRUE)
 ```
-
-```{r}
-lineages2 <- SlingshotDataSet(sce2)
-
-names(lineages2@lineages) # 19 lineages
-head(lineages2@lineages)
-summary(sce$slingPseudotime_1) # pseudotime 1 to slingPseudotime_13
-sce
-```
-
-colors_vector
 
 ```{r}
 n_clusts <- length(unique(sce$subtype_standardized_subclusters))
@@ -831,19 +686,15 @@ head(cc)
 ```
 
 ```{r fig.height=10, fig.width=10}
-plot(reducedDim(sce, "UMAP.HARMONY"), 
+plot(reducedDim(sce, "UMAP.RPCA"), 
      col = alpha(cc,alpha = 0.5),
      cex = 0.25,
      asp = 1, pch = 16)
-
-lines(SlingshotDataSet(sce2),
+lines(SlingshotDataSet(sce),
       type = 'lineages',
       lwd = 2, 
       col = 'black')
 ```
-
-
-
 
 ## TSCAN
 
@@ -854,10 +705,83 @@ library(TSCAN)
 
 ## CellRank 
 
+CellRank is a software toolkit to study dynamical biological processes, like development, regeneration, cancer or reprogramming, based on multi-view single-cell genomics data
+ - Oftentimes, the type of downstream analysis does not depend on the modality that was used to estimate cellular transitions
 
 https://cellrank.readthedocs.io/en/latest/notebooks/tutorials/kernels/500_real_time.html
 
 a scRNA-seq dataset with experimental time points. Additional spatial or lineage information improves the accuracy of fate mapping, but is not required.
+
+* a scRNA-seq dataset for which you can compute a cell-cell transition matrix using any CellRank kernel.
+
+```{r}
+# HVFInfo(ipsc_obj, assay="RNA")
+ # table(VariableFeatures(ipsc_obj, assay = "SCT") %in% VariableFeatures(ipsc_obj, assay = "RNA"))
+```
+
+```{r}
+var_df <- data.frame(gene_name = rownames(ipsc_obj[["RNA"]])) %>% 
+  mutate(highly_variable = gene_name %in% VariableFeatures(ipsc_obj, assay = "SCT"), 
+         var.features = gene_name %in% VariableFeatures(ipsc_obj, assay = "SCT")) %>%
+        set_rownames(.$gene_name)
+dim(var_df)
+```
+
+```{r}
+# create an anndata object with transposed counts matrices
+ipsc_adata <- AnnData(
+  X = t(as.matrix(LayerData(ipsc_obj, assay = 'RNA', layer = "data"))), 
+  obs = as.data.frame(ipsc_obj@meta.data),
+  var = var_df,
+  obsm = list("X_scANVI" = ipsc_obj@reductions$scanvi@cell.embeddings, 
+               "X_rpca" = ipsc_obj@reductions$rpca@cell.embeddings,
+               "X_pca" = ipsc_obj@reductions$pca@cell.embeddings,
+               "X_umap" = ipsc_obj@reductions$umap.rpca@cell.embeddings
+              ),
+  layers = list(counts = t(as.matrix(LayerData(ipsc_obj, assay = 'RNA', layer = "counts"))))
+)
+
+ipsc_adata
+
+# sc$pp$filter_genes(ipsc_adata, min_cells = 5) # originally - 33,525 genes
+# dim(ipsc_adata) # 86954 by 29240 genes
+# uses n.neighbors = 15. I wonder if I should change all n.neighbors to 15 (Seurat default is 30), to really preserve the more local graph structure
+sc$pp$neighbors(ipsc_adata,
+                use_rep = "X_rpca",
+                random_state = as.integer(20240301), 
+                metric = 'cosine')
+```
+
+couple cells across time points using [optimal transport](https://en.wikipedia.org/wiki/Transportation_theory_(mathematics)) (OT), as pioneered by [Waddington-OT](https://broadinstitute.github.io/wot/)
+  * From the manuscript:
+  * Analyzing >315,000 cells sampled densely across 18 days of reprogramming mouse embryonic fibroblasts (MEFs) into iPSCs
+
+https://moscot.readthedocs.io/en/latest/notebooks/examples/problems/800_score_genes_for_marginals.html
+* core_genes_for_marginals() computes the marginals such that cells expressing proliferation marker genes get a higher weight as they are assumed to have multiple descendants or that certain cells are outliers in space, so they should not influence the mapping too much
+
+```{r}
+tp <- mt$TemporalProblem(ipsc_adata)
+tp
+
+tp <- tp$score_genes_for_marginals(
+    gene_set_proliferation="human",
+    gene_set_apoptosis="human"
+)
+# WARNING: genes are not in var_names and ignored: ['FAM64A', 'HN1', 'MLF1IP']
+# WARNING: genes are not in var_names and ignored: ['FASLG', 'GPX1', 'H1-0', 'IFNB1']
+
+adata.obs["day"] = adata.obs["time_point"].astype(float).astype("category")
+# In addition, it's nicer for plotting to have numerical values.
+adata.obs["day_numerical"] = adata.obs["time_point"].astype(float)
+
+tp <- tp$prepare(time_key="time_point")
+```
+
+```{r fig.height=5, fig.width=25}
+sc$pl$embedding(ipsc_adata, 
+                basis="X_umap", 
+                color=c("subtype_standardized","proliferation", "apoptosis"))
+```
 
 
 # Session Info
