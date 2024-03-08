@@ -407,7 +407,8 @@ head(mn_subtype_markers)
 
 ```{r}
 current_path <- file.path("results/day0_day50/seurat")
-current_obj <- "iPSC_MN_time-course_filtered_merged_soupX_normalized_RPCAIntegration_seurat_obj_v5.RDS"
+current_obj <- "results/day0_day50/seurat/iPSC_MN_day0-day50_time-course_filtered_merged_soupX_normalized_RPCA_anno_subclust_seurat_obj_v5.RDS"
+  # "iPSC_MN_time-course_filtered_merged_soupX_normalized_RPCAIntegration_seurat_obj_v5.RDS"
   # "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS" #v5 Seurat Object
 
 ipsc_obj <- readRDS(file.path(current_path, current_obj))
