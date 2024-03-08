@@ -44,8 +44,8 @@ library(reticulate)
 library(anndata)
 
 
-# reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "mambaforge/envs/scanvi_scib")
-reticulate::use_virtualenv(virtualenv = file.path(getwd(),".venv"))
+reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "opt/mambaforge/envs/scanvi_scib"))
+# reticulate::use_virtualenv(virtualenv = file.path(getwd(),".venv"))
 sc <- reticulate::import("scanpy", convert = FALSE)
 scvi <- reticulate::import("scvi", convert = FALSE)
 scib <- reticulate::import("scib_metrics.benchmark", convert = FALSE)
