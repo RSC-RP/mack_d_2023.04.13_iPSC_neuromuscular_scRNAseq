@@ -44,8 +44,8 @@ library(reticulate)
 library(anndata)
 
 
-reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "opt/mambaforge/envs/scanvi_scib"))
-# reticulate::use_virtualenv(virtualenv = file.path(getwd(),".venv"))
+# reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "opt/mambaforge/envs/scanvi_scib"))
+reticulate::use_virtualenv(virtualenv = file.path(getwd(),".venv"))
 sc <- reticulate::import("scanpy", convert = FALSE)
 scvi <- reticulate::import("scvi", convert = FALSE)
 scib <- reticulate::import("scib_metrics.benchmark", convert = FALSE)
@@ -274,16 +274,29 @@ This issue #283 is related
 ```{r eval=TRUE}
 # logNormalize to be consistent with the reference dataset
 DefaultAssay(ipsc_obj) <- 'RNA'
+
 ipsc_obj <- NormalizeData(ipsc_obj, normalization.method = "LogNormalize")
 ipsc_obj <- FindVariableFeatures(ipsc_obj, nfeatures = 3000)
-ipsc_obj <- ScaleData(ipsc_obj, features = VariableFeatures(ipsc_obj))
+
+# join layers to export the full raw counts matrix for all samples (layers)
+ipsc_obj[["RNA"]] <- JoinLayers(ipsc_obj[["RNA"]])
+
+
+cc_genes <- Seurat::cc.genes.updated.2019
+ipsc_obj <- CellCycleScoring(ipsc_obj, 
+                             # assay = "RNA",
+                             s.features = cc_genes$s.genes, 
+                             g2m.features = cc_genes$g2m.genes,
+                             set.ident = FALSE)
+ipsc_obj$CC.Difference <- ipsc_obj$S.Score - ipsc_obj$G2M.Score
+FeaturePlot(ipsc_obj, reduction = "umap", features = "CC.Difference")
+
+ipsc_obj <- ScaleData(ipsc_obj, features = VariableFeatures(ipsc_obj), 
+                      vars.to.regress = c("CC.Difference"))
 ipsc_obj
 ```
 
 ```{r eval=FALSE}
-# join layers to export the full raw counts matrix for all samples (layers)
-ipsc_obj[["RNA"]] <- JoinLayers(ipsc_obj[["RNA"]])
-
 # create an anndata object with transposed counts matrices
 ipsc_adata <- AnnData(
   X = t(as.matrix(LayerData(ipsc_obj,assay = 'RNA', layer = "data"))), 
@@ -340,6 +353,8 @@ scanvi_query = scanvi_model$load_query_data(adata = ipsc_adata,
                                             device = 'auto')
 
 scanvi_query
+```
+```{r eval=FALSE}
 # All annotation labels are set as unknown by default. 
 ipsc_adata$obs$subtype_standardized %>% table()
 
@@ -376,6 +391,22 @@ table(predictions)
 
 # Add predictions to the cell metadata
 ipsc_adata$obs$subtype_standardized <- predictions
+```
+
+```{r}
+scanvi_query$view_anndata_setup()
+```
+
+See: https://discourse.scverse.org/t/what-is-the-best-way-to-extract-a-full-batch-effect-corrected-count-matrix-from-scvi-model/825
+
+
+```{r}
+# retrieve batch corrected normalized counts
+scanvi_norm_mat <- scanvi_query$get_normalized_expression(n_samples = 25L,
+                                                          transform_batch = levels(ipsc_obj$id)[1:11],
+                                                          library_size = 1e4)
+scanvi_norm_mat <- py_to_r(scanvi_norm_mat)
+scanvi_norm_mat[1:5,1:5]
 
 # Update an anndata object & Add the latent representation to the adata object
 ipsc_adata <- AnnData(
@@ -385,7 +416,7 @@ ipsc_adata <- AnnData(
   obsm = list('X_scANVI' = scanvi_query$get_latent_representation()
               ),
   layers = list(counts = ipsc_adata$layers['counts'],
-                scanvi_norm = scanvi_query$get_normalized_expression()
+                scanvi_norm = scanvi_norm_mat
                 )
 )
 
@@ -401,7 +432,7 @@ sc$pl$umap(
     ncols=2L,
 )
 
-# anndata::write_h5ad(ipsc_adata, "results/day0_day50/scanvi/iPSC_motor_neuron_day0-day50_time-course_scanvi_predictions_adata.h5ad")
+anndata::write_h5ad(ipsc_adata, "results/day0_day50/scanvi/iPSC_motor_neuron_day0-day50_time-course_scanvi_predictions_adata.h5ad")
 ```
 
 
@@ -964,6 +995,7 @@ prog_df <- prog@meta.data
 
 table(prog_df$progenitor_subclusters) %>% length() #8
 table(MNs_df$motorneuron_subclusters) %>% length() #9
+# use an ensembl based algorith to tune the res jaccard index/siloutte values 
 
 prog_df%>% 
     make_3D_umap(metadata = ., 
@@ -1012,6 +1044,8 @@ rm(MNs, prog)
 ```{r}
 table(ipsc_obj$subtype_standardized_subclusters)[order(names(table(ipsc_obj$subtype_standardized_subclusters)))]
 ```
+Note: make another celltype line plot vs time with the subclusters 
+- these might 
 
 ```{r fig.height=15, fig.width=10}
 DimPlot(ipsc_obj, 
