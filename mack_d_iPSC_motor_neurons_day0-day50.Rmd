@@ -34,15 +34,8 @@ library(plotly)
 library(RColorBrewer)
 
 library(Seurat)
-# library(SeuratDisk)
-# library(SeuratObject)
-# library(SeuratWrappers)
-# library(Matrix)
-# library(SeuratObject)
-# library(SeuratData)
-# library(SeuratWrappers)
-
-library(scDblFinder)
+# library(scDblFinder)
+# ERROR: dependencies ‘scran’, ‘scater’, ‘scuttle’, ‘xgboost’ are not available for package ‘scDblFinder’
 library(SoupX)
 ```
 
@@ -51,23 +44,6 @@ conflicted::conflict_prefer("select", "dplyr")
 conflicted::conflict_prefer("filter","dplyr")
 conflicted::conflict_prefer("saveRDS","base")
 ```
-
-
------------------- CMAKE NOT FOUND --------------------
-
-CMake was not found on the PATH. Please install CMake:
-
- - sudo yum install cmake          (Fedora/CentOS; inside a terminal)
- - sudo apt install cmake          (Debian/Ubuntu; inside a terminal).
- - sudo pacman -S cmake            (Arch Linux; inside a terminal).
- - sudo brew install cmake         (MacOS; inside a terminal with Homebrew)
- - sudo port install cmake         (MacOS; inside a terminal with MacPorts)
-
-Alternatively install CMake from: <https://cmake.org/>
-
--------------------------------------------------------
-ERROR: configuration failed for package ‘nloptr’
-* removing ‘/home/jsmi26/R/x86_64-pc-linux-gnu-library/4.3/nloptr’
 
 # Define Functions
 
@@ -1883,6 +1859,8 @@ for(VERSION in versions){
 rm(merged_norm_obj)
 ```
 
+### Cell Cycle Scores
+
 ```{r}
 if(!exists("merged_norm_obj")){
   merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
@@ -1896,6 +1874,73 @@ Idents(merged_norm_obj) <- merged_norm_obj$orig.ident
 merged_norm_obj #60470 features across 86,954 samples within 2 assays 
 class(merged_norm_obj[["RNA"]]) #v5
 ```
+
+```{r}
+cc_genes <- Seurat::cc.genes.updated.2019
+merged_norm_obj <- CellCycleScoring(merged_norm_obj, 
+                             assay = "SCT",
+                             s.features = cc_genes$s.genes, 
+                             g2m.features = cc_genes$g2m.genes,
+                             set.ident = FALSE)
+merged_norm_obj$CC.Difference <- merged_norm_obj$S.Score - merged_norm_obj$G2M.Score
+
+table(VariableFeatures(merged_norm_obj, assay = "SCT") %in% cc_genes$s.genes)
+table(VariableFeatures(merged_norm_obj, assay = "SCT") %in% cc_genes$g2m.genes)
+```
+
+```{r fig.height=10, fig.width=10}
+FeaturePlot(merged_norm_obj, reduction = "umap", features = "S.Score")
+FeaturePlot(merged_norm_obj, reduction = "umap", features = "G2M.Score")
+FeaturePlot(merged_norm_obj, reduction = "umap", features = "CC.Difference")
+```
+
+```{r eval=FALSE}
+job::job({
+  
+merged_norm_cc_obj <- SCTransform(merged_norm_obj,
+                           assay="RNA",
+                           new.assay.name = "SCT",
+                           vars.to.regress = c("percent.mt","CC.Difference"),
+                           method = "glmGamPoi",
+                           return.only.var.genes = TRUE,
+                           verbose = TRUE)
+  
+merged_norm_cc_obj <-   RunPCA(merged_norm_cc_obj,
+                              assay = "SCT",
+                              npcs = 50,
+                              verbose = TRUE) %>% 
+        RunUMAP(reduction = "pca",
+                dims = 1:50,
+                n.components = 3,
+                n.neighbors = 30,# default 30
+                metric = "cosine",
+                min.dist = 0.1, # default 0.3
+                return.model = TRUE,
+                verbose = T)
+  
+merged_norm_cc_obj <- merged_norm_cc_obj %>%
+        FindNeighbors(reduction = "pca",
+                      dims = 1:50,
+                      k.param = 20,
+                      nn.method = "annoy",
+                      annoy.metric = "cosine",
+                      n.trees = 100,
+                      n.epochs = 500,
+                      verbose = T)
+  
+merged_norm_cc_obj <- merged_norm_cc_obj %>%
+        FindClusters(resolution = c(0.5, 1.0, 1.5),
+                     algorithm = 2,
+                     verbose = T)
+  
+merged_norm_cc_obj <- AddMetaData(merged_norm_cc_obj,
+                                   as.data.frame(merged_norm_cc_obj@reductions$umap@cell.embeddings))
+
+    saveRDS(merged_norm_obj, glue("results/day0_day50/seurat/iPSC_MN_day0-day50_time-course_filtered_merged_soupX_normalized_cellcycle_seurat_obj_v5.RDS"))
+
+}, import = c("merged_norm_obj"))
+```
+
 
 min.dist	
 This controls how tightly the embedding is allowed compress points together. Larger values ensure embedded points are moreevenly distributed, while smaller values allow the algorithm to optimise more accurately with regard to local structure. Sensible values are in the range 0.001 to 0.5.
@@ -2376,12 +2421,6 @@ bad integration - too stringent and "forces" the cells from different batches in
 https://github.com/satijalab/seurat/issues/7217
 https://github.com/satijalab/seurat/issues/7318
  
-```{r}
-merged_rpca_obj <- readRDS("results/day0_day50/seurat/iPSC_MN_time-course_filtered_merged_soupX_normalized_RPCAIntegration_seurat_obj_v5.RDS")
-
-merged_rpca_obj
-```
- 
 ```{r eval=FALSE}
 VERSION = 'v5'
 if(!exists("merged_norm_obj")){
@@ -2421,7 +2460,6 @@ merged_rpca_obj <-  IntegrateLayers(
       method = RPCAIntegration,
       orig.reduction = "pca",
       new.reduction = "rpca",
-      # reference = c(19:8), 
       reference = c(1:11), # select iPSC day0 to day35 as reference datasets
       normalization.method = 'SCT', #why is this required?
       assay = "SCT",
@@ -2467,6 +2505,12 @@ merged_rpca_obj <-  IntegrateLayers(
 # job::job({
 #     saveRDS(merged_rpca_obj, glue("results/day0_day50/seurat/iPSC_MN_time-course_filtered_merged_soupX_normalized_RPCAIntegration_seurat_obj_v5.RDS"))
 #   }, import = c("merged_rpca_obj"))
+```
+
+```{r eval=FALSE}
+merged_rpca_obj <- readRDS("results/day0_day50/seurat/iPSC_MN_time-course_filtered_merged_soupX_normalized_RPCAIntegration_seurat_obj_v5.RDS")
+
+merged_rpca_obj
 ```
 
 ```{r eval=FALSE}
