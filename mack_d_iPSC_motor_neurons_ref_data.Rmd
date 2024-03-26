@@ -1913,7 +1913,6 @@ NOTE the following changes have occured
 knitr::include_graphics("https://media.springernature.com/full/springer-static/image/art%3A10.1186%2Fs13059-021-02451-7/MediaObjects/13059_2021_2451_Fig2_HTML.png?as=webp")
 
 # About HVGs
-
 # For flavor=’seurat_v3’, normalized variance per gene, averaged in the case of multiple batches
 # For flavor=’seurat_v3’, rank of the gene according to normalized variance, median rank in the case of multiple batches
 # For flavor=’seurat_v3’[Stuart19], a normalized variance for each gene is computed. 
