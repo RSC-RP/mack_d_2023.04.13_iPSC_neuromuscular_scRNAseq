@@ -407,12 +407,11 @@ head(mn_subtype_markers)
 
 ```{r}
 current_path <- file.path("results/day0_day50/seurat")
-current_obj <- "results/day0_day50/seurat/iPSC_MN_day0-day50_time-course_filtered_merged_soupX_normalized_RPCA_anno_subclust_seurat_obj_v5.RDS"
+current_obj <- "iPSC_MN_day0-day50_time-course_filtered_merged_soupX_normalized_RPCA_anno_subclust_seurat_obj_v5.RDS"
   # "iPSC_MN_time-course_filtered_merged_soupX_normalized_RPCAIntegration_seurat_obj_v5.RDS"
   # "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS" #v5 Seurat Object
 
 ipsc_obj <- readRDS(file.path(current_path, current_obj))
-ipsc_obj@meta.data$log2_nCount_RNA <- log2(ipsc_obj@meta.data$nCount_RNA)
 
 ipsc_obj
 ```
@@ -441,7 +440,7 @@ custom_dimplot(metadata = ipsc_obj@meta.data,
 
 ```
 
-```{r fig.height=15, fig.width=15}
+```{r fig.height=10, fig.width=10}
 # ipsc_obj$time_point %>% head()
 # ipsc_obj$time_point_factor %>% head()
 
@@ -536,7 +535,8 @@ DimPlot(subset(ipsc_obj, subset = orig.ident == "iPSC_ipsc"),
 plot_cells(cds, label_principal_points = TRUE)
 ```
 
-If `root_cells` is set as NULL, then its based on manual selection of the root cells. However, there are methods available like time point selection (TPS) that might be able to refine the root cells, rather than use all time0 cells.
+If `root_cells` is set as NULL, then its based on manual selection of the root cells.
+However, there are methods available like time point selection (TPS) that might be able to refine the root cells, rather than use all time0 cells.
 
 ```{r}
 #Assigns cells a pseudotime value based on their projection on the principal graph
@@ -714,25 +714,20 @@ a scRNA-seq dataset with experimental time points. Additional spatial or lineage
 
 * a scRNA-seq dataset for which you can compute a cell-cell transition matrix using any CellRank kernel.
 
-```{r}
-# HVFInfo(ipsc_obj, assay="RNA")
- # table(VariableFeatures(ipsc_obj, assay = "SCT") %in% VariableFeatures(ipsc_obj, assay = "RNA"))
-```
-
-```{r}
+```{r eval=FALSE}
+# variable features to be added to a anndata
 var_df <- data.frame(gene_name = rownames(ipsc_obj[["RNA"]])) %>% 
   mutate(highly_variable = gene_name %in% VariableFeatures(ipsc_obj, assay = "SCT"), 
          var.features = gene_name %in% VariableFeatures(ipsc_obj, assay = "SCT")) %>%
         set_rownames(.$gene_name)
-dim(var_df)
-```
 
-```{r}
+# dim(var_df)
+
 # create an anndata object with transposed counts matrices
 ipsc_adata <- AnnData(
   X = t(as.matrix(LayerData(ipsc_obj, assay = 'RNA', layer = "data"))), 
   obs = as.data.frame(ipsc_obj@meta.data),
-  var = var_df,
+  var = as.data.frame(var_df),
   obsm = list("X_scANVI" = ipsc_obj@reductions$scanvi@cell.embeddings, 
                "X_rpca" = ipsc_obj@reductions$rpca@cell.embeddings,
                "X_pca" = ipsc_obj@reductions$pca@cell.embeddings,
@@ -743,44 +738,252 @@ ipsc_adata <- AnnData(
 
 ipsc_adata
 
-# sc$pp$filter_genes(ipsc_adata, min_cells = 5) # originally - 33,525 genes
-# dim(ipsc_adata) # 86954 by 29240 genes
-# uses n.neighbors = 15. I wonder if I should change all n.neighbors to 15 (Seurat default is 30), to really preserve the more local graph structure
+sc$pp$filter_genes(ipsc_adata, min_cells = 5) # originally - 33,525 genes
+# dim(ipsc_adata) # 86954 by 29,240 genes
+
+# uses n.neighbors = 15 by default. 
+seed_val <- as.integer(20240301)
 sc$pp$neighbors(ipsc_adata,
                 use_rep = "X_rpca",
-                random_state = as.integer(20240301), 
+                random_state = seed_val, 
                 metric = 'cosine')
+ipsc_adata
 ```
+
+### Temporal Problem 
 
 couple cells across time points using [optimal transport](https://en.wikipedia.org/wiki/Transportation_theory_(mathematics)) (OT), as pioneered by [Waddington-OT](https://broadinstitute.github.io/wot/)
   * From the manuscript:
   * Analyzing >315,000 cells sampled densely across 18 days of reprogramming mouse embryonic fibroblasts (MEFs) into iPSCs
+  * Using Waddington-OT to reconstruct the landscape of differentiation trajectories and intermediate states that give rise to these diverse fates, we describe a gradual 
+  transition to either stroma-like cells or a mesenchymal-to-epithelial transition (MET) state.
 
 https://moscot.readthedocs.io/en/latest/notebooks/examples/problems/800_score_genes_for_marginals.html
 * core_genes_for_marginals() computes the marginals such that cells expressing proliferation marker genes get a higher weight as they are assumed to have multiple descendants or that certain cells are outliers in space, so they should not influence the mapping too much
 
 ```{r}
+# set-up the object 
 tp <- mt$TemporalProblem(ipsc_adata)
 tp
 
+# calculate marginals
 tp <- tp$score_genes_for_marginals(
     gene_set_proliferation="human",
     gene_set_apoptosis="human"
 )
 # WARNING: genes are not in var_names and ignored: ['FAM64A', 'HN1', 'MLF1IP']
 # WARNING: genes are not in var_names and ignored: ['FASLG', 'GPX1', 'H1-0', 'IFNB1']
-
-adata.obs["day"] = adata.obs["time_point"].astype(float).astype("category")
-# In addition, it's nicer for plotting to have numerical values.
-adata.obs["day_numerical"] = adata.obs["time_point"].astype(float)
-
-tp <- tp$prepare(time_key="time_point")
 ```
 
 ```{r fig.height=5, fig.width=25}
 sc$pl$embedding(ipsc_adata, 
                 basis="X_umap", 
-                color=c("subtype_standardized","proliferation", "apoptosis"))
+                color=c("subtype_standardized_subclusters","proliferation", "apoptosis"))
+```
+
+```{r}
+# this doesn't work, since the ipsc_adata$obs is not a pandas dataframe.
+# ipsc_adata$obs["day"] = ipsc_adata$obs["time_point"]$astype("float")$astype("category")
+
+# convert to pandas dataframe class again to access the astype() function
+pd_df <- reticulate::r_to_py(ipsc_adata$obs)
+ipsc_adata$obs['day'] <- pd_df["time_point"]$astype('float')$astype('category')
+
+# https://moscot.readthedocs.io/en/latest/genapi/moscot.problems.time.TemporalProblem.prepare.html#moscot.problems.time.TemporalProblem.prepare
+# PCA on X is computed.Each pairwise (for each time-point) PCA is compared to one another to build the graphs
+tp <- tp$prepare(time_key="day")
+```
+
+entropic regularization: `epsilon` 
+amount of unbalancedness on the source marginal: `tau_a` c
+ 
+Higher entropic regularization speeds up the optimization and improves statistical properties of the solution
+unbalancedness makes the solution more robust with respect to uncertain cellular growth rates and biased cell sampling
+
+```{r}
+# solve one OT problem per time point pair, probabilistically matching early to late cells
+tp <- tp$solve(epsilon=1e-3, tau_a=0.95, scale_cost="mean")
+tp
+
+# tp$save(path = "results/day0_day50/cellrank/temporal_problem", overwrite=FALSE)
+# tp$save(path = "results/day0_day50/cellrank/temporal_problem/iPSC_MNs_day0-day50_moscot_cellrank_OT.pickle")
+```
+
+1. sparsify OT transport maps by removing entries below a certain threshold
+* entropic regularization yields dense matrices which would make CellRank analysis very slow. 
+2. use OT transport maps and molecular similarity to **model transitions across and within time points**
+3. row-normalize the resulting cell-cell transition matrix (including all time points) and construct the Markov chain.  
+
+### Real Time Kernal
+
+```{r eval=FALSE}
+# Set up the RealTimeKernel
+tmk <- cr$kernels$RealTimeKernel$from_moscot(tp)
+tmk
+
+tmk$compute_transition_matrix(self_transitions="all", 
+                              conn_weight=0.2, # how to determine connection weight cutoffs
+                              threshold="auto")
+
+# tmk
+
+#https://cellrank.readthedocs.io/en/latest/notebooks/tutorials/general/100_getting_started.html#writing-and-reading-a-kernel
+tmk$write_to_adata(key = "ipsc_adata")
+anndata::write_h5ad(anndata = ipsc_adata, filename = "results/day0_day50/cellrank/iPSC_MNs_day0-day50_moscot_cellrank_RealTimeKernel.h5ad")
+```
+
+```{r fig.height=15, fig.width=15}
+clusts <- ipsc_adata$obs$subtype_standardized %>% table() %>% names()
+
+tmk$plot_single_flow(
+    cluster = "progenitor",
+    cluster_key="subtype_standardized", #subtype_standardized_subclusters
+    time_key="day",
+    clusters=clusts,
+    figsize = c(10.0 ,10.0),
+    dpi = 150,
+    save = "figures/day0_day50/trajectories/iPSC_MNs_day0-day50_moscot_cellrank_single_flow_plot.pdf"
+)
+```
+
+```{r fig.height=15, fig.width=15}
+tmk$plot_random_walks(
+    n_sims = 200L,
+    max_iter = 500L,
+    # successive_hits = 3L,
+    start_ixs=list("day" = c(0.0)),
+    basis="X_umap",
+    seed = seed_val,
+    linewidth=0.5, 
+    linealpha=0.2,
+    figsize = c(10.0 ,10.0),
+    dpi = 150,
+    save = "figures/day0_day50/trajectories/iPSC_MNs_day0-day50_moscot_cellrank_random_walks.pdf"
+    )
+```
+
+
+### Identify Initial and Terminal States
+
+CellRank decomposes cellular dynamics into macrostates: Based on Generalized Perron Cluster Cluster analysis (GPCCA), 
+
+```{r}
+if(!exists("tmk")){
+  ipsc_adata <- anndata::read_h5ad("results/day0_day50/cellrank/iPSC_MNs_day0-day50_moscot_cellrank_RealTimeKernel.h5ad")
+  tmk <- cr$kernels$RealTimeKernel$from_adata(adata = ipsc_adata, key="T_fwd")
+}
+```
+
+```{r}
+gpcca <- cr$estimators$GPCCA(tmk)
+print(gpcca)
+```
+
+uses the GPCCA algorithm as implemented in pyGPCCA to compute macrostates by maximizing for metastability
+Using the GPCCA algorithm, CellRank coarse-grains a cell-cell transition matrix onto the macro-state level
+
+```{r}
+# WARNING: Unable to import `petsc4py` or `slepc4py`. Using `method='brandts'`
+# WARNING: For `method='brandts'`, dense matrix is required. Densifying
+gpcca$fit(cluster_key="subtype_standardized_subclusters",
+          n_states=c(4L, 12L))
+
+gpcca$plot_macrostates(which="all",
+                       discrete=TRUE,
+                       legend_loc="right",
+                       s=100L)
+```
+
+WARNING: Unable to import `petsc4py` or `slepc4py`. Using `method='brandts'`
+WARNING: For `method='brandts'`, dense matrix is required. Densifying
+
+Cython has issues with >= 3.0.0
+Cython==0.29.36
+
+https://github.com/scikit-learn/scikit-learn/issues/26858
+https://github.com/cython/cython/issues/5541
+https://discuss.python.org/t/no-way-to-pin-build-dependencies/29833
+python3 -m pip install Cython --install-option="--no-cython-compile" #deprecated
+python3 -m pip install Cython --config-settings="--build-option=--no-cython-compile" --upgrade
+
+
+
+petsc4py cannot find Cython despite it existing in the environment?
+python3 -m pip install wheel
+python3 -m pip install setuptools
+python3 -m pip install PETSc
+ Building wheel for petsc (setup.py) ... error
+  ERROR: Failed building wheel for petsc
+  Running setup.py clean for petsc
+  Running command python setup.py clean
+  running clean
+  'build/lib' does not exist -- can't clean it
+  'build/bdist.linux-x86_64' does not exist -- can't clean it
+  'build/scripts-3.11' does not exist -- can't clean it
+Failed to build petsc
+
+python3 -m pip install --no-build-isolation petsc4py
+
+
+mpi4py
+* needs MPI? sudo apt-get install libopenmpi-dev
+slepc4py
+
+pkg-config --list-all
+
+-----------
+python3 -m pip install mpi4py #OK
+python3 -m pip install Cython==0.29.37 --config-settings="--build-option=--no-cython-compile" --upgrade # OK
+python3 -m pip install --verbose wheel petsc petsc4py slepc slepc4py
+------------
+
+python3 -m pip install --verbose --no-cache-dir petsc
+python3 -m pip install --verbose --no-cache-dir petsc
+
+```{r fig.height=10, fig.width=10}
+gpcca$predict_terminal_states()
+gpcca$plot_macrostates(which="terminal", legend_loc="right", s=100L)
+```
+
+```{r fig.height=10, fig.width=10}
+gpcca$plot_macrostates(which="terminal", discrete=FALSE)
+```
+
+```{r fig.height=10, fig.width=10}
+gpcca$plot_coarse_T()
+```
+
+```{r fig.height=10, fig.width=10}
+gpcca$compute_fate_probabilities()
+gpcca$plot_fate_probabilities(same_plot=FALSE)
+```
+
+```{r fig.height=10, fig.width=10}
+cr$pl$circular_projection(ipsc_adata, 
+                          keys=c("subtype_standardized_subclusters"),
+                          legend_loc="right")
+```
+
+```{r eval=FALSE}
+drivers_df = gpcca$compute_lineage_drivers(
+    lineages=["Delta"], 
+    cluster_key="clusters",
+    clusters=driver_clusters
+)
+
+head(delta_df)
+```
+
+```{r fig.height=10, fig.width=10}
+mn_states <- grep("motor",ipsc_adata$obs$subtype_standardized_subclusters, value=TRUE)
+
+sc$pl$embedding(
+    ipsc_adata, 
+    basis="umap",
+    color="subtype_standardized_subclusters", 
+    groups=mn_states, 
+    legend_loc="right"
+)
 ```
 
 

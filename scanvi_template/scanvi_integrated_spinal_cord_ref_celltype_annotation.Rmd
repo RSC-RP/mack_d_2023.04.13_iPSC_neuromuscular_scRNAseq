@@ -1,0 +1,319 @@
+---
+title: "iPSC Motor Neurons Time-series Data"
+author: "Jenny L Smith"
+date: "`R Sys.Date()`"
+output: html_document
+---
+
+# Set-up 
+
+```{r set-up, echo=FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80),
+                      tidy=TRUE,
+                      fig.align='center',
+                      fig.width = 10, fig.height = 10,
+                      eval = TRUE)
+
+options(stringsAsFactors = FALSE, max.print = 100)
+options(Seurat.object.assay.version = 'v5')
+table = function (..., useNA = 'ifany') base::table(..., useNA = useNA)
+```
+
+```{bash, eval=FALSE}
+/opt/python/3.11.3/bin/python -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip 
+python3 -m pip install -r env/scanvi_scib_cellrank_requirements.txt
+```
+
+```{r message=FALSE,warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(stringr)
+library(tibble)
+library(glue)
+
+library(ggplot2)
+library(plotly)
+library(RColorBrewer)
+
+library(Seurat)
+library(reticulate)
+library(anndata)
+
+
+# reticulate::use_condaenv(condaenv = file.path(Sys.getenv("HOME"), "opt/mambaforge/envs/scanvi_scib"))
+reticulate::use_virtualenv(virtualenv = file.path(getwd(),".venv"))
+sc <- reticulate::import("scanpy", convert = FALSE)
+scvi <- reticulate::import("scvi", convert = FALSE)
+scib <- reticulate::import("scib_metrics.benchmark", convert = FALSE)
+
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter","dplyr")
+conflicted::conflict_prefer("saveRDS","base")
+conflicted::conflicts_prefer(SeuratObject::Layers)
+```
+
+# Define Functions
+
+```{r}
+colors_vector <- c(RColorBrewer::brewer.pal(12, "Paired"), 
+            "blue1", "darkslategray3", "burlywood3", "#984EA3",
+            "seagreen1", "yellow2", "orchid", "darkblue", 
+            "lightsalmon2","slateblue1","lightskyblue4",
+            "azure2", "chartreuse1",  "lemonchiffon2",
+            "deeppink", "darkslategray1", "green4", "navajowhite", 
+            "brown4", "darkgoldenrod2", "deepskyblue1", "lightpink") %>% 
+  c(., ggpubr::get_palette("jco", 5)) %>% 
+  c("mediumpurple4","magenta", "peru") %>% 
+  c(ggsci::pal_igv()(51))
+
+sample_id_colors <- c("black",colors_vector[1:18])
+length(colors_vector) 
+```
+
+# Celltype Reference 
+
+```{r eval=TRUE}
+cell_ref_adata <- anndata::read_h5ad("results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_scanvi_benchmarking_adata.h5ad")
+
+# cell_ref_adata
+scanvi_dir <- "results/integrated_ref/scanvi/"
+if(!exists("scanvi_model")){
+  scanvi_model <- scvi$model$SCANVI$load(dir_path = scanvi_dir, 
+                                        prefix = "embryonic_adult_spinal_cord_motor_cortex_scanvi_")
+}
+```
+
+## UMAP
+
+```{r fig.height=10}
+# Look at the integrated reference
+sc$pp$neighbors(cell_ref_adata, use_rep="X_scANVI")
+sc$tl$leiden(cell_ref_adata)
+sc$tl$umap(cell_ref_adata)
+
+sc$pl$umap(
+    cell_ref_adata,
+    color=c("top_level_standardized", "subtype_standardized", "donor"),
+    frameon=TRUE,
+    ncols=1L,
+)
+```
+
+# Read in the Seurat Object
+
+```{r}
+#https://github.com/satijalab/seurat/issues/3622
+options(future.rng.onMisuse="ignore")
+```
+
+```{r}
+seurat_obj <- readRDS("path/to/seurat/object.RDS")
+```
+
+
+# SCANVI Transfer Labels 
+
+### Prepare iPSC Anndata Object 
+
+
+```{r eval=TRUE}
+# logNormalize to be consistent with the reference dataset
+DefaultAssay(seurat_obj) <- 'RNA'
+
+seurat_obj <- NormalizeData(seurat_obj, normalization.method = "LogNormalize")
+
+# join layers to export the full raw counts matrix for all samples (layers)
+# this is only needed if `class(ipsc_obj[["RNA"]])` shows Assay5
+class(ipsc_obj[["RNA"]])
+seurat_obj[["RNA"]] <- JoinLayers(seurat_obj[["RNA"]])
+
+seurat_obj
+```
+
+```{r eval=FALSE}
+# create an anndata object with transposed counts matrices
+adata <- AnnData(
+  # Add log normalized data in X
+  X = t(as.matrix(LayerData(seurat_obj,assay = 'RNA', layer = "data"))), 
+  obs = as.data.frame(seurat_obj@meta.data),
+  # Add a layer for the raw counts used by scvi-tools
+  layers = list(counts = t(as.matrix(LayerData(seurat_obj,assay = 'RNA', layer = "counts"))))
+)
+# Add matching columns for the celltype annotation from reference dataset
+adata$obs$dataset <- "my_dataset"
+adata$obs$donor <- adata$obs$orig.ident
+
+# Save the adata object for later 
+anndata::write_h5ad(adata, "path/to/adata_obj.h5ad")
+```
+
+### Train Query Model 
+
+
+weight_decay of 0.0
+ *  ensures the latent representation of  reference cells will remain exactly the same
+
+```{r eval=FALSE}
+# set seed for randomization 
+scvi$settings$seed <- as.integer(20231030)
+
+# Additional training settings
+scvi$settings$verbosity <- as.integer(1) # verbosity < 20 is INFO and verbosity < 10 is DEBUG
+scvi$settings$num_threads <- as.integer(40)
+
+# prepare the query dataset
+# NOTE: these are not integer counts after processing with soupX, so a warning is thinking the counts are normalized.
+scanvi_model$prepare_query_anndata(adata = adata,
+                                   reference_model =  scanvi_model)
+# scanvi_model
+
+# create the query model 
+scanvi_query = scanvi_model$load_query_data(adata = adata, 
+                                            reference_model = scanvi_model, 
+                                            accelerator = 'cpu',
+                                            device = 'auto')
+
+scanvi_query
+```
+
+```{r}
+# Examine the set-up 
+scanvi_query$view_anndata_setup()
+```
+
+```{r eval=FALSE}
+# All annotation labels are set as unknown by default. 
+adata$obs$subtype_standardized %>% table()
+
+# train the query model
+scanvi_query$train(accelerator = 'cpu',
+                   devices = 'auto',
+                   max_epochs = 200L, 
+                   batch_size = as.integer(1024*4),
+                   plan_kwargs = list("weight_decay" = 0.0))
+
+# scanvi_query
+
+model_dir <- "path/to/results"
+scanvi_query$save(dir_path = model_dir,
+                  prefix = 'my_scanvi_model_adata', 
+                  save_anndata = TRUE,
+                  overwrite=TRUE)
+```
+
+```{r}
+## Predictions
+model_dir <- "path/to/results"
+if(!exists("scanvi_query")){
+  adata <- anndata::read_h5ad(file.path(model_dir, "my_scanvi_model_adata.h5ad"))
+  scanvi_query <- scvi$model$SCANVI$load(dir_path = model_dir, 
+                                         prefix = "my_scanvi_model_adata")
+}
+# scanvi_query
+
+# predict the celltypes 
+predictions <- py_to_r(scanvi_query$predict())
+names(predictions) <- adata$obs_names
+table(predictions)
+
+# Add predictions to the cell metadata
+adata$obs$subtype_standardized <- predictions
+anndata::write_h5ad(file.path(model_dir, "my_scanvi_model_celltypes_adata.h5ad"))
+```
+
+## Generate Seurat Object
+
+```{r}
+model_dir <- "path/to/results"
+if(!exists("adata")){
+  adata <- anndata::read_h5ad(file.path(model_dir, "my_scanvi_model_adata.h5ad"))
+}
+adata
+```
+
+```{r eval=FALSE}
+# Get the latent representation
+X_scANVI <- scanvi_query$get_latent_representation() %>% 
+  set_rownames(adata$obs_names)
+X_scANVI <- py_to_r(X_scANVI)
+
+# create dim reduction object with scanvi latent representation
+seurat_obj[['scanvi']] <- CreateDimReducObject(embeddings = X_scANVI,
+                                              key = "scanvi_",
+                                              assay = 'RNA')
+
+# Add the predictions to the seurat object 
+predictions <- py_to_r(scanvi_query$predict())
+names(predictions) <- adata$obs_names
+seurat_obj <- AddMetaData(seurat_obj, predictions, col.name = "subtype_standardized")
+
+# Run UMAP on the latent data
+DefaultAssay(seurat_obj) <- 'SCT'
+seurat_obj <-  RunUMAP(seurat_obj, 
+                      dims = 1:30, 
+                      reduction.name = "umap.scanvi",
+                      reduction = "scanvi", 
+                      n.components = 3L,
+                      n.neighbors = 30,# default 30
+                      metric = "cosine",
+                      min.dist = 0.01, # default 0.3
+                      n.epochs = 500,
+                      return.model = TRUE,
+                      verbose = T) %>%
+    FindNeighbors(reduction = "scanvi",
+                  dims = 1:30, verbose = T) %>%
+    FindClusters(resolution = 0.8, verbose = T)
+
+# Add all Integration UMAPs to metadata
+seurat_obj <- AddMetaData(seurat_obj, as.data.frame(seurat_obj@reductions$umap.scanvi@cell.embeddings))
+
+
+# save the Seurat object
+saveRDS(seurat_obj, "path/to/celltypes_seurat_object.RDS")
+```
+
+## Celltype Frequency 
+
+```{r}
+celltype_annots <- seurat_obj@meta.data %>% 
+  select(time_point, subtype_standardized, subtype_labels) %>% 
+  rownames_to_column("barcode")
+
+head(celltype_annots)
+dim(celltype_annots)
+```
+
+```{r fig.width=10}
+ct_count_table <- seurat_obj@meta.data %>% 
+  group_by(subtype_standardized) %>% 
+  dplyr::count() %>% 
+  ungroup()  %>% 
+  mutate(total = nrow(seurat_obj@meta.data), 
+         percent = round(n / total *100, digits = 2)) %>% 
+  arrange(percent) %>% 
+  mutate(subtype_standardized = factor(subtype_standardized, levels = unique(subtype_standardized)))
+
+ggplot(ct_count_table, 
+       aes(x = subtype_standardized, y = percent)) +
+  geom_col(aes(fill = subtype_standardized)) +
+  scale_fill_brewer() +
+  scale_y_continuous(breaks = seq(0,65, by = 5)) +
+  theme_bw()
+```
+
+
+# Session Info
+
+```{r}
+session_info()
+```
+
+
+
+
+
+
