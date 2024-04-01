@@ -9,3 +9,5 @@ jax[cpu]==0.4.14
 jaxlib==0.4.14
 cellrank==2.0.2
 moscot==0.3.3
+wheel==0.43.0
+setuptools==65.5.0

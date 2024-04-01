@@ -206,9 +206,18 @@ plan()
 options(future.globals.maxSize = 60000 * 1024^2)
 ```
 
+# Genomic References 
+
+```{r}
+features <- read.csv("results/filtered_feature_bc_features.csv", row.names = 1) %>% 
+  filter(!grepl("^MT-", gene_name))
+
+dim(features) # 33525     5
+```
+
 # Celltype Reference 
 
-```{r eval=TRUE}
+```{r eval=FALSE}
 cell_ref_adata <- anndata::read_h5ad("results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_scanvi_benchmarking_adata.h5ad")
 
 # cell_ref_adata
@@ -221,7 +230,7 @@ if(!exists("scanvi_model")){
 
 ## UMAP
 
-```{r fig.height=10}
+```{r fig.height=10, eval=FALSE}
 # Look at the integrated reference
 sc$pp$neighbors(cell_ref_adata, use_rep="X_scANVI")
 sc$tl$leiden(cell_ref_adata)
@@ -250,7 +259,13 @@ ipsc_obj #60470 features across 86,954 samples within 2 assays
 ipsc_obj$id <- factor(ipsc_obj$orig.ident, levels=unique(ipsc_obj$orig.ident))
 ipsc_obj$seurat_clusters <- ipsc_obj$SCT_snn_res.1
 Idents(ipsc_obj) <- ipsc_obj$orig.ident
+
+# Add gene id metadata
+# identical(rownames(ipsc_obj[["RNA"]]), rownames(features)) #TRUE
+ipsc_obj[["RNA"]] <- AddMetaData(ipsc_obj[["RNA"]],
+                                 metadata =  features)
 ```
+
 
 ```{r fig.height=10, fig.width=10}
 DimPlot(ipsc_obj, 
@@ -273,26 +288,16 @@ This issue #283 is related
 
 ```{r eval=TRUE}
 # logNormalize to be consistent with the reference dataset
+# though SCVI tools does not use normalized counts (only raw), there are post processing steps that require it, like PCA (?).
 DefaultAssay(ipsc_obj) <- 'RNA'
-
 ipsc_obj <- NormalizeData(ipsc_obj, normalization.method = "LogNormalize")
-ipsc_obj <- FindVariableFeatures(ipsc_obj, nfeatures = 3000)
 
 # join layers to export the full raw counts matrix for all samples (layers)
 ipsc_obj[["RNA"]] <- JoinLayers(ipsc_obj[["RNA"]])
 
-
-cc_genes <- Seurat::cc.genes.updated.2019
-ipsc_obj <- CellCycleScoring(ipsc_obj, 
-                             # assay = "RNA",
-                             s.features = cc_genes$s.genes, 
-                             g2m.features = cc_genes$g2m.genes,
-                             set.ident = FALSE)
-ipsc_obj$CC.Difference <- ipsc_obj$S.Score - ipsc_obj$G2M.Score
-FeaturePlot(ipsc_obj, reduction = "umap", features = "CC.Difference")
-
-ipsc_obj <- ScaleData(ipsc_obj, features = VariableFeatures(ipsc_obj), 
-                      vars.to.regress = c("CC.Difference"))
+# optionally scale Data and regress out cc_difference in RNA assay
+# ipsc_obj <- ScaleData(ipsc_obj, features = VariableFeatures(ipsc_obj), 
+#                       vars.to.regress = c("cc_difference"))
 ipsc_obj
 ```
 
@@ -375,6 +380,11 @@ scanvi_query$save(dir_path = model_dir,
 ```
 
 ```{r}
+# Examine the set-up of the model
+scanvi_query$view_anndata_setup()
+```
+
+```{r}
 ## Predictions
 model_dir <- "results/day0_day50/scanvi"
 if(!exists("scanvi_query")){
@@ -382,59 +392,83 @@ if(!exists("scanvi_query")){
   scanvi_query <- scvi$model$SCANVI$load(dir_path = model_dir, 
                                          prefix = "iPSC_motor_neuron_day0-day50_time-course_scanvi_")
 }
-# scanvi_query
+```
+
+```{r eval=FALSE}
+# collect error metrics
+scanvi_query$get_reconstruction_error(batch_size = as.integer(1024*4))
+# {'reconstruction_loss': -3823.433240563976}
+
+#https://discourse.scverse.org/t/how-to-compare-different-parameter-sets-using-the-validation-loss/2017
+elbo_tr <- scanvi_query$get_elbo(indices = scanvi_query$train_indices,
+                                 batch_size = as.integer(1024*4))
+#tensor(-3879.4275)
+```
+
+```{r}
+# retrieve batch corrected normalized counts
+#See: https://discourse.scverse.org/t/what-is-the-best-way-to-extract-a-full-batch-effect-corrected-count-matrix-from-scvi-model/825
+# https://www.nxn.se/valent/2023/10/4/interpreting-scvi-adjusted-expression-levels
+
+# use the mid-point in the time-course as the batch to condition on
+scanvi_norm_mat <- scanvi_query$get_normalized_expression(n_samples = 10L,
+                                                          transform_batch = "iPSC_day24",
+                                                          library_size = 1e4)
+scanvi_norm_mat <- py_to_r(scanvi_norm_mat)
 
 # predict the celltypes 
 predictions <- py_to_r(scanvi_query$predict())
 names(predictions) <- ipsc_adata$obs_names
-table(predictions)
 
 # Add predictions to the cell metadata
 ipsc_adata$obs$subtype_standardized <- predictions
-```
-
-```{r}
-scanvi_query$view_anndata_setup()
-```
-
-See: https://discourse.scverse.org/t/what-is-the-best-way-to-extract-a-full-batch-effect-corrected-count-matrix-from-scvi-model/825
-
-
-```{r}
-# retrieve batch corrected normalized counts
-scanvi_norm_mat <- scanvi_query$get_normalized_expression(n_samples = 25L,
-                                                          transform_batch = levels(ipsc_obj$id)[1:11],
-                                                          library_size = 1e4)
-scanvi_norm_mat <- py_to_r(scanvi_norm_mat)
-scanvi_norm_mat[1:5,1:5]
 
 # Update an anndata object & Add the latent representation to the adata object
 ipsc_adata <- AnnData(
-  X = ipsc_adata$X, 
-  obs = ipsc_adata$obs,
-  uns = ipsc_adata$uns,
-  obsm = list('X_scANVI' = scanvi_query$get_latent_representation()
-              ),
-  layers = list(counts = ipsc_adata$layers['counts'],
-                scanvi_norm = scanvi_norm_mat
-                )
+    X = ipsc_adata$X, 
+    obs = ipsc_adata$obs,
+    uns = ipsc_adata$uns,
+    obsm = list('X_scANVI' = scanvi_query$get_latent_representation()),
+    layers = list(counts = ipsc_adata$layers['counts'],
+                  scanvi_norm = scanvi_norm_mat)
 )
 
 # Examine the reduced dimension representation
 sc$pp$neighbors(ipsc_adata, use_rep='X_scANVI')
 sc$tl$leiden(ipsc_adata)
 sc$tl$umap(ipsc_adata)
-
-sc$pl$umap(
-    ipsc_adata,
-    color=c("donor", "subtype_standardized"),
-    frameon=FALSE,
-    ncols=2L,
-)
-
-anndata::write_h5ad(ipsc_adata, "results/day0_day50/scanvi/iPSC_motor_neuron_day0-day50_time-course_scanvi_predictions_adata.h5ad")
+# anndata::write_h5ad(ipsc_adata, "results/day0_day50/scanvi/iPSC_motor_neuron_day0-day50_time-course_scanvi_predictions_adata.h5ad")
 ```
 
+```{r fig.height=10, fig.width=10}
+umap_coords <- ipsc_adata$obsm[['X_umap']] %>%
+  set_rownames(ipsc_adata$obs_names) %>% 
+  set_colnames(c("umap_1","umap_2")) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("barcode") %>% 
+  left_join(., select(ipsc_adata$obs,
+                      donor, 
+                      subtype_standardized, 
+                      barcode), 
+            by = "barcode") %>% 
+  mutate(donor = factor(donor, levels = unique(ipsc_adata$obs$orig.ident)))
+# head(umap_coords)
+
+sample_id_colors <- sample_id_colors %>% 
+  set_names(unique(ipsc_adata$obs$orig.ident))
+
+ggplot(umap_coords, aes(x = umap_1, y= umap_2)) +
+  geom_point(aes(color = donor), size = 0.2, alpha = 0.25) +
+  scale_color_manual(values = sample_id_colors) +
+  guides(color = guide_legend(override.aes = list(size =2, alpha =1 ))) +
+  theme_classic() 
+
+ggplot(umap_coords, aes(x = umap_1, y= umap_2)) +
+  geom_point(aes(color = subtype_standardized), size = 0.2, alpha = 0.25) +
+  scale_color_manual(values = colors_vector) +
+  guides(color = guide_legend(override.aes = list(size =2, alpha =1 ))) +
+  theme_classic() 
+```
 
 ## Generate Seurat Object
 
@@ -467,9 +501,9 @@ ipsc_obj <-  RunUMAP(ipsc_obj,
                       reduction.name = "umap.scanvi",
                       reduction = "scanvi", 
                       n.components = 3L,
-                      n.neighbors = 30,# default 30
+                      n.neighbors = 15,# default 30
                       metric = "cosine",
-                      min.dist = 0.01, # default 0.3
+                      min.dist = 0.1, # default 0.3
                       n.epochs = 500,
                       return.model = TRUE,
                       verbose = T) %>%
@@ -479,7 +513,7 @@ ipsc_obj <-  RunUMAP(ipsc_obj,
 
 # Add all Integration UMAPs to metadata
 ipsc_obj <- AddMetaData(ipsc_obj, as.data.frame(ipsc_obj@reductions$umap.scanvi@cell.embeddings))
-# 
+
 subtype_labels <- ipsc_obj@meta.data %>% 
   mutate(subtype_labels = case_when(
     subtype_standardized == "progenitor" ~ "neuroglial\nprogenitor", 
@@ -500,7 +534,6 @@ ipsc_obj
 job::job({
   saveRDS(ipsc_obj, "results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS")
 }, import = c("ipsc_obj"))
-
 ```
 
 ```{r}
@@ -594,7 +627,6 @@ all_predictions  %>%
 
 ```
 
-
 ```{r fig.height=10}
 cats <- unique(filter(ipsc_obj@meta.data,time_point == 0)$subtype_standard_detail)
 length(cats) #8 
@@ -618,54 +650,6 @@ all_predictions %>%
   dplyr::count() %>% 
   View()
 ```
-
-
-# Update UMAP Params 
-
-min.dist	
-This controls how tightly the embedding is allowed compress points together. Larger values ensure embedded points are moreevenly distributed, while smaller values allow the algorithm to optimise more accurately with regard to local structure. Sensible values are in the range 0.001 to 0.5.
-
-n.neighbors	
-This determines the number of neighboring points used in local approximations of manifold structure. Larger values will result in more global structure being preserved at the loss of detailed local structure. In general this parameter should often be in the range 5 to 50.
-
-```{r}
-current_path <- file.path("results/day0_day50/seurat")
-current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS" 
-
-if(!exists("ipsc_obj")){
-  ipsc_obj <- readRDS(file.path(current_path,current_obj))
-}
-ipsc_obj
-```
-
-```{r eval=FALSE}
-# ipsc_obj
-class(ipsc_obj[["RNA"]]) #v5
-
-# remove old dim reductions
-ipsc_obj@meta.data[,paste0("umapharmony_",1:3)] <- NULL
-ipsc_obj@reductions$umap.harmony <- NULL
-
-# Update umap params
-ipsc_obj <- ipsc_obj %>% 
-          RunUMAP(reduction = "harmony",
-                dims = 1:30,
-                n.components = 3,
-                n.neighbors = 30,# default 30
-                metric = "cosine",
-                min.dist = 0.2, # default 0.3
-                n.epochs = 500,
-                reduction.name = "umap.harmony",
-                return.model = TRUE,
-                verbose = T)
-
-
-embeddings <- as.data.frame(ipsc_obj@reductions$umap.harmony@cell.embeddings)
-ipsc_obj <- AddMetaData(ipsc_obj, embeddings)
-
-# saveRDS(ipsc_obj,"results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_ipsc_obj_v5.RDS")
-```
-
 
 ## UMAP
 
@@ -760,7 +744,7 @@ custom_dimplot(metadata = ipsc_obj@meta.data,
                dimred_colnames = "umapscanvi", 
                colorby = "id",
                label_samples = FALSE,
-               custom_colors = colors_vector)
+               custom_colors = sample_id_colors)
 # dev.off()
 
 # pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_batch_scanvi_UMAP.pdf", height = 15, width = 15)
@@ -1041,11 +1025,6 @@ job::job({
 rm(MNs, prog)
 ```
 
-```{r}
-table(ipsc_obj$subtype_standardized_subclusters)[order(names(table(ipsc_obj$subtype_standardized_subclusters)))]
-```
-Note: make another celltype line plot vs time with the subclusters 
-- these might 
 
 ```{r fig.height=15, fig.width=10}
 DimPlot(ipsc_obj, 
@@ -1068,39 +1047,22 @@ subcluster_3d
 # htmlwidgets::saveWidget(subcluster_3d, "figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_rpca_UMAP.html")
 ```
 
-```{r fig.height=12, fig.width=12}
+```{r fig.height=12, fig.width=12, eval=FALSE}
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                colorby = "subtype_standardized", 
                add_text = FALSE,
-               dimred_colnames = "umapharmony", 
+               dimred_colnames = "", 
                custom_colors = brewer.pal(7,"Set3"))
 
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                colorby = "subtype_standardized_subclusters", 
-               dimred_colnames = "umapharmony", 
+               dimred_colnames = "", 
                lab_size = 3,
                custom_colors = colors_vector)
 
-# ipsc_obj@meta.data %>%
-#   filter(grepl("motorneurons_[89]$|progenitor_(7|9|11|14)",subtype_standardized_subclusters)) %>%
-#   custom_dimplot(metadata = .,
-#                colorby = "subtype_standardized_subclusters",
-#                dimred_colnames = "umapharmony", 
-#                label_samples = FALSE,
-#                custom_colors = colors_vector[-1])
-```
-
-```{r eval=FALSE}
-# update to re-classify the "outliers" for MNs and progenitors
-ipsc_obj$subtype_subclusters <- case_when(
-    grepl("progenitor_[9]$|progenitor_1[0-1]$",ipsc_obj$subtype_standardized_subclusters) ~ "progenitor_in_MNs",
-    grepl("motorneurons_[3-9]$|motorneurons_1[0-7]$",ipsc_obj$subtype_standardized_subclusters) ~ "MNs_in_progenitors",
-    TRUE ~ as.character(ipsc_obj$subtype_standardized_subclusters)
-  )
-
 custom_dimplot(metadata = ipsc_obj@meta.data, 
-               colorby = "subtype_subclusters", 
-               dimred_colnames = "umapharmonysubset", 
+               dimred_colnames = "umapscanvi", 
+               colorby = "subtype_standardized_subclusters",
                custom_colors = colors_vector)
 ```
 
