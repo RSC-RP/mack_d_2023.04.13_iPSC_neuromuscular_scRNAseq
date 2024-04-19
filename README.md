@@ -19,3 +19,11 @@ We aim to identify the regional identity and subtypes of iPSC motor neurons and 
 **Other Notebooks**
 - Preprocessing and integration: mack_d_iPSC_motor_neurons_EDA_day0-day45.Rmd
 - Figures for CMTR: mack_d_iPSC_motor_neurons_day0-day50_figures.Rmd
+
+### Author
+
+@jennylsmith
+
+Jenny L. Smith
+
+https://orcid.org/0000-0003-0402-2779
