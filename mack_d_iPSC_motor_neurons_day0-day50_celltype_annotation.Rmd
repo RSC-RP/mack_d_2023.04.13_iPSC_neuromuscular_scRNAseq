@@ -252,7 +252,9 @@ options(future.rng.onMisuse="ignore")
 ```
 
 ```{r}
-ipsc_obj <- readRDS("results/day0_day50/seurat/iPSC_MN_time-course_filtered_merged_soupX_normalized_RPCAIntegration_seurat_obj_v5.RDS")
+# ipsc_obj <- readRDS("results/day0_day50/seurat/iPSC_MN_time-course_filtered_merged_soupX_normalized_RPCAIntegration_seurat_obj_v5.RDS")
+
+ipsc_obj <- readRDS("results/day0_day50/seurat/non_integrated/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
 
 ipsc_obj #60470 features across 86,954 samples within 2 assays
 # Add metadata and idents
@@ -265,13 +267,11 @@ Idents(ipsc_obj) <- ipsc_obj$orig.ident
 ipsc_obj[["RNA"]] <- AddMetaData(ipsc_obj[["RNA"]],
                                  metadata =  features)
 ```
-
-
 ```{r fig.height=10, fig.width=10}
 DimPlot(ipsc_obj, 
         group.by = "id",
         cols = sample_id_colors,
-        reduction = "umap.rpca")
+        reduction = "umap")
 ```
 
 # SCANVI Transfer Labels 
@@ -388,7 +388,7 @@ scanvi_query$view_anndata_setup()
 ## Predictions
 model_dir <- "results/day0_day50/scanvi"
 if(!exists("scanvi_query")){
-  ipsc_adata <- anndata::read_h5ad(file.path(model_dir, "/iPSC_motor_neuron_day0-day50_time-course_scanvi_adata.h5ad"))
+  # ipsc_adata <- anndata::read_h5ad(file.path(model_dir, "/iPSC_motor_neuron_day0-day50_time-course_scanvi_adata.h5ad"))
   scanvi_query <- scvi$model$SCANVI$load(dir_path = model_dir, 
                                          prefix = "iPSC_motor_neuron_day0-day50_time-course_scanvi_")
 }
@@ -637,7 +637,7 @@ cat_colors["progenitor"] <- "grey80"
 
 custom_dimplot(metadata = filter(ipsc_obj@meta.data,time_point == 0),
                colorby = c("subtype_standard_detail"), 
-               dimred_colnames = "umaprpca", 
+               dimred_colnames = "umap", 
                custom_colors = cat_colors )
 ```
 
@@ -650,72 +650,6 @@ all_predictions %>%
   dplyr::count() %>% 
   View()
 ```
-
-## UMAP
-
-```{r}
-res <- c(0.6)
-ipsc_obj <- FindClusters(ipsc_obj,
-                         resolution = res,
-                         cluster.name = glue("rpca_snn_res{res}"),
-                         graph.name = "rpca_snn")
-```
-
-```{r fig.height=15, fig.width=15}
-DimPlot(ipsc_obj, 
-        reduction = "umap.rpca",
-        group.by = "subtype_standardized",
-        label = TRUE,
-        label.size = 2,
-        repel = TRUE,
-        dims = c(1,2)) +
-  scale_color_manual(values = colors_vector) +
-  theme(legend.position = 'top')
-
-
-# DimPlot(ipsc_obj, 
-#         reduction = "umap.rpca",
-#         group.by = "subtype_standard_detail",
-#         label = TRUE,
-#         label.size = 2,
-#         repel = TRUE,
-#         dims = c(1,2)) +
-#   scale_color_manual(values = colors_vector) +
-#   theme(legend.position = 'top')
-
-DimPlot(ipsc_obj, 
-        reduction = "umap.rpca",
-        group.by = 'rpca_snn_res0.6',
-        label = TRUE,
-        label.size = 10,
-        repel = TRUE,
-        dims = c(1,2)) +
-  scale_color_manual(values = colors_vector) +
-  theme(legend.position = 'top')
-```
-
-```{r fig.height=10}
-filt_d1 <- DimPlot(ipsc_obj, 
-        group.by = c("batch","id"),
-        reduction = "umap.rpca",
-        label = T, 
-        repel = T,
-        label.size = 7) + 
-  scale_color_manual(values = colors_vector)
-
-filt_s1 <- DimPlot(ipsc_obj, 
-        group.by = c("id"),
-        reduction = "umap.rpca",
-        split.by = "batch",
-        label = T, 
-        repel = T,
-        label.size = 7) + 
-  scale_color_manual(values = colors_vector)
-
-filt_d1
-filt_s1
-```
-
 
 # Visualization 
 
@@ -791,40 +725,41 @@ custom_dimplot(metadata = ipsc_obj@meta.data,
 ```{r}
 p1 <- make_3D_umap(metadata = ipsc_obj@meta.data,
              idents_column = c(paste0("umap_",1:3)), 
-             label_cols = c("subtype_standardized","id","batch","subtype_standard_detail"), 
+             label_cols = c("subtype_standardized","id","batch"), 
              selected_colors =  viridis::turbo(8))
 
-p2 <- make_3D_umap(metadata = ipsc_obj@meta.data,
-             idents_column = c(paste0("umaprpca_",1:3)), 
-             label_cols = c("subtype_standardized","id","batch","subtype_standard_detail"), 
-             selected_colors =  viridis::turbo(8))
+# p2 <- make_3D_umap(metadata = ipsc_obj@meta.data,
+#              idents_column = c(paste0("umaprpca_",1:3)), 
+#              label_cols = c("subtype_standardized","id","batch"), 
+#              selected_colors =  viridis::turbo(8))
 
 p3 <- make_3D_umap(metadata = ipsc_obj@meta.data,
              idents_column = c(paste0("umapscanvi_",1:3)), 
-             label_cols = c("subtype_standardized","id","batch","subtype_standard_detail"), 
+             label_cols = c("subtype_standardized","id","batch"), 
              selected_colors =  viridis::turbo(8))
 
 
-htmlwidgets::saveWidget(p1, "figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_default_UMAP.html")
-htmlwidgets::saveWidget(p2, "figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_harmony_UMAP.html")
-htmlwidgets::saveWidget(p3, "figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_scanvi_UMAP.html")
+p3
+# htmlwidgets::saveWidget(p1, "figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_default_UMAP.html")
+# htmlwidgets::saveWidget(p2, "figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_harmony_UMAP.html")
+# htmlwidgets::saveWidget(p3, "figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_scanvi_UMAP.html")
 ```
 
 ```{r}
-make_3D_umap(metadata = ipsc_obj@meta.data,
-             idents_column = c(paste0("umap_",1:3)), 
-             label_cols = c("batch", "subtype_standardized","id"), 
-             selected_colors =  viridis::mako(4))
+# make_3D_umap(metadata = ipsc_obj@meta.data,
+#              idents_column = c(paste0("umap_",1:3)), 
+#              label_cols = c("batch", "subtype_standardized","id"), 
+#              selected_colors =  viridis::mako(4))
 
-make_3D_umap(metadata = ipsc_obj@meta.data,
-             idents_column = c(paste0("umaprpca_",1:3)), 
-             label_cols = c("batch", "subtype_standardized","id"), 
-             selected_colors =  viridis::mako(4))
+# make_3D_umap(metadata = ipsc_obj@meta.data,
+#              idents_column = c(paste0("umaprpca_",1:3)), 
+#              label_cols = c("batch", "subtype_standardized","id"), 
+#              selected_colors =  viridis::mako(4))
 
 make_3D_umap(metadata = ipsc_obj@meta.data,
              idents_column = c(paste0("umapscanvi_",1:3)), 
-             label_cols = c("batch","subtype_standardized","id"), 
-             selected_colors =  viridis::mako(4))
+             label_cols = c("id", "batch","subtype_standardized"), 
+             selected_colors =  sample_id_colors)
 ```
 
 ```{r fig.height=10, fig.width=10}

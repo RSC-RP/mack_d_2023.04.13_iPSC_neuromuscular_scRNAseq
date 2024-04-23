@@ -443,8 +443,6 @@ head(mn_subtype_markers)
 ```{r}
 current_path <- file.path("results/day0_day50/seurat")
 current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS" 
-  # "iPSC_MN_time-course_filtered_merged_soupX_normalized_RPCAIntegration_seurat_obj_v5.RDS"
-  # "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_dimred_anno_seurat_obj_v5.RDS" #v5 Seurat Object
 
 ipsc_obj <- readRDS(file.path(current_path, current_obj))
 
@@ -496,26 +494,21 @@ table(ipsc_obj$subtype_standardized)
 ```{r fig.height=10, fig.width=10}
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                colorby = "batch", 
-               dimred_colnames = "umaprpca", 
+               dimred_colnames = "umapscanvi", 
                custom_colors = ggpubr::get_palette("jco", 4))
 
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                colorby = "subtype_standardized", 
-               dimred_colnames = "umaprpca", 
-               custom_colors = ggpubr::get_palette("npg", 7))
-
-# custom_dimplot(metadata = ipsc_obj@meta.data, 
-#                colorby = "rpca_snn_res0.6", 
-#                dimred_colnames = "umaprpca", 
-#                custom_colors = ggpubr::get_palette("simpsons", length(unique( ipsc_obj@meta.data$rpca_snn_res0.6))))
-
+               dimred_colnames = "umapscanvi", 
+               custom_colors = viridis::turbo(8))
 ```
 
 ```{r fig.height=10, fig.width=10}
 # ipsc_obj$time_point %>% head()
 # ipsc_obj$time_point_factor %>% head()
 
-ggplot(ipsc_obj@meta.data, aes(x = umaprpca_1, y = umaprpca_2)) +
+ggplot(ipsc_obj@meta.data,
+       aes(x = umapscanvi_1, y = umapscanvi_2)) +
   geom_point(aes(color = time_point), alpha = 0.5, size = 0.1) +
   scale_color_viridis_c() +
   theme_bw()
@@ -787,6 +780,7 @@ a scRNA-seq dataset with experimental time points. Additional spatial or lineage
 
 ### Create AnnData Object 
 
+
 ```{r eval=FALSE}
 assay_norm <- "SCT_renamed"
 # variable features to be added to a anndata
@@ -805,6 +799,11 @@ obs <- pd$DataFrame(ipsc_obj@meta.data)
 # SeuratDisk::Transpose does not work, probably b/c its not an H5Seurat Class obj. 
 scipy_sparse <- import("scipy.sparse", convert = FALSE)
 norm_counts <- scipy_sparse$csr_matrix(t(as.matrix(LayerData(ipsc_obj, assay = assay_norm, layer = "data"))))
+conflicted::conflicts_prefer(SeuratObject::Layers)
+
+if(length(Layers(ipsc_obj[["RNA"]])) > 1){
+  ipsc_obj[["RNA"]] <- JoinLayers(ipsc_obj[["RNA"]])
+}
 counts_mat <- t(as.matrix(LayerData(ipsc_obj, assay = 'RNA', layer = "counts")))
 counts_mat <- scipy_sparse$csr_matrix(counts_mat[, rownames(ipsc_obj[[assay_norm]])])
 
@@ -816,9 +815,9 @@ ipsc_adata <- AnnData(
   obs = obs,
   var = var_df,
   obsm = list("X_scANVI" = ipsc_obj@reductions$scanvi@cell.embeddings, 
-               "X_rpca" = ipsc_obj@reductions$rpca@cell.embeddings,
+               # "X_rpca" = ipsc_obj@reductions$rpca@cell.embeddings,
                "X_pca" = ipsc_obj@reductions$pca@cell.embeddings,
-               "X_umap" = ipsc_obj@reductions$umap.rpca@cell.embeddings
+               "X_umap" = ipsc_obj@reductions$umap.scanvi@cell.embeddings
               ),
   layers = list(counts = counts_mat)
 )
@@ -831,7 +830,7 @@ seed_val <- as.integer(20240301)
 # use batch corrected embedding 
 # k-NN graph, which we’ll need later on.
 sc$pp$neighbors(ipsc_adata,
-                use_rep = "X_rpca",
+                use_rep = "X_scANVI",
                 random_state = seed_val, 
                 metric = 'cosine')
 ipsc_adata
@@ -861,8 +860,9 @@ NOTE:
 Index(['0', '3', '5', '8', '11', '15', '18', '21', '24', '27', '30', '35',
        '40', '45', '50'],
       dtype='object')
-      
+
 ```{r}
+seed_val <- as.integer(20240301)
 ad <- import("anndata", convert = FALSE)
 
 # set-up the object 
@@ -900,7 +900,7 @@ tp$proliferation_key
 ```{r fig.height=5, fig.width=25}
 sc$pl$embedding(ipsc_adata, 
                 basis="X_umap", 
-                color=c("subtype_standardized_subclusters","proliferation", "apoptosis"))
+                color=c("subtype_standardized","proliferation", "apoptosis"))
 ```
 
 ```{r}
@@ -920,8 +920,8 @@ sc$pl$embedding(ipsc_adata,
 # if joint_attr not provided: PCA on X is computed.Each pairwise (for each time-point) PCA is compared to one another to build the graphs
 # use local PCAs, computed separately for each pair of time points, to calulate distances among cells [Schiebinger et al., 2019]. 
 tp <- tp$prepare(time_key="day",
-                 # joint_attr = "X_rpca", 
-                 policy='sequential') 
+                 policy='sequential', 
+                 joint_attr = "X_scANVI")
                  # kwargs = list("subset" = r_to_py(time_cats_explicit)))
 tp
 ```
@@ -952,38 +952,13 @@ sc$pl$embedding(ipsc_adata,
                 color="prior_growth_rates")
 ```
 
-
 ```{r eval=FALSE}
-ipsc_adata$obs %>% 
-  group_by(day, subtype_standardized_subclusters) %>% 
-  dplyr::count() %>% 
-  filter(day == 0 | day == 3) %>% 
-  arrange(subtype_standardized_subclusters)
-
+# also blank??
 tp$sankey(source = 0L,
           target = 3L,
-          source_groups = "subtype_standardized_subclusters", 
-          target_groups = "subtype_standardized_subclusters", 
-          forward = FALSE)
-```
-
-```{r}
-# adata <- mt$datasets$hspc()
-# adata
-# adata$obs$day$dtype
-# # CategoricalDtype(categories=[2, 3, 4, 7], ordered=False, categories_dtype=int64)
-# # Name: day, Length: 4000, dtype: category
-# # Categories (4, int64): [2, 3, 4, 7]
-# 
-# hscp_tp <- mt$problems$ (adata)$prepare(time_key="day")$solve(epsilon=1e-2, threshold=1e-2)
-# 
-# tp.sankey(
-#     source=2,
-#     target=7,
-#     source_groups="cell_type",
-#     target_groups="cell_type",
-#     forward=True,
-# )
+          source_groups = "subtype_standardized", 
+          target_groups = "subtype_standardized", 
+          forward = TRUE)
 ```
 
 
@@ -997,6 +972,8 @@ https://cellrank.readthedocs.io/en/latest/api/_autosummary/kernels/cellrank.kern
 3. row-normalize the resulting cell-cell transition matrix (including all time points) and construct the Markov chain.  
 
 ```{r eval=TRUE}
+cr$settings$verbosity = 2L
+
 # Set up the RealTimeKernel
 tmk <- cr$kernels$RealTimeKernel$from_moscot(problem =  tp,
                                              kwargs = list("time_key" = "day",
@@ -1012,12 +989,26 @@ tmk$compute_transition_matrix(self_transitions="all",
                               conn_weight=0.2, 
                               threshold="auto")
 
-# tmk$compute_projection(basis="umap")
-
-tmk
+tmk # Using automatic `threshold=3.37183244427879e-33`
 # WARNING: Coupling at `(27, 30)` contains `1` empty row(s), e.g., due to unbalancedness or 0s in the source marginals. Using uniform distribution
 # WARNING: Coupling at `(30, 35)` contains `3` empty row(s), e.g., due to unbalancedness or 0s in the source marginals. Using uniform distribution
 # WARNING: Coupling at `(3, 5)` contains `2` empty row(s), e.g., due to unbalancedness or 0s in the source marginals. Using uniform distribution
+```
+
+```{r}
+transition_mat <- tmk$transition_matrix %>% 
+  py_to_r()
+
+dim(transition_mat) # 86,954 86,954
+# transition_mat[1:5,1:5]
+# dimnames(transition_mat) # cell ids
+# "dgRMatrix"
+# attr(,"package")
+# [1] "Matrix"
+```
+
+```{r}
+tmk$adata
 ```
 
 ```{r eval=FALSE}
@@ -1025,22 +1016,6 @@ tmk
 tmk$write_to_adata()
 anndata::write_h5ad(anndata = ipsc_adata, filename = "results/day0_day50/cellrank/iPSC_MNs_day0-day50_moscot_cellrank_RealTimeKernel.h5ad")
 ```
-
-
-'macrostates_fwd'
-    var: 'n_cells', 'highly_variable', 'means', 'dispersions', 'dispersions_norm'
-    uns: 'cell_type_colors', 'hvg', 'neighbors', 'neighbors_atac', 'pca', 'umap', 'schur_matrix_fwd', 'eigendecomposition_fwd', 'macrostates_fwd_colors', 'coarse_fwd'
-    obsm: 'X_lsi', 'X_pca', 'X_umap_ATAC', 'X_umap_GEX', 'peaks_tfidf', 'schur_vectors_fwd', 'macrostates_fwd_memberships'
-    varm: 'PCs'
-    obsp: 'connectivities', 'distances', 'neighbors_atac_connectivities', 'neighbors_atac_distances'
-
-
- 'macrostates_fwd', 'term_states_fwd', 'term_states_fwd_probs'
-    var: 'gene_name', 'highly_variable', 'var.features'
-    uns: 'neighbors', 'T_fwd_params', 'schur_matrix_fwd', 'eigendecomposition_fwd', 'macrostates_fwd_colors', 'coarse_fwd', 'term_states_fwd_colors'
-    obsm: 'X_pca', 'X_rpca', 'X_scANVI', 'X_umap', 'schur_vectors_fwd', 'macrostates_fwd_memberships', 'term_states_fwd_memberships'
-    layers: 'counts'
-    obsp: 'connectivities', 'distances', 'T_fwd'
     
 ```{r}
 # tmk$plot_projection(basis = "X_umap")
@@ -1050,6 +1025,7 @@ tmk$time
 tmk$params
 tmk$kernels
 cpl <- tmk$couplings
+cpl
 # class(cpl) #"python.builtin.dict"   "python.builtin.object"
 ```
 
@@ -1065,7 +1041,7 @@ tmk$plot_single_flow(
 )
 ```
 
-```{r fig.height=15, fig.width=15}
+```{r fig.height=15, fig.width=15, eval=FALSE}
 tmk$plot_random_walks(
     n_sims = 200L,
     max_iter = 500L,
@@ -1088,11 +1064,16 @@ CellRank decomposes cellular dynamics into macrostates: Based on Generalized Per
 
 https://cellrank.readthedocs.io/en/latest/notebooks/tutorials/estimators/600_initial_terminal.html
 
+--> Double check the algorithm
+---> use the algorithm with known terminal and initial states! 
+---> Changho has some experimental data with 2-3 time-points
+
+
 ```{r}
-if(!exists("tmk")){
-  ipsc_adata <- anndata::read_h5ad("results/day0_day50/cellrank/iPSC_MNs_day0-day50_moscot_cellrank_RealTimeKernel.h5ad")
-  tmk <- cr$kernels$RealTimeKernel$from_adata(adata = ipsc_adata, key="T_fwd")
-}
+# if(!exists("tmk")){
+#   ipsc_adata <- anndata::read_h5ad("results/day0_day50/cellrank/iPSC_MNs_day0-day50_moscot_cellrank_RealTimeKernel.h5ad")
+#   tmk <- cr$kernels$RealTimeKernel$from_adata(adata = ipsc_adata, key="T_fwd")
+# }
 ```
 
 uses the GPCCA algorithm as implemented in pyGPCCA to compute macrostates by maximizing for metastability
@@ -1102,30 +1083,62 @@ This transition matrix aggregates the single-cell Markov chain to a macrostate-l
 Entries in this matrix tell us how likely macrostates are to transition into one-another. 
 
 ```{r}
+tmk$obs$subtype_standardized$value_counts()
+```
+
+```{r fig.height=5, fig.width=10}
 # set-up the estimators
-gpcca <- cr$estimators$GPCCA(tmk)
+gpcca <- cr$estimators$GPCCA(tmk) # this works
 
 # fit the clusters 
 # two key outputs: the soft assignment of cells to macrostates, and a matrix of transition probabilities among these macrostates
 #  the algorithm to scan this interval for the optimal number of macrostates (4, 12)
 # Make sure to have the scientific computing libraries PETSc and SLEPc installed (see set-up chunks above)
 gpcca$fit(cluster_key="subtype_standardized",
-          n_states=c(4L, 12L))
-
-# gpcca$compute_schur(n_components=20, 
-#                     verbose = TRUE)
-# g2.compute_macrostates(n_states=11,
-#                        cluster_key="clusters")
+          n_states=c(6L, 15L))
 
 gpcca
-```
-
-```{r fig.height=5, fig.width=10}
-# gpcca$plot_spectrum(real_only=TRUE)
+# Need to add the additional 
+# gpcca$set_terminal_states(states = c("astrocyte", "dl4", "microglia",'motorneurons_1', 'motorneurons_2', 'motorneurons_3', 'motorneurons_4', 'progenitor_1', 'progenitor_2', 'progenitor_3', 'progenitor_4'))
 ```
 
 To pull out the data from the object 
 https://github.com/theislab/moscot/issues/676
+
+```{r}
+# gpcca2 <- cr$estimators$GPCCA(tmk) # this works
+# 
+# gpcca2$compute_schur(n_components=20,
+#                     verbose = TRUE) # gives an errror?
+# 
+# gpcca2$plot_spectrum()
+# gpcca2$compute_macrostates(n_states=11,
+#                           cluster_key="subtype_standardized")
+# 
+# gpcca
+```
+
+Computing Schur decomposition
+Adding `adata.uns['eigendecomposition_fwd']`
+       `.schur_vectors`
+       `.schur_matrix`
+       `.eigendecomposition`
+    Finish (0:00:59)
+Calculating minChi criterion in interval `[6, 15]`
+**Computing `9` macrostates**
+Adding `.macrostates`
+       `.macrostates_memberships`
+       `.coarse_T`
+       `.coarse_initial_distribution
+       `.coarse_stationary_distribution`
+       `.schur_vectors`
+       `.schur_matrix`
+       `.eigendecomposition`
+    Finish (0:02:09)
+
+How is the goodness of fit for the number of macrostates selected? 
+- the macrostates are selected from the temporal problem which is generating the cell-cell transition matrix (essentially probs that cellA --> cellB)
+- but what is the loss is the metric?
 
 ```{r fig.height=5, fig.width=10}
 gpcca$plot_macrostates(which="all",
@@ -1133,34 +1146,64 @@ gpcca$plot_macrostates(which="all",
                        legend_loc="center left")
 ```
 
-```{r fig.height=10, fig.width=10}
+```{r fig.height=7, fig.width=7}
 # Predict the terminal states of cells/clusters
 # values reflect our confidence in assigning a cell to a terminal state
 gpcca$predict_terminal_states(allow_overlap = FALSE)
+```
 
+```{r}
 gpcca$plot_macrostates(which="terminal", 
                        legend_loc="center left")
 ```
 
-```{r fig.height=10, fig.width=10}
+Adding `adata.obs['term_states_fwd']`
+       `adata.obs['term_states_fwd_probs']`
+       `.terminal_states`
+       `.terminal_states_probabilities`
+       `.terminal_states_memberships
+    Finish`
+    
+```{r fig.height=7, fig.width=7}
 gpcca$plot_macrostates(which="terminal", discrete=FALSE)
 ```
 
 ```{r}
 # predict the initial states of cells/clusters
-gpcca$predict_initial_states(allow_overlap = TRUE) # 30 cells overlap in terminal and initial status
+# by default the algorithm is expecting there is only 1 initial state cell type - perhaps there could be > 1?
+gpcca$predict_initial_states(allow_overlap = TRUE,
+                             n_states = 1) # 30 cells overlap in terminal and initial status
+
 gpcca$plot_macrostates(which="initial",
                        legend_loc="center left")
 ```
 
+Adding `adata.obs['init_states_fwd']`
+       `adata.obs['init_states_fwd_probs']`
+       `.initial_states`
+       `.initial_states_probabilities`
+       `.initial_states_memberships
+    Finish`
+
 Macrostates, and their classification as initial or terminal, are written to the GPCCA estimator and can be inspected conveniently via initial_states and terminal_states.
-GPCCA[kernel=RealTimeKernel[n=86954], initial_states=['progenitor_2'], terminal_states=['motorneurons_2', 'motorneurons_6', 'progenitor_1', 'progenitor_2']]
 
 ```{r}
-# plot muscle cell marker genes here
-# ipsc_adata$obs 
-# VlnPlot()
+check <- gpcca$adata$obs %>% 
+  py_to_r() %>% 
+  select(orig.ident, time_point, batch,
+         subtype_standardized, 
+         macrostates_fwd:init_states_fwd_probs)
+
+check
+# table(check$init_states_fwd) # DL3 SHOULD NOT BE THE initial STATE
+filter(check, !is.na(init_states_fwd))
 ```
+```{r}
+check %>% 
+  select(term_states_fwd_probs,init_states_fwd_probs) %>% 
+  arrange(desc(init_states_fwd_probs))
+```
+
 
 ```{r}
 gpcca$coarse_stationary_distribution
@@ -1168,15 +1211,16 @@ gpcca$coarse_stationary_distribution
 
 ```{r fig.height=10, fig.width=10}
 # why is this blank?
-gpcca$plot_coarse_T(show_stationary_dist = TRUE, 
-                    order='stability',
-                    figsize=c(8L, 8L), 
-                    annotate = TRUE)
+gpcca$plot_coarse_T()
+                # show_stationary_dist = TRUE, 
+                    # order='stability',
+                    # figsize=c(8L, 8L),
+                    # annotate = TRUE)
 ```
 
 ```{r}
-gpcca$plot_macrostate_composition(key="subtype_standardized_subclusters",
-                                  figsize=c(7L, 4L))
+# gpcca$plot_macrostate_composition(key="subtype_standardized",
+#                                   figsize=c(7L, 4L))
 ```
 
 
@@ -1185,10 +1229,17 @@ gpcca$plot_macrostate_composition(key="subtype_standardized_subclusters",
 ```{r}
 # compute fate_probabilities by aggregating over all random walks that start in a given cell and end in some terminal population
 gpcca$compute_fate_probabilities()
+gpcca
 ```
 
 ```{r fig.height=10, fig.width=10}
-gpcca$plot_fate_probabilities(same_plot=FALSE)
+gpcca$plot_fate_probabilities(states = c('dl3',paste0('motorneurons_',1:4)),
+                              same_plot=FALSE)
+```
+
+```{r}
+gpcca$plot_fate_probabilities(states = c('dl3',paste0('motorneurons_',1:4)),
+                              same_plot=TRUE)
 ```
 
 ```{r fig.height=10, fig.width=10}
@@ -1197,27 +1248,42 @@ cr$pl$circular_projection(ipsc_adata,
                           legend_loc="right")
 ```
 
-```{r eval=FALSE}
-drivers_df = gpcca$compute_lineage_drivers(
-    lineages=["Delta"], 
-    cluster_key="clusters",
-    clusters=driver_clusters
-)
+```{r}
+ipsc_obj$subtype_standardized %>%
+  unique() %>%
+  grep("motor", ., value = TRUE)
 
-head(delta_df)
+cr$pl$aggregate_fate_probabilities(
+    ipsc_adata,
+    mode="violin",
+    lineages=c("motorneurons"),
+    cluster_key="subtype_standardized",
+    clusters=mn_states,
+)
 ```
 
 ```{r fig.height=10, fig.width=10}
-mn_states <- grep("motor",ipsc_adata$obs$subtype_standardized_subclusters, value=TRUE)
-
-sc$pl$embedding(
-    ipsc_adata, 
-    basis="umap",
-    color="subtype_standardized_subclusters", 
-    groups=mn_states, 
-    legend_loc="right"
-)
+# mn_states <- grep("motor",ipsc_adata$obs$subtype_standardized_subclusters, value=TRUE)
+# 
+# sc$pl$embedding(
+#     ipsc_adata, 
+#     basis="umap",
+#     color="subtype_standardized_subclusters", 
+#     groups=mn_states, 
+#     legend_loc="right"
+# )
 ```
+
+### Driver Genes 
+
+```{r eval=FALSE}
+drivers_df <- gpcca$compute_lineage_drivers(method = 'fisher',
+                                            cluster_key = 'subtype_standardized',
+                                            n_jobs = 2)
+
+py_to_r(drivers_df)
+```
+
 
 # Example Data 
 
@@ -1234,6 +1300,14 @@ problem = problem$prepare(time_key="day",
                           joint_attr = 'X_umap_GEX')
 
 problem = problem$solve(epsilon=1e-3, tau_a=0.95, tau_b = 0.99, scale_cost="mean")
+
+# problem.sankey(
+#     source=2,
+#     target=7,
+#     source_groups="cell_type",
+#     target_groups="cell_type",
+#     forward=True,
+# )
 
 rtk = cr$kernels$RealTimeKernel$from_moscot(problem = problem, 
                                             kwargs = list("time_key" = "day",
