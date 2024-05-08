@@ -267,6 +267,7 @@ Idents(ipsc_obj) <- ipsc_obj$orig.ident
 ipsc_obj[["RNA"]] <- AddMetaData(ipsc_obj[["RNA"]],
                                  metadata =  features)
 ```
+
 ```{r fig.height=10, fig.width=10}
 DimPlot(ipsc_obj, 
         group.by = "id",
@@ -470,6 +471,48 @@ ggplot(umap_coords, aes(x = umap_1, y= umap_2)) +
   theme_classic() 
 ```
 
+https://docs.scvi-tools.org/en/stable/tutorials/notebooks/scrna/query_hlca_knn.html#loading-the-query-model-from-the-reference-files
+
+```{python eval=FALSE}
+ref_neighbors, ref_distances = ref_nn_index.query(query_emb.X)
+
+# convert distances to affinities
+stds = np.std(ref_distances, axis=1)
+stds = (2.0 / stds) ** 2
+stds = stds.reshape(-1, 1)
+ref_distances_tilda = np.exp(-np.true_divide(ref_distances, stds))
+weights = ref_distances_tilda / np.sum(ref_distances_tilda, axis=1, keepdims=True)
+
+
+@numba.njit
+def weighted_prediction(weights, ref_cats):
+    """Get highest weight category."""
+    N = len(weights)
+    predictions = np.zeros((N,), dtype=ref_cats.dtype)
+    uncertainty = np.zeros((N,))
+    for i in range(N):
+        obs_weights = weights[i]
+        obs_cats = ref_cats[i]
+        best_prob = 0
+        for c in np.unique(obs_cats):
+            cand_prob = np.sum(obs_weights[obs_cats == c])
+            if cand_prob > best_prob:
+                best_prob = cand_prob
+                predictions[i] = c
+                uncertainty[i] = max(1 - best_prob, 0)
+
+    return predictions, uncertainty
+
+
+# for each annotation level, get prediction and uncertainty
+label_keys = [f"ann_level_{i}" for i in range(1, 6)] + ["ann_finest_level"]
+for l in label_keys:
+    ref_cats = adata.obs[l].cat.codes.to_numpy()[ref_neighbors]
+    p, u = weighted_prediction(weights, ref_cats)
+    p = np.asarray(adata.obs[l].cat.categories)[p]
+    query_emb.obs[l + "_pred"], query_emb.obs[l + "_uncertainty"] = p, u
+```
+
 ## Generate Seurat Object
 
 ```{r}
@@ -493,6 +536,8 @@ ipsc_obj[["SCANVI"]] <- CreateAssay5Object(data = t(ipsc_adata$layers['scanvi_no
 DefaultAssay(ipsc_obj) <- 'SCT'
 
 # Add the predictions to the seurat object 
+predictions <- ipsc_adata$obs$subtype_standardized
+table(predictions)
 ipsc_obj <- AddMetaData(ipsc_obj, predictions, col.name = "subtype_standardized")
 
 # Run UMAP on the latent data
@@ -549,7 +594,13 @@ if(!exists("ipsc_obj")){
 }
 
 ipsc_obj
-table(ipsc_obj@meta.data$subtype_standardized)
+```
+
+```{r}
+ipsc_obj@meta.data %>% 
+  group_by(subtype_standardized) %>% 
+  dplyr::count(name = "number_of_cells") %>% 
+  arrange(desc(number_of_cells))
 ```
 
 ```{r}
@@ -607,7 +658,7 @@ head(all_predictions)
 #   set_rownames(all_predictions$barcode))
 ```
 
-```{r}
+```{r eval=FALSE}
 all_predictions %>% 
   filter(subtype_standardized_b123 == "schwann") %>% 
   group_by(subtype_standardized_b123, subtype_standardized) %>% 
@@ -625,9 +676,7 @@ all_predictions  %>%
   # dplyr::count()
   View()
 
-```
 
-```{r fig.height=10}
 cats <- unique(filter(ipsc_obj@meta.data,time_point == 0)$subtype_standard_detail)
 length(cats) #8 
 
@@ -639,9 +688,7 @@ custom_dimplot(metadata = filter(ipsc_obj@meta.data,time_point == 0),
                colorby = c("subtype_standard_detail"), 
                dimred_colnames = "umap", 
                custom_colors = cat_colors )
-```
 
-```{r}
 all_predictions %>% 
   filter(subtype_standardized != subtype_standardized_v1) %>% 
   select(-subtype_labels) %>% 
@@ -667,12 +714,19 @@ length(celltypes)
 
 ```{r fig.height=10, fig.width=10}
 # pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_scanvi_UMAP.pdf", height = 15, width = 15)
+
+png("figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_scanvi_UMAP.png", height = 15, width = 15,units = "in", res = 125)
+
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                dimred_colnames = "umapscanvi", 
                colorby = "subtype_standardized",
-               custom_colors = colors_vector)
-# dev.off()
+               add_text = FALSE,
+               color_text_grp = TRUE,
+               custom_colors = viridis::turbo(8))
+dev.off()
+```
 
+```{r}
 # pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_sampleID_scanvi_UMAP.pdf", height = 15, width = 15)
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                dimred_colnames = "umapscanvi", 
@@ -700,12 +754,10 @@ custom_dimplot(metadata = ipsc_obj@meta.data %>%
 ```
 
 ```{r fig.height=10, fig.width=10}
-# pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_harmony_UMAP.pdf", height = 15, width = 15)
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                dimred_colnames = "umaprpca", 
                colorby = "subtype_standardized",
                custom_colors = colors_vector)
-# dev.off()
 
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                dimred_colnames = "umaprpca", 
@@ -713,13 +765,11 @@ custom_dimplot(metadata = ipsc_obj@meta.data,
                custom_colors = colors_vector) + 
   facet_wrap(~subtype_standardized)
 
-# pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_sampleID_harmony_UMAP.pdf", height = 15, width = 15)
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                dimred_colnames = "umaprpca", 
                colorby = "id",
                label_samples = FALSE,
                custom_colors = colors_vector)
-# dev.off()
 ```
 
 ```{r}
@@ -762,13 +812,19 @@ make_3D_umap(metadata = ipsc_obj@meta.data,
              selected_colors =  sample_id_colors)
 ```
 
+```{r}
+table(ipsc_obj@meta.data$subtype_standardized)
+
+```
+
+
 ```{r fig.height=10, fig.width=10}
 set.seed(2023)
 
 subtype_labels <- ipsc_obj@meta.data %>% 
   mutate(subtype_labels = case_when(
     subtype_standardized == "progenitor" ~ "neuroglial\nprogenitor", 
-    subtype_standardized == "schwann" ~ "schwann cell",
+    # subtype_standardized == "schwann" ~ "schwann cell",
     subtype_standardized == "dl3"  ~ "dorsal\ninterneuron 3",
     subtype_standardized == "dl4" ~ "dorsal\ninterneuron 4",
     subtype_standardized == "opc" ~ "oligodendrocyte\nprogenitor",
@@ -776,53 +832,90 @@ subtype_labels <- ipsc_obj@meta.data %>%
     TRUE ~ subtype_standardized)) %>% 
   pull(subtype_labels)
 
-# table(subtype_labels)
-ipsc_obj@meta.data$subtype_labels <- subtype_labels
+table(subtype_labels)
 
-umap_scanvi_plot <- custom_dimplot(metadata = ipsc_obj@meta.data, 
-               dimred_colnames = "umaprpca", 
+cc <- viridis::turbo(8) %>% 
+  set_names(c("astrocyte","dorsal\ninterneuron 3","dorsal\ninterneuron 4", "microglia", "motor neuron", "neuroglial\nprogenitor", "oligodendrocytes", "FOO"))
+cc <- cc[1:7]
+
+# pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_scanvi_3D_UMAP_legend.pdf",   height = 5, width = 4)
+par(mar = c(5,10,5,5))
+barplot(rep(1,length(cc)), col = cc, names.arg = names(cc), 
+        las = 2, horiz = TRUE, axes = FALSE)
+# dev.off()
+
+ipsc_obj@meta.data$subtype_labels <- subtype_labels
+umap_scanvi_plot <- custom_dimplot(metadata = ipsc_obj@meta.data,
+               dimred_colnames = "umapscanvi",
                colorby = "subtype_labels",
                add_text = FALSE,
                ny = c(0,0.5,0.5,rep(0,3),1),
                color_text_grp = TRUE,
                lab_size = 4,
                custom_lab_fill = c("white", rep("black",5), "white"),
-               custom_colors = viridis::turbo(8)) +
+               custom_colors = cc) +
   theme(axis.title = element_text(size=14),
-        axis.text = element_text(size=14), 
+        axis.text = element_text(size=14),
         legend.title = element_blank(),
         legend.text = element_text(size = 16)) +
   guides(color = guide_legend(ncol=4,override.aes = list(size = 4, alpha = 1)))
-  
-# png("figures/day0_day50/CTMR/iPSC_day0-day50_scanvi_celltype_annots_UMAP.png", height = 10, width = 10, units = "in", res = 150)
-# pdf("figures/day0_day50/CTMR/iPSC_day0-day50_scanvi_celltype_annots_UMAP.pdf", height = 10, width = 10)
+
+# png("figures/day0_day50/cell_annotations/iPSC_day0-day50_scanvi_celltype_annots_UMAP.png", height = 10, width = 10, units = "in", res = 125)
+# pdf("figures/day0_day50/cell_annotations/iPSC_day0-day50_scanvi_celltype_annots_UMAP.pdf", height = 10, width = 10)
 umap_scanvi_plot
 # dev.off()
 ```
 
+```{r}
+purrr::map(unique(ipsc_obj@meta.data$time_point), function(x){
+   p <- custom_dimplot(metadata = ipsc_obj@meta.data %>% 
+                    filter(time_point == x),
+               dimred_colnames = "umapscanvi",
+               colorby = "subtype_labels",
+               add_text = FALSE,
+               color_text_grp = TRUE,
+               lab_size = 4,
+               custom_colors = cc) +
+    labs(title = glue("Day {x}")) +
+    theme(axis.title = element_text(size=14),
+          axis.text = element_text(size=14),
+          legend.title = element_blank(),
+          legend.text = element_text(size = 16)) +
+    guides(color = guide_legend(ncol=4,override.aes = list(size = 4, alpha = 1)))
+  
+  # png(glue("figures/day0_day50/cell_annotations/iPSC_day{x}_scanvi_celltype_annots_UMAP.png"), height = 10, width = 10, units = "in", res = 125)
+    pdf(glue("figures/day0_day50/cell_annotations/iPSC_day{x}_scanvi_celltype_annots_UMAP.pdf"), height = 10, width = 10)
+  print(p)
+  dev.off()
+})
+```
+
+
 ```{r fig.height=10, fig.width=10}
-t <- 200
+t <- 45
 p <- 120
 
-ipsc_obj$grps <- as.numeric(as.factor(ipsc_obj$subtype_standardized))
-ipsc_obj$colors <- viridis::turbo(8)[ipsc_obj$grps]
-# ipsc_obj@meta.data %>% 
-#   group_by(subtype_standardized, grps, colors) %>% 
-#   dplyr::count()
+ipsc_obj$grps <- as.numeric(factor(ipsc_obj$subtype_labels, levels = names(cc)))
 
-
-# pdf("Figures/TARGET_AML_ETS_Family_Fusions_plot3D_scatter_3D_long.pdf", height = 10, width = 12)
-plot3D::scatter3D(x=ipsc_obj$umap_1, y=ipsc_obj$umap_2, z=ipsc_obj$umap_3,
+# pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_scanvi_3D_UMAP.pdf", height = 10, width = 12)
+# png("figures/day0_day50/cell_annotations/iPSC_motor_neuron_cell_annotations_scanvi_3D_UMAP.png", height = 10, width = 12, res = 125, units = "in")
+plot3D::scatter3D(x=ipsc_obj$umapscanvi_1, 
+                  y=ipsc_obj$umapscanvi_2,
+                  z=ipsc_obj$umapscanvi_3,
                    bty = "b2",
                   colvar=ipsc_obj$grps,
-                  col=unique(ipsc_obj$colors),
+                  col=alpha(cc,  alpha = 0.25),
                   pch=19,
-                  colkey=TRUE,
-                  # theta=t,
-                  phi=p,
+                  colkey=FALSE,
+                  theta=t,
+                  # phi=p,
                   cex=0.1,
                   scale = FALSE)
+# dev.off()
 ```
+
+
+
 
 # Cell type frequency vs Time
 
@@ -833,133 +926,103 @@ subtype_table <- ipsc_obj@meta.data %>%
   group_by(time_point, subtype_standardized, .drop = FALSE) %>%
   reframe(number_of_cells = n()) %>%
   ungroup() %>% 
+  
   group_by(time_point) %>%
   mutate(total_cells = sum(number_of_cells)) %>% 
   ungroup() %>% 
+  
   mutate(percent_of_cells = round(number_of_cells/total_cells *100, digits = 2)) %>%
   group_by(subtype_standardized) %>%
-  arrange(desc(number_of_cells), .by_group = T)
+  arrange(desc(number_of_cells), .by_group = T) %>% 
+  mutate(subtype_labels = case_when(
+    subtype_standardized == "progenitor" ~ "neuroglial\nprogenitor", 
+    subtype_standardized == "dl3"  ~ "dorsal\ninterneuron 3",
+    subtype_standardized == "dl4" ~ "dorsal\ninterneuron 4",
+    subtype_standardized == "opc" ~ "oligodendrocyte\nprogenitor",
+    subtype_standardized == "motorneurons" ~ "motor neuron",
+    TRUE ~ subtype_standardized)) 
 
 # head(subtype_table)
 subtype_table
+# write.csv(subtype_table, "results/day0_day50/scanvi/iPSC_motor_neuron_day0-day50_time-course_scanvi_predictions_summary_table_v2.csv", row.names = FALSE)
 ```
 
 ```{r fig.height=10, fig.height=10}
-celltypes <- unique(ipsc_obj@meta.data$subtype_standardized)
-celltypes <- celltypes[order(celltypes)]
+# total_cells_plot <- ggplot(subtype_table, 
+#                            aes(x = time_point, y = number_of_cells, group = subtype_standardized)) +
+#   geom_point(aes(color = subtype_standardized), size = 3,
+#              alpha = 0.7) +
+#   geom_line(aes(color = subtype_standardized), linewidth = 0.5, linetype = "dashed") +
+#   scale_color_manual(values = cc2) +
+#   scale_fill_manual(values = cc2) +
+#   theme_bw()
+# total_cells_plot
 
- celltype_colors <- viridis::turbo(8) %>% 
-   set_names(celltypes)
+pct_cells_plot <- ggplot(subtype_table, aes(x = time_point, y = percent_of_cells, group = subtype_labels)) +
+  geom_point(aes(color = subtype_labels), size = 3, alpha=0.7) +
+  geom_line(aes(color = subtype_labels), linewidth = 0.5, linetype = "dashed") +
+  scale_color_manual(values = cc) +
+  scale_fill_manual(values = cc) +
+  theme_bw() +
+  theme(axis.text = element_text(size = 12))
 
-total_cells_plot <- ggplot(subtype_table, aes(x = time_point, y = number_of_cells, group = subtype_standardized)) +
-  # geom_col(aes(fill = subtype_standardized)) +
-  geom_point(aes(color = subtype_standardized), size = 3,
-             alpha = 0.7) +
-  geom_line(aes(color = subtype_standardized), linewidth = 0.5, linetype = "dashed") +
-  scale_color_manual(values = celltype_colors) +
-  scale_fill_manual(values = celltype_colors) +
-  theme_bw()
 
-pct_cells_plot <- ggplot(subtype_table, aes(x = time_point, y = percent_of_cells, group = subtype_standardized)) +
-  # geom_col(aes(fill = subtype_standardized)) +
-  geom_point(aes(color = subtype_standardized), size = 3, alpha=0.7) +
-  geom_line(aes(color = subtype_standardized), linewidth = 0.5, linetype = "dashed") +
-  scale_color_manual(values = celltype_colors) +
-  scale_fill_manual(values = celltype_colors) +
-  theme_bw()
-
-total_cells_plot
-
-# pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_celltypes_per_timepoint_lineplot.pdf")
+# pdf("figures/day0_day50/cell_annotations/iPSC_motor_neuron_celltypes_per_timepoint_lineplot.pdf", height = 5, width = 8)
 pct_cells_plot
 # dev.off()
 ```
 
 # Subclustering 
 
+
 ```{r}
-current_path <- file.path("results/day0_day50/seurat")
-current_obj <- "iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_anno_subclust_seurat_obj_v5.RDS" #v5 Seurat Object
+DefaultAssay(ipsc_obj) <- "SCT"
+ipsc_obj <- FindNeighbors(ipsc_obj,
+                          reduction = "scanvi", 
+                          dims = 1:30, 
+                          k.param = 20,
+                          graph.name = c("SCANVI_nn", "SCANVI_snn"))
 
-if(!exists("ipsc_obj")){
-  ipsc_obj <- readRDS(file.path(current_path,current_obj))
-}
-ipsc_obj
-```
+# Graphs(ipsc_obj)
 
-```{r eval=FALSE}
 Idents(ipsc_obj) <- ipsc_obj$subtype_standardized
-
-dims <- 1:30
-MNs <- subset(ipsc_obj, idents = "motorneurons") %>% 
-  FindNeighbors(reduction = "rpca", 
-                dims = dims, 
-                k.param = 30) %>% 
-  FindClusters(cluster.name = "motorneuron_subclusters", 
-               resolution = 0.25,
-               algorithm = 1, 
-               group.singletons = TRUE)
-MNs_df <- MNs@meta.data
-
-prog <- subset(ipsc_obj, idents = "progenitor") %>% 
-  FindNeighbors(reduction = "rpca", 
-                dims = dims,
-                k.param = 30) %>% 
-  FindClusters(cluster.name = "progenitor_subclusters", 
-               resolution = 0.25,
-               algorithm = 1, 
-               group.singletons = TRUE)
-prog_df <- prog@meta.data
+ipsc_obj <- FindSubCluster(ipsc_obj, 
+                           cluster = "motorneurons", 
+                           subcluster.name = "motorneurons_clusters",
+                           graph.name = "SCANVI_snn",
+                           resolution = 0.1) %>% 
+            FindSubCluster(cluster = "progenitor", 
+                           subcluster.name = "progenitor_clusters",
+                           graph.name = "SCANVI_snn", 
+                           resolution = 0.25)
 
 
-table(prog_df$progenitor_subclusters) %>% length() #8
-table(MNs_df$motorneuron_subclusters) %>% length() #9
-# use an ensembl based algorith to tune the res jaccard index/siloutte values 
+ipsc_obj@meta.data %>% 
+  filter(grepl("day27", orig.ident)) %>% 
+  select(1:2, subtype_standardized, motorneurons_clusters, progenitor_clusters) %>% 
+  head()
 
-prog_df%>% 
-    make_3D_umap(metadata = ., 
-              idents_column = c(paste0("umaprpca", "_",1:3)), 
-              label_cols = c("progenitor_subclusters","id","batch"), 
-              selected_colors = colors_vector)
-
-MNs_df %>%
-  make_3D_umap(metadata = .,
-              idents_column = c(paste0("umaprpca", "_",1:3)),
-              label_cols = c("motorneuron_subclusters","id","batch"),
-              selected_colors = colors_vector)
-
-# define the subclusters
-# create new subtype labels with the unsupervised subclusters
-mn_prog_subclusts <- prog_df %>% 
-  select(barcode, progenitor_subclusters, subtype_standardized) %>% 
-  bind_rows(., select(MNs_df, barcode, motorneuron_subclusters, subtype_standardized)) %>% 
-  bind_rows(., select(ipsc_obj@meta.data, subtype_standardized) %>% 
-              filter(!grepl("motor|prog", subtype_standardized))) %>% 
-  
-  mutate_at(vars(progenitor_subclusters,motorneuron_subclusters), ~ifelse(is.na(.), "", .)) %>% 
-  unite(col = "subclusters", progenitor_subclusters,motorneuron_subclusters,
-        sep = "", remove = F) %>% 
-  mutate(subtype_standardized_subclusters = ifelse(subclusters != "", 
-                              paste(subtype_standardized, subclusters, sep="_"), 
-                              subtype_standardized),
-         barcode_merged = rownames(.)) %>% 
-  set_rownames(value = NULL) %>% 
-  column_to_rownames("barcode_merged") %>%
-  select(subtype_standardized_subclusters)
-
-# table(mn_prog_subclusts)[order(table(mn_prog_subclusts))]
+# table(ipsc_obj$motorneurons_clusters)
+# table(ipsc_obj$progenitor_clusters)
 
 # Add the metadata
-ipsc_obj <- AddMetaData(ipsc_obj, mn_prog_subclusts)
-length(unique(ipsc_obj$subtype_standardized_subclusters)) #22
+mn_prog_subclusts <- ipsc_obj@meta.data %>% 
+  mutate(subtype_standardized_subclusters = case_when(
+   subtype_standardized == "progenitor" ~ progenitor_clusters,
+   subtype_standardized == "motorneurons" ~ motorneurons_clusters,
+   TRUE ~ subtype_standardized
+  )) %>% 
+  pull(subtype_standardized_subclusters, name = barcode)
+  
+# table(mn_prog_subclusts)
+ipsc_obj <- AddMetaData(ipsc_obj, metadata = mn_prog_subclusts, col.name = "subtype_standardized_subclusters")
+length(unique(ipsc_obj$subtype_standardized_subclusters)) #19
+table(ipsc_obj$subtype_standardized_subclusters)
 
 job::job({
-  saveRDS(ipsc_obj,"results/day0_day50/seurat/iPSC_MN_day0-day50_time-course_filtered_merged_soupX_normalized_RPCA_anno_subclust_seurat_obj_v5.RDS")
+  saveRDS(ipsc_obj,"results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_anno_seurat_obj_v5.RDS")
 }, import = c("ipsc_obj"))
-
-rm(MNs, prog)
 ```
-
 
 ```{r fig.height=15, fig.width=10}
 DimPlot(ipsc_obj, 
@@ -967,14 +1030,14 @@ DimPlot(ipsc_obj,
         repel = TRUE,
         label.size = 4,
         group.by = "subtype_standardized_subclusters",
-        reduction = "umap.rpca") +
+        reduction = "umap.scanvi") +
   scale_color_manual(values = colors_vector) +
   theme(legend.position = "top")
 ```
 
 ```{r fig.height=10}
 subcluster_3d <-   make_3D_umap(metadata = ipsc_obj@meta.data,
-              idents_column = c(paste0("umaprpca", "_",1:3)),
+              idents_column = c(paste0("umapscanvi", "_",1:3)),
               label_cols = c("subtype_standardized_subclusters","id","batch"),
               selected_colors = colors_vector)
 
@@ -986,14 +1049,8 @@ subcluster_3d
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                colorby = "subtype_standardized", 
                add_text = FALSE,
-               dimred_colnames = "", 
+               dimred_colnames = "umapscanvi", 
                custom_colors = brewer.pal(7,"Set3"))
-
-custom_dimplot(metadata = ipsc_obj@meta.data, 
-               colorby = "subtype_standardized_subclusters", 
-               dimred_colnames = "", 
-               lab_size = 3,
-               custom_colors = colors_vector)
 
 custom_dimplot(metadata = ipsc_obj@meta.data, 
                dimred_colnames = "umapscanvi", 
@@ -1015,12 +1072,15 @@ make_degs_df <- function(df){
 }
 ```
 
+## Cell types 
+
 ```{r eval=FALSE}
 ipsc_obj <- PrepSCTFindMarkers(ipsc_obj)
 
 Idents(ipsc_obj) <- ipsc_obj$subtype_standardized_subclusters
 degs_subclusters <- FindAllMarkers(ipsc_obj,
                                    assay ="SCT",
+                                   test.use = "MAST",
                                    logfc.threshold = 0.25,
                                    min.pct = 0.2, 
                                    min.diff.pct = 0.1, 
@@ -1031,6 +1091,7 @@ degs_subclusters <- FindAllMarkers(ipsc_obj,
 Idents(ipsc_obj) <- ipsc_obj$subtype_standardized
 degs_celltypes <- FindAllMarkers(ipsc_obj,
                                    assay ="SCT",
+                                   test.use = "MAST",
                                    logfc.threshold = 0.25,
                                    min.pct = 0.2, 
                                    min.diff.pct = 0.1, 
@@ -1039,13 +1100,11 @@ degs_celltypes <- FindAllMarkers(ipsc_obj,
                                    return.thresh = 0.001)
 
 subclusters_results <- make_degs_df(degs_subclusters)
-# write.csv(subclusters_results,"results/day0_day50/degs/iPSC_celltypes_subclusters_results_wilcox.test_sct_DEGs.csv", row.names = FALSE)
+write.csv(subclusters_results,"results/day0_day50/degs/iPSC_celltypes_subclusters_results_wilcox.test_sct_DEGs.csv", row.names = FALSE)
 
 celltypes_results <- make_degs_df(degs_celltypes)
-# write.csv(celltypes_results,"results/day0_day50/degs/iPSC_celltypes_wilcox.test_sct_DEGs.csv", row.names = FALSE)
+write.csv(celltypes_results,"results/day0_day50/degs/iPSC_celltypes_wilcox.test_sct_DEGs.csv", row.names = FALSE)
 ```
-
-## cell types
 
 ```{r}
 celltypes_results <- read.csv("results/day0_day50/degs/iPSC_celltypes_wilcox.test_sct_DEGs.csv")
@@ -1060,6 +1119,186 @@ celltypes_results %>%
   dplyr::top_n(n = 5, wt = avg_log2FC) %>% 
   ungroup()
 ```
+
+## Day0 iPSC
+
+```{r}
+DefaultAssay(ipsc_obj) <- "SCT"
+ipsc_obj <- PrepSCTFindMarkers(ipsc_obj)
+```
+
+
+```{r}
+day0_meta <- ipsc_obj@meta.data %>% 
+  filter(time_point == 0)
+
+ref_cells <- day0_meta %>% 
+  filter(subtype_standardized == "progenitor") %>% 
+  pull(barcode)
+
+dl3_cells <- day0_meta %>% 
+  filter(subtype_standardized == "dl3") %>% 
+  pull(barcode)
+
+microglia <- day0_meta %>% 
+  filter(subtype_standardized == "microglia") %>% 
+  pull(barcode)
+
+table(day0_meta$subtype_standardized)
+```
+
+
+```{r}
+Idents(ipsc_obj) <- ipsc_obj$orig.ident
+check_annots <- c("dl3", "microglia")
+
+day0_DE <- purrr::map(1:2, function(i){
+  comp_group <- check_annots[i]
+  print(comp_group)
+  FindMarkers(object = ipsc_obj, 
+              ident.1 = comp_group,
+              ident.2 = "progenitor",
+              subset.ident = "iPSC_ipsc",
+              group.by = "subtype_standardized",
+              assay ="SCT",
+              test.use = "MAST",
+              min.cells.feature = 5,
+              min.cells.group = 5)
+})
+names(day0_DE) <- check_annots
+```
+
+This gene encodes an adaptor protein that belongs to the bicaudal D family of dynein cargo adaptors. The encoded protein acts as an intracellular cargo transport cofactor that regulates the microtubule-based loading of cargo onto the dynein motor complex. It also controls dynein motor activity and coordination. It has a domain architecture consisting of coiled-coil domains at the N- and C-termini that are highly conserved in other family members. Naturally occurring mutations in this gene are associated with short telomere length and emphysema. [provided by RefSeq, Aug 2017]
+
+GeneCards Summary for BICD1 Gene
+BICD1 (BICD Cargo Adaptor 1) is a Protein Coding gene. Diseases associated with BICD1 include Spinal Muscular Atrophy With Lower Extremity Predominant and Central Corneal Ulcer.
+
+```{r}
+day0_DE$microglia$cluster <- "microglia"
+microglia <- make_degs_df(rownames_to_column(day0_DE$microglia, "gene"))
+
+microglia
+```
+
+```{r}
+day0_DE$dl3$cluster <- "dl3"
+
+dl3 <- make_degs_df(rownames_to_column(day0_DE$dl3, "gene"))
+
+dl3
+```
+
+```{r}
+# https://github.com/regan-hamel/h-iPSCs-MNI/blob/master/R%20workflow_iMNs_LThiry_2020.Rmd
+marker_genes_iPSC <- list(MNPCs = c("CHAT", "ISL1", "ISL2", "MNX1", "OLIG2", "NEUROG2"),
+                INs = c("PAX3", "VSX2", "GATA3", "SOX14", "SIM1", "LBX1", "TLX3"),
+                NPCs = c("SOX1", "SOX2", "MKI67"),
+                Glial = c("SOX9", "S100B", "GFAP"),
+                Oligodendrocytes = c("PDGFRA", "GALC"),
+                iPSCs = c("NANOG", "POU5F1"))
+```
+
+```{r}
+mat <- ipsc_obj[["SCT"]]@data[dl3$gene,c(dl3_cells, ref_cells)]
+mat <- as.matrix(mat)
+dim(mat)
+```
+
+```{r fig.height = 7, width = 10}
+Idents(ipsc_obj) <- ipsc_obj$orig.ident
+VlnPlot(object = ipsc_obj,
+            features = marker_genes_iPSC$iPSCs,
+            group.by = "subtype_standardized",
+            idents = "iPSC_ipsc", 
+        assay = "SCT",
+        layer = "data")
+
+
+VlnPlot(object = ipsc_obj,
+            features = marker_genes_iPSC$MNPCs,
+            group.by = "subtype_standardized",
+            idents = "iPSC_ipsc", 
+        assay = "SCT",
+        layer = "data")
+
+
+VlnPlot(object = ipsc_obj,
+            features = marker_genes_iPSC$INs,
+            group.by = "subtype_standardized",
+            idents = "iPSC_ipsc", 
+        assay = "SCT",
+        layer = "data")
+```
+
+```{r}
+dorsal_IN_markers <- unlist(rayon_marker_gene_list[grep("rayon_Neuron_dl", names(rayon_marker_gene_list))]) %>% 
+  unique() %>% 
+  base::intersect(., rownames(ipsc_obj[["SCT"]]@data))
+
+length(dorsal_IN_markers)
+```
+
+```{r}
+dorsal_IN_expn_df <- ipsc_obj[["SCT"]]@data[dorsal_IN_markers,c(dl3_cells, ref_cells)] %>% 
+  as.matrix() %>% 
+  as.data.frame() %>% 
+  rownames_to_column("gene") %>% 
+  pivot_longer(cols = -gene) %>% 
+  left_join(., day0_meta, by = c("name"="barcode"))
+
+head(dorsal_IN_expn_df)
+```
+
+```{r fig.height=10, fig.width=15}
+ggplot(dorsal_IN_expn_df, aes(x = subtype_standardized, y = value)) +
+  geom_boxplot(aes(fill = subtype_standardized)) +
+  theme_classic()
+```
+
+```{r fig.height = 7, width = 10}
+
+VlnPlot(object = ipsc_obj,
+            features = rayon_marker_gene_list$rayon_Neuron_dl3,
+            group.by = "subtype_standardized",
+            idents = "iPSC_ipsc", 
+        assay = "SCT",
+        layer = "data")
+
+VlnPlot(object = ipsc_obj,
+            features = rayon_marker_gene_list$rayon_Progenitor_Null_Progenitor,
+            group.by = "subtype_standardized",
+            idents = "iPSC_ipsc", 
+        assay = "SCT",
+        layer = "data")
+```
+
+```{r fig.height=15, fig.width=15}
+colors <- colorRampPalette(c(paste("dodgerblue",4:1), "white",paste("red",1:4)))(299)
+pheatmap::pheatmap(mat = mat,
+                   annotation_col = select(day0_meta,
+                                           id, subtype_standardized),
+                   scale = "row",
+                   color = colors, 
+                   clustering_method = "ward.D2",
+                   labels_col = FALSE,
+                   fontsize_row = 4)
+```
+
+
+```{r fig.height=10, fig.width=15}
+Idents(ipsc_obj) <- ipsc_obj$subtype_standardized
+DoHeatmap(
+  object = ipsc_obj,
+  features = dl3$gene,
+  cells = c(dl3_cells, ref_cells),
+  group.by = "ident",
+  group.bar = TRUE,
+  disp.min = 0, 
+  disp.max = 1,
+  slot = "data",
+  assay = "SCT") 
+```
+
 
 ## Subclusters 
 
