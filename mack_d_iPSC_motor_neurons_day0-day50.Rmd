@@ -1471,6 +1471,14 @@ bplot2
 ```
 
 
+```{r}
+threshold_summary_update <- read.csv("results/day0_day50/seurat/filtering_stats/mack_iPSC_MN_day0-day50_cell_filtering_final_threshold_summary.csv")
+```
+```{r}
+sum(threshold_summary_update$input_number_cells) # 98,532
+sum(threshold_summary_update$output_number_cells) # 86,954
+```
+
 # SoupX
 
 SoupX
@@ -1893,7 +1901,7 @@ rm(merged_norm_obj)
 # }
 
 if(!exists("merged_norm_obj")){
-  merged_norm_obj <- readRDS("results/day0_day50/seurat/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
+  merged_norm_obj <- readRDS("results/day0_day50/seurat/non_integrated/iPSC_motor_neuron_day0-day50_time-course_filtered_merged_soupX_normalized_seurat_obj_v5.RDS")
 }
 
 # Add metadata and idents
