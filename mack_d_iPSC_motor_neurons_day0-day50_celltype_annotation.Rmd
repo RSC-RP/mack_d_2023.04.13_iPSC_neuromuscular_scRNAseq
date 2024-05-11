@@ -38,6 +38,7 @@ library(glue)
 library(ggplot2)
 library(plotly)
 library(RColorBrewer)
+library(clusterProfiler)
 
 library(Seurat)
 library(reticulate)
@@ -209,11 +210,21 @@ options(future.globals.maxSize = 60000 * 1024^2)
 # Genomic References 
 
 ```{r}
-features <- read.csv("results/filtered_feature_bc_features.csv", row.names = 1) %>% 
-  filter(!grepl("^MT-", gene_name))
-
-dim(features) # 33525     5
+# https://github.com/regan-hamel/h-iPSCs-MNI/blob/master/R%20workflow_iMNs_LThiry_2020.Rmd
+marker_genes_iPSC <- list(MNPCs = c("CHAT", "ISL1", "ISL2", "MNX1", "OLIG2", "NEUROG2"),
+                INs = c("PAX3", "VSX2", "GATA3", "SOX14", "SIM1", "LBX1", "TLX3"),
+                NPCs = c("SOX1", "SOX2", "MKI67"),
+                Glial = c("SOX9", "S100B", "GFAP"),
+                Oligodendrocytes = c("PDGFRA", "GALC"),
+                iPSCs = c("NANOG", "POU5F1"))
 ```
+
+```{r}
+gobb <- clusterProfiler::read.gmt("resources/gene_sets/c5.go.bp.v2023.2.Hs.symbols.gmt")
+
+c5.hpo <-  clusterProfiler::read.gmt("resources/gene_sets/c5.hpo.v2023.2.Hs.symbols.gmt")
+```
+
 
 # Celltype Reference 
 
@@ -1075,7 +1086,7 @@ make_degs_df <- function(df){
 ## Cell types 
 
 ```{r eval=FALSE}
-ipsc_obj <- PrepSCTFindMarkers(ipsc_obj)
+# ipsc_obj <- PrepSCTFindMarkers(ipsc_obj)
 
 Idents(ipsc_obj) <- ipsc_obj$subtype_standardized_subclusters
 degs_subclusters <- FindAllMarkers(ipsc_obj,
@@ -1083,7 +1094,7 @@ degs_subclusters <- FindAllMarkers(ipsc_obj,
                                    test.use = "MAST",
                                    logfc.threshold = 0.25,
                                    min.pct = 0.2, 
-                                   min.diff.pct = 0.1, 
+                                   min.diff.pct = 0.2, 
                                    min.cells.feature = 10,
                                    min.cells.group = 10, 
                                    return.thresh = 0.001)
@@ -1094,30 +1105,32 @@ degs_celltypes <- FindAllMarkers(ipsc_obj,
                                    test.use = "MAST",
                                    logfc.threshold = 0.25,
                                    min.pct = 0.2, 
-                                   min.diff.pct = 0.1, 
+                                   min.diff.pct = 0.2, 
                                    min.cells.feature = 10,
                                    min.cells.group = 10, 
                                    return.thresh = 0.001)
 
 subclusters_results <- make_degs_df(degs_subclusters)
-write.csv(subclusters_results,"results/day0_day50/degs/iPSC_celltypes_subclusters_results_wilcox.test_sct_DEGs.csv", row.names = FALSE)
+write.csv(subclusters_results,"results/day0_day50/degs/iPSC_celltypes_subclusters_results_sct_MAST_DEGs.csv", row.names = FALSE)
 
 celltypes_results <- make_degs_df(degs_celltypes)
-write.csv(celltypes_results,"results/day0_day50/degs/iPSC_celltypes_wilcox.test_sct_DEGs.csv", row.names = FALSE)
+# write.csv(celltypes_results,"results/day0_day50/degs/iPSC_celltypes_sct_MAST_DEGs.csv", row.names = FALSE)
 ```
 
 ```{r}
-celltypes_results <- read.csv("results/day0_day50/degs/iPSC_celltypes_wilcox.test_sct_DEGs.csv")
+celltypes_results <- read.csv("results/day0_day50/degs/iPSC_celltypes_sct_MAST_DEGs.csv")
 celltypes_results
 dim(celltypes_results)
 ```
 
 ```{r}
-celltypes_results %>% 
+top10 <- celltypes_results %>% 
   mutate(diff = pct.1 - pct.2) %>% 
   group_by(cluster) %>% 
-  dplyr::top_n(n = 5, wt = avg_log2FC) %>% 
+  dplyr::top_n(n = 10, wt = avg_log2FC) %>% 
   ungroup()
+
+# write.csv(top10, "results/day0_day50/degs/iPSC_celltypes_sct_MAST_DEGs.csv", row.names = FALSE)
 ```
 
 ## Day0 iPSC
@@ -1126,7 +1139,6 @@ celltypes_results %>%
 DefaultAssay(ipsc_obj) <- "SCT"
 ipsc_obj <- PrepSCTFindMarkers(ipsc_obj)
 ```
-
 
 ```{r}
 day0_meta <- ipsc_obj@meta.data %>% 
@@ -1178,31 +1190,43 @@ day0_DE$microglia$cluster <- "microglia"
 microglia <- make_degs_df(rownames_to_column(day0_DE$microglia, "gene"))
 
 microglia
+# write.csv(microglia, "results/day0_day50/scanvi/iPSC_motor_neuron_day0_MicrogliavsProgenitor_DEGs.csv", row.names = FALSE)
 ```
+
 
 ```{r}
 day0_DE$dl3$cluster <- "dl3"
 
-dl3 <- make_degs_df(rownames_to_column(day0_DE$dl3, "gene"))
+dl3 <- make_degs_df(rownames_to_column(day0_DE$dl3, "gene")) %>% 
+  left_join(.,ipsc_obj[["RNA"]]@meta.data, by = c("gene"="gene_name_fix"))
 
-dl3
+head(dl3)
+# write.csv(dl3, "results/day0_day50/scanvi/iPSC_motor_neuron_day0_DL3vsProgenitor_DEGs.csv", row.names = FALSE)
 ```
 
-```{r}
-# https://github.com/regan-hamel/h-iPSCs-MNI/blob/master/R%20workflow_iMNs_LThiry_2020.Rmd
-marker_genes_iPSC <- list(MNPCs = c("CHAT", "ISL1", "ISL2", "MNX1", "OLIG2", "NEUROG2"),
-                INs = c("PAX3", "VSX2", "GATA3", "SOX14", "SIM1", "LBX1", "TLX3"),
-                NPCs = c("SOX1", "SOX2", "MKI67"),
-                Glial = c("SOX9", "S100B", "GFAP"),
-                Oligodendrocytes = c("PDGFRA", "GALC"),
-                iPSCs = c("NANOG", "POU5F1"))
-```
 
 ```{r}
-mat <- ipsc_obj[["SCT"]]@data[dl3$gene,c(dl3_cells, ref_cells)]
-mat <- as.matrix(mat)
-dim(mat)
+in_genes <- filter(dl3,
+                   p_val_adj < 0.001)  %>% 
+arrange(desc(avg_log2FC)) %>% 
+distinct()
+dim(in_genes) #202
+
+dl3_gsea_res <- GSEA(geneList = pull(in_genes, avg_log2FC, name = gene_name),
+                            pvalueCutoff = 0.05, 
+                            TERM2GENE = bind_rows(gobb, c5.hpo),
+                            seed = seed_val)@result 
+
+dl3_gsea_res <- dl3_gsea_res %>% 
+  janitor::clean_names() %>% 
+  select(id,nes,p_adjust, set_size,
+         everything())
+
+dl3_gsea_res
+# write.csv(dl3_gsea_res,"results/day0_day50/scanvi/iPSC_motor_neuron_day0_DL3vsProgenitor_GSEA.csv")
 ```
+
+
 
 ```{r fig.height = 7, width = 10}
 Idents(ipsc_obj) <- ipsc_obj$orig.ident
@@ -1239,24 +1263,30 @@ length(dorsal_IN_markers)
 ```
 
 ```{r}
-dorsal_IN_expn_df <- ipsc_obj[["SCT"]]@data[dorsal_IN_markers,c(dl3_cells, ref_cells)] %>% 
-  as.matrix() %>% 
+dl3_upreg <- dl3 %>% 
+  filter(avg_log2FC > 0, p_val_adj < 0.001)
+
+
+dl3_upreg_expn_df <- ipsc_obj[["SCT"]]@data[dl3_upreg$gene,c(dl3_cells, ref_cells)] %>% 
   as.data.frame() %>% 
   rownames_to_column("gene") %>% 
   pivot_longer(cols = -gene) %>% 
   left_join(., day0_meta, by = c("name"="barcode"))
 
-head(dorsal_IN_expn_df)
+head(dl3_upreg_expn_df)
+quantile(dl3_upreg_expn_df$value, probs = c(0.5, 0.75, 0.9, 0.95, 1))
 ```
 
+
+
 ```{r fig.height=10, fig.width=15}
-ggplot(dorsal_IN_expn_df, aes(x = subtype_standardized, y = value)) +
-  geom_boxplot(aes(fill = subtype_standardized)) +
+ggplot(dl3_upreg_expn_df, aes(x = subtype_standardized, y = value)) +
+  geom_boxplot(aes(fill = subtype_standardized),
+               outlier.colour = NA) +
   theme_classic()
 ```
 
 ```{r fig.height = 7, width = 10}
-
 VlnPlot(object = ipsc_obj,
             features = rayon_marker_gene_list$rayon_Neuron_dl3,
             group.by = "subtype_standardized",
@@ -1273,8 +1303,13 @@ VlnPlot(object = ipsc_obj,
 ```
 
 ```{r fig.height=15, fig.width=15}
+mat <- ipsc_obj[["SCT"]]@data[dl3$gene,c(dl3_cells, ref_cells)]
+mat <- as.matrix(mat)
+dim(mat)
+
+
 colors <- colorRampPalette(c(paste("dodgerblue",4:1), "white",paste("red",1:4)))(299)
-pheatmap::pheatmap(mat = mat,
+pheatmap::pheatmap(mat = mat[in_genes$gene, ],
                    annotation_col = select(day0_meta,
                                            id, subtype_standardized),
                    scale = "row",
@@ -1284,20 +1319,6 @@ pheatmap::pheatmap(mat = mat,
                    fontsize_row = 4)
 ```
 
-
-```{r fig.height=10, fig.width=15}
-Idents(ipsc_obj) <- ipsc_obj$subtype_standardized
-DoHeatmap(
-  object = ipsc_obj,
-  features = dl3$gene,
-  cells = c(dl3_cells, ref_cells),
-  group.by = "ident",
-  group.bar = TRUE,
-  disp.min = 0, 
-  disp.max = 1,
-  slot = "data",
-  assay = "SCT") 
-```
 
 
 ## Subclusters 
