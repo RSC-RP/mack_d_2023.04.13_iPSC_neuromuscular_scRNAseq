@@ -138,7 +138,6 @@ clean_standardize_annots <- function(seurat_obj){
   seurat_obj$tissue <- age_tissue_clean$tissue_clean
   seurat_obj$age_clean <- age_tissue_clean$age_clean
 
-
   annots_table_clean <- seurat_obj@meta.data %>% 
     mutate(class_label_standardized = case_when(
       grepl("Astr|Oligo|Micro", top_level_annotation) ~ "glia",
@@ -161,23 +160,29 @@ clean_standardize_annots <- function(seurat_obj){
         grepl("Oligo", top_level_annotation) ~ "oligodendrocytes",
         # grepl("N[Uu][Ll]", subtype_annotation) ~ "esc_neuron",
         grepl("Neuro", top_level_annotation) & !grepl("Moto|^MN", subtype_annotation) ~ "neuron", 
-        # grepl("Neuro", top_level_annotation) & grepl("IEG", subtype_annotation) ~ "IEG_neuron",
-        # grepl("Neuro", top_level_annotation) & !grepl("Moto|^MN", subtype_annotation) ~ paste0("sc_",gsub("^.+(dorsal|ventral|mid).+", "\\1", description),"_neuron"),
         grepl("Neuro", top_level_annotation) & grepl("Moto|^MN", subtype_annotation) ~ "motorneurons",
         grepl("DRG_Progenitor", top_level_annotation) ~ "progenitor",
         TRUE ~ tolower(top_level_annotation)
       ), 
-      
+    
       subtype_standardized = case_when(
+        grepl("Neuro", top_level_annotation) & grepl("^V|-V-", subtype_annotation) ~ "ventral_interneuron",
+        grepl("Neuro", top_level_annotation) & grepl("^d|-Dorsal-",subtype_annotation) ~ "dorsal_interneuron",
+        grepl("Neuro", top_level_annotation) & grepl("-M-",subtype_annotation) ~ "midcervical_interneuron",
+        grepl("Progenitor", top_level_annotation) & grepl("dp", subtype_annotation) ~ "dorsal_progenitor",
+        grepl("Progenitor", top_level_annotation) & grepl("p[0-9]", subtype_annotation) ~ "ventral_progenitor",
+        grepl("Progenitor", top_level_annotation) & grepl("RP", subtype_annotation) ~ "rp_progenitor",
         grepl("pMN", subtype_annotation) ~ "pMN",
-        grepl("Neuro", top_level_annotation) & !grepl("Moto|^MN", subtype_annotation) ~ gsub("-[0-9]{1,2}$","", subtype_annotation) %>% 
-                                                                                                  gsub(".+\\s(.+)$", "\\1", .) %>% gsub("\\/|-","_", .),
-        TRUE ~ top_level_standardized)) %>% 
+        grepl("Neuro", top_level_annotation) & 
+          !grepl("Moto|^MN", subtype_annotation) ~ gsub("-[0-9]{1,2}$","", subtype_annotation) %>% 
+                                                      gsub(".+\\s(.+)$", "\\1", .) %>% gsub("\\/|-","_", .),
+        TRUE ~ top_level_standardized), 
+      subtype_standardized_tissue = case_when(
+        grepl("Allen_M1", dataset) ~ paste(subtype_standardized, "amc", sep = "-"),
+        grepl("Rayon_2021", dataset) ~ paste(subtype_standardized, "esc", sep = "-"),
+        grepl("yadav_2023", dataset) ~ paste(subtype_standardized, "asc", sep = "-")
+      )) %>% 
     select(matches("standardized"))
-  
-  # head(annots_table_clean)
-  dim(annots_table_clean)
-  
   
   # Update the metadata
   if(!all(colnames(annots_table_clean) %in% colnames(seurat_obj@meta.data))){
@@ -1845,26 +1850,19 @@ merged_scanvi_obj <- DietSeurat(merged_split_obj, assays = "RNA")
 # re-join layers since convertFormat expects a Seurat v3 object, not v5
 merged_scanvi_obj <- JoinLayers(merged_scanvi_obj)
 merged_scanvi_obj[["RNA"]] <- as(object = merged_scanvi_obj[["RNA"]], Class = "Assay")
-# log-normalize for finding variable genes 
+# log-normalize 
 merged_scanvi_obj <- NormalizeData(merged_scanvi_obj)  
-
-
 merged_scanvi_obj
 rm(merged_split_obj)
 gc()
-# table(merged_scanvi_obj$subtype_standardized)
-# table(merged_scanvi_obj$donor)
-# table(merged_scanvi_obj$dataset)
-```
 
-```{r eval=FALSE}
 cell_type_table <- merged_scanvi_obj@meta.data %>% 
   group_by(dataset, subtype_standardized) %>% 
   dplyr::count() %>% 
   pivot_wider(names_from = dataset, values_from = n) %>% 
   mutate(across(Allen_M1:yadav_2023, ~ifelse(is.na(.), 0,.)))
 
-# write.csv(cell_type_table, "results/integrated_ref/Allen_Rayon_Yadav_integrated_standardized_celltype_labels_table.csv", row.names = FALSE)
+# write.csv(cell_type_table, "results/integrated_ref/Allen_Rayon_Yadav_integrated_standardized_celltype_labels_table_v2.csv", row.names = FALSE)
 ```
 
 https://anndata.readthedocs.io/en/latest/generated/anndata.AnnData.html
@@ -1939,8 +1937,9 @@ adata <- anndata::AnnData(
                 lognorm = tr_norm_mat)
 )
 # remove large objects from memory
-rm(tr_counts_mat)
-rm(merged_scanvi_obj)
+# rm(tr_counts_mat)
+# rm(tr_norm_mat)
+# rm(merged_scanvi_obj)
 gc()
 
 # save another copy of the raw dataset in the object 
@@ -1957,10 +1956,11 @@ dim(adata) # 18,273 genes
 
 # find highly variable genes using pearson residuals
 # will replace adata.X with pearson residuals
+# Expects raw count input
 #https://scanpy.readthedocs.io/en/stable/generated/scanpy.experimental.pp.highly_variable_genes.html
 sc$experimental$pp$highly_variable_genes(
     adata,
-    n_top_genes=5000L,
+    n_top_genes=7000L,
     subset=TRUE,
     layer="counts", #Layer to use as input instead of X
     flavor="pearson_residuals",
@@ -1977,8 +1977,8 @@ sc$experimental$pp$highly_variable_genes(
 # )
 
 # Save the Highly variable gene list for reference later 
-# write.csv(adata$var, "results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_pearson_residuals_HVG.csv")
-dim(adata) # 87711 by  5000 genes
+# write.csv(adata$var, "results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_n7000_pearson_residuals_HVG.csv")
+dim(adata) # 87711
 
 # run setup_anndata, use column  dataset for batch and donor 
 # specify to use raw counts layer in model training, since it does its own normalization internally
@@ -1993,13 +1993,13 @@ scvi$model$SCVI$setup_anndata(adata,
 # min(round((20000 / adata$shape[1]) * 400), 400) # 91 max_epochs by default for training
 
 # Save the adata object
-# anndata::write_h5ad(adata, 
-                    # filename = file.path("results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_pre-training_adata.h5ad"))
+# anndata::write_h5ad(adata,
+# filename = file.path("results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_pre-training_adata_v2.h5ad"))
 ```
 
 ```{r eval=FALSE}
 if (!exists("adata")){
-  adata <- anndata::read_h5ad(file.path("results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_pre-training_adata.h5ad"))
+  adata <- anndata::read_h5ad(file.path("results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_pre-training_adata_v2.h5ad"))
 }
 
 # set seed for randomization 
@@ -2037,17 +2037,19 @@ model$train(accelerator = 'cpu',
 # time: 3:01:55 hrs
 model_dir <- "results/integrated_ref/scanvi"
 model$save(dir_path = model_dir, 
-           prefix = 'embryonic_adult_spinal_cord_motor_cortex', 
+           prefix = 'embryonic_adult_spinal_cord_motor_cortex_v2', 
            save_anndata = TRUE, overwrite=TRUE)
 model
 ```
 
 ```{r, eval=FALSE}
-adata <- anndata::read_h5ad(filename = "results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortexadata.h5ad")
+if(!exists("model")){
+  adata <- anndata::read_h5ad(filename = "results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_v2adata.h5ad")
+  load the trained model
+  model <- scvi$model$SCVI$load(dir_path = "results/integrated_ref/scanvi",
+                                prefix = 'embryonic_adult_spinal_cord_motor_cortex_v2')
+}
 
-# load the trained model
-model <- scvi$model$SCVI$load(dir_path = "results/integrated_ref/scanvi", 
-                              prefix = 'embryonic_adult_spinal_cord_motor_cortex')
 
 SCVI_NORMALIZED_KEY <- "scvi_normalized"
 SCVI_LATENT_KEY <- "X_scVI"
@@ -2055,10 +2057,9 @@ norm_cts <- model$get_normalized_expression(library_size=1e4) #should this be 1e
 latent <- model$get_latent_representation()
 
 # unable to assign obsm in reticulate/anndataR in the same way as `adata$layers['my_data'] <- matrix()`. Limitation of the package currently. 
-# DOES NOT WORK: adata$obsm['my_dim_red'] <- pca.out.mat
 # https://github.com/theislab/zellkonverter/issues/75
 adata_update <- AnnData(
-  X = tr_norm_mat[,adata$var_names], #use log-norm counts for benchmarking
+  X = adata$X,
   obs = adata$obs, 
   var = adata$var, 
   uns = adata$uns,
@@ -2068,19 +2069,12 @@ adata_update <- AnnData(
                 "scvi_normalized" = norm_cts)
 )
 
-# adata_update
-# adata_update$X %>% quantile()
-# adata_update$layers[['counts']] %>% quantile()
-# adata_update$layers[['scvi_normalized']] %>% quantile()
-```
-
-```{r eval=FALSE}
 # run PCA then generate UMAP plots of the unintegrated data 
 sc$tl$pca(adata_update, n_comps=30L, use_highly_variable=TRUE)
 sc$pp$neighbors(adata_update, n_pcs=30L, n_neighbors=20L)
 sc$tl$umap(adata_update, min_dist=0.3)
 
-pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_subtype_standardized_unintegrated_UMAP.pdf", height = 15, width = 20)
+pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_subtype_standardized_unintegrated_UMAP_v2.pdf", height = 15, width = 20)
 sc$pl$umap(
     adata_update,
     color=c("subtype_standardized"),
@@ -2088,7 +2082,7 @@ sc$pl$umap(
 )
 dev.off()
 
-pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_dataset_donor_unintegrated_UMAP.pdf", height = 10, width = 20)
+pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_dataset_donor_unintegrated_UMAP_v2.pdf", height = 10, width = 20)
 sc$pl$umap(
     adata_update,
     color= c('dataset','donor'),
@@ -2102,7 +2096,7 @@ dev.off()
 sc$pp$neighbors(adata_update, use_rep=SCVI_LATENT_KEY)
 sc$tl$umap(adata_update, min_dist=0.3)
 
-pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_subtype_standardized_scvi_UMAP.pdf", height = 15, width = 20)
+pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_subtype_standardized_scvi_UMAP_v2.pdf", height = 15, width = 20)
 sc$pl$umap(
     adata_update,
     color=c("subtype_standardized"),
@@ -2110,7 +2104,7 @@ sc$pl$umap(
 )
 dev.off()
 
-pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_dataset_donor_scvi_UMAP.pdf", height = 10, width = 20)
+pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_dataset_donor_scvi_UMAP_v2.pdf", height = 10, width = 20)
 sc$pl$umap(
     adata_update,
     color=c('dataset','donor'),
@@ -2119,7 +2113,7 @@ sc$pl$umap(
 )
 dev.off()
 
-pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_motorneuron_scvi_UMAP.pdf", height = 10, width = 12)
+pdf("figures/cell_refs/allen_yadav_rayon_integrated/subset/scanvi/scanvi_motorneuron_scvi_UMAP_v2.pdf", height = 10, width = 12)
 sc$pl$umap(
     adata_update,
     color=c('motorneuron'),
@@ -2154,7 +2148,7 @@ scanvi_model$train(accelerator = 'cpu',
 # Saving consists of saving the model neural network weights, as well as parameters used to initialize the model.
 model_dir <- "results/integrated_ref/scanvi"
 scanvi_model$save(dir_path = model_dir,
-                  prefix = 'embryonic_adult_spinal_cord_motor_cortex_scanvi_',
+                  prefix = 'embryonic_adult_spinal_cord_motor_cortex_scanvi_v2_',
                   save_anndata = TRUE, overwrite=TRUE)
 scanvi_model
 ```
@@ -2163,7 +2157,7 @@ scanvi_model
 scanvi_dir <- "results/integrated_ref/scanvi/"
 if(!exists("scanvi_model")){
   scanvi_model <- scvi$model$SCANVI$load(dir_path = scanvi_dir, 
-                                       prefix = "embryonic_adult_spinal_cord_motor_cortex_scanvi_")
+                                       prefix = "embryonic_adult_spinal_cord_motor_cortex_scanvi_v2_")
 }
 if(!exists("adata_update")){
   adata_update <- anndata::read_h5ad("results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_scanvi_adata.h5ad")
@@ -2400,6 +2394,8 @@ saveRDS(merged_split_obj, "results/integrated_ref/embryonic_adult_spinal_cord_mo
 ```
 
 ```{r fig.height=10, fig.width=10}
+merged_split_obj <- readRDS("results/integrated_ref/embryonic_adult_spinal_cord_motor_cortex_integrated_normalized_dimred_seurat_obj_v4.RDS")
+
 DimPlot(merged_split_obj,
         label = TRUE,
         repel = TRUE,
@@ -2423,13 +2419,6 @@ if(!exists("merged_split_obj")){
 }
 
 merged_split_obj
-```
-
-```{r}
-merged_split_obj@meta.data %>% 
-  filter(subtype_standardized == "microglia") %>% 
-  select(dataset, top_level_annotation,subtype_standardized) %>% 
-  distinct()
 ```
 
 ```{r eval=FALSE}
@@ -2522,6 +2511,101 @@ names(plots2) <- unique(top_marker_genes$cluster)
 ```{r fig.height=20, fig.width=20}
 plots2$motorneurons
 plots2$oligodendrocytes
+```
+
+# Ventral vs Dorsal Interneurons
+
+```{r}
+cell_type_table <- read.csv("results/integrated_ref/Allen_Rayon_Yadav_integrated_cell_ref_subtype_standardized_table.csv")
+cell_type_table
+```
+
+VSX1 (for V2b), SIM1 (for V3), NKX2-2 (for V3), 
+
+
+```{r}
+pearson_hvgs <- as.data.frame(adata$var) %>% 
+  rownames_to_column("gene")
+  # read.csv("results/integrated_ref/scanvi/embryonic_adult_spinal_cord_motor_cortex_pearson_residuals_HVG.csv")
+
+ventral_markers <- marker_genes_chun_list[grep("v[0-9]", names(marker_genes_chun_list))] %>% 
+  unlist() %>% 
+  unique()
+
+length(ventral_markers) # 24
+
+ventral_markers_sel <- pearson_hvgs %>% 
+  filter(gene %in% ventral_markers) %>% 
+  arrange(highly_variable_rank,
+          desc(residual_variances))
+
+head(ventral_markers_sel)
+dim(ventral_markers_sel) #16
+# write.csv(ventral_markers_sel, "embryonic_adult_spinal_cord_motor_cortex_integrated_pearson_residuals_VentralInterneuron_genes.csv", row.names = FALSE)
+```
+
+```{r}
+cell_type_table %>% 
+  filter(grepl("^V|_V$", subtype_standardized)) %>% 
+  summarise(total_Rayon = sum(Rayon_2021),
+            total_Yadav = sum(yadav_2023)) # 2,378 ventral in Rayon, and 335 in Yadav
+
+cell_type_table %>% 
+  filter(grepl("^d|_Dorsal$",subtype_standardized)) %>% 
+  summarise(total_Rayon = sum(Rayon_2021),
+            total_Yadav = sum(yadav_2023)) # 12,295 Rayon and 1,102 in Yadav
+```
+
+```{r}
+collapse_interneurons <- cell_type_table %>% 
+  filter(grepl("^V|_V$|^d|_Dorsal$",subtype_standardized)) %>% 
+  mutate(interneuron_subtype = case_when(
+    grepl("^V|_V$", subtype_standardized) ~ "ventral_interneuron",
+    grepl("^d|_Dorsal$",subtype_standardized) ~ "dorsal_interneuron")) %>% 
+  arrange(interneuron_subtype) %>% 
+  rowwise() %>% 
+  mutate(n_cells = sum(Rayon_2021, yadav_2023)) %>% 
+  ungroup() 
+  
+collapse_interneurons
+```
+
+```{r}
+collapse_interneurons %>% 
+  group_by(interneuron_subtype) %>% 
+  summarise(total_cells = sum(n_cells))
+```
+
+```{r}
+# VSX1 (for V2b), SIM1 (for V3), NKX2-2 (for V3),
+rownames(merged_split_obj[["RNA"]]) %>% 
+  grep("VSX1|NKX2-2|SIM1", ., value = TRUE)
+```
+
+```{r fig.height=12, fig.width=20}
+sel_cells <- merged_split_obj@meta.data %>% 
+  filter(grepl("^V|_V$|^d|_Dorsal$|motor",subtype_standardized)) %>% 
+  rownames()
+
+merged_split_obj$interneuron_subtype <-  case_when(
+                    grepl("^V|_V$", merged_split_obj$subtype_standardized) ~ "ventral_interneuron",
+                    grepl("^d|_Dorsal$",merged_split_obj$subtype_standardized) ~ "dorsal_interneuron",
+                    grepl("motor", merged_split_obj$subtype_standardized) ~ "motorneuron") 
+
+Idents(merged_split_obj) <- merged_split_obj$interneuron_subtype
+
+FeaturePlot(merged_split_obj, 
+            cells = sel_cells, label = TRUE, repel = TRUE,
+            features = c("SIM1", "NKX2-2", "VSX1", "OTP"), 
+            reduction = "umap.scanvi",
+            cols = (c(alpha("grey90", 0.2),"dodgerblue1","firebrick")))
+```
+
+```{r fig.height=7,fig.width=10}
+DimPlot(merged_split_obj, 
+        cells = sel_cells, label = TRUE, repel = TRUE,
+        label.size = 6,
+        reduction = "umap.scanvi")
 ```
 
 # Figures

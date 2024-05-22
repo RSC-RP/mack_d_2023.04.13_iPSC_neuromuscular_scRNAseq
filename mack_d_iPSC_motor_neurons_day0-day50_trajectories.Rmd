@@ -1189,18 +1189,10 @@ https://cellrank.readthedocs.io/en/latest/api/_autosummary/kernels/cellrank.kern
 2. use OT transport maps and molecular similarity to **model transitions across and within time points**
 3. row-normalize the resulting cell-cell transition matrix (including all time points) and construct the Markov chain.  
 
-```{r eval=TRUE}
-cr$settings$verbosity = 2L
-
-# Set up the RealTimeKernel
-tmk <-
-cr$kernels$RealTimeKernel$from_moscot(problem =  tp,
-                                           kwargs = list("time_key" = "day",
-                                                         "policy"="sequential"))
-
-# potentially use:
-# cr$kernels$PrecomputedKernel(object = tp$adata$uns$moscot_results$cell_transition$transitions_0_50)
-# tmk$backward
+```{r}
+#  Key in obsp where the transition matrix is stored. The parameters should be stored in adata.uns['{key}_params'].
+tmk <- cr$kernels$RealTimeKernel$from_adata(adata = "results/day0_day50/cellrank/iPSC_MNs_day0-day50_moscot_cellrank_RealTimeKernel.h5ad",
+                                            key = "T_fwd")
 ```
 
 compute_transition_matrix:
@@ -1217,6 +1209,18 @@ compute_transition_matrix
 - do we see the same or similar trends?
 
 ```{r eval=FALSE}
+cr$settings$verbosity = 2L
+
+# Set up the RealTimeKernel
+tmk <-
+cr$kernels$RealTimeKernel$from_moscot(problem =  tp,
+                                           kwargs = list("time_key" = "day",
+                                                         "policy"="sequential"))
+
+# potentially use:
+# cr$kernels$PrecomputedKernel(object = tp$adata$uns$moscot_results$cell_transition$transitions_0_50)
+# tmk$backward
+
 # compute the transition matrix
 # how to determine connection weight cutoffs? - perhaps no worth re-computing if already done in Moscot TemporalProblem
 # https://github.com/theislab/cellrank/issues/946
@@ -1229,15 +1233,13 @@ tmk$compute_transition_matrix(self_transitions="all",
                                                   n_neighbors = 15L))
 
 tmk # Using automatic `threshold` for each coupling separately
-```
-```{r eval=FALSE}
+
 #https://cellrank.readthedocs.io/en/latest/notebooks/tutorials/general/100_getting_started.html#writing-and-reading-a-kernel
 tmk$write_to_adata()
-anndata::write_h5ad(anndata = tmk$adata,
-                    filename = "results/day0_day50/cellrank/iPSC_MNs_day0-day50_moscot_cellrank_RealTimeKernel.h5ad")
+tmk$adata$write_h5ad("results/day0_day50/cellrank/iPSC_MNs_day0-day50_moscot_cellrank_RealTimeKernel.h5ad")
 ```
     
-```{r}
+```{r eval=FALSE}
 transition_mat <- tmk$transition_matrix %>% 
   py_to_r() %>% 
   as.matrix()
@@ -1258,10 +1260,6 @@ job::job({
   saveRDS(transition_mat, file = "results/day0_day50/cellrank/iPSC_MNs_day0-day50_moscot_cellrank_RealTimeKernel_transition_mat.RDS")
 }, import = c("transition_mat"))
 rm(transition_mat)
-```
-
-```{r}
-# corrplot::corrplot(corr = transition_mat)
 ```
 
 ```{r}
@@ -1331,12 +1329,6 @@ https://cellrank.readthedocs.io/en/latest/notebooks/tutorials/estimators/600_ini
 ---> Changho has some experimental data with 2-3 time-points
 
 
-```{r}
-# if(!exists("tmk")){
-#   ipsc_adata <- anndata::read_h5ad("results/day0_day50/cellrank/iPSC_MNs_day0-day50_moscot_cellrank_RealTimeKernel.h5ad")
-#   tmk <- cr$kernels$RealTimeKernel$from_adata(adata = ipsc_adata, key="T_fwd")
-# }
-```
 
 uses the GPCCA algorithm as implemented in pyGPCCA to compute macrostates by maximizing for metastability
 Using the GPCCA algorithm, CellRank generates as coarse-grains a cell-cell transition matrix onto the macro-state level
@@ -1419,17 +1411,39 @@ memberships <- gpcca$adata$obsm$get(key = 'macrostates_fwd_memberships')
 ```
 
 ```{r eval=FALSE}
-gpcca2 <- cr$estimators$GPCCA(tmk) # this works
+gpcca <- cr$estimators$GPCCA(tmk) # this works
 
-gpcca2$compute_schur()
+gpcca$compute_schur(n_components = 40L)
 
-gpcca2$plot_spectrum(real_only=TRUE,
+gpcca$plot_spectrum(real_only=TRUE,
                      save = here::here("figures/tmk_plot_spectrum.pdf"), 
-                     figsize = c(10L,10L), dpi = 125L)
-# gpcca2$compute_macrostates(n_states=11,
-#                           cluster_key="subtype_standardized")
-# 
-# gpcca
+                     figsize = c(10L,10L),
+                     dpi = 125L)
+gpcca$compute_macrostates(n_states=17L,
+                          cluster_key="subtype_standardized")
+
+# Computing `17` macrostates
+# Adding `.macrostates`
+#        `.macrostates_memberships`
+#        `.coarse_T`
+#        `.coarse_initial_distribution
+#        `.coarse_stationary_distribution`
+#        `.schur_vectors`
+#        `.schur_matrix`
+#        `.eigendecomposition`
+#     Finish (0:15:24)
+
+gpcca$predict_terminal_states(allow_overlap = FALSE)
+gpcca$predict_initial_states(allow_overlap = FALSE,
+                             n_states = 1L)
+
+gpcca$write(fname = here::here("results/day0_day50/cellrank/gpcca/iPSC_MNs_day0-day50_moscot_cellrank_gpcca_nstates_17.pickle"),
+            write_adata = TRUE)
+
+```
+
+```{r fig.height=7, fig.width=7}
+gpcca$plot_coarse_T()
 ```
 
 ```{r fig.height=7, fig.width=7}
@@ -1438,6 +1452,15 @@ gpcca$plot_macrostates(which="terminal", discrete=FALSE)
 ```
 
 Macrostates, and their classification as initial or terminal, are written to the GPCCA estimator and can be inspected conveniently via initial_states and terminal_states.
+
+```{r}
+temp <- gpcca$adata$obs %>% 
+  py_to_r() %>% 
+  select(orig.ident, time_point, matches("states_fwd_probs"))
+
+quantile(temp$term_states_fwd_probs)
+quantile(temp$init_states_fwd_probs)
+```
 
 ```{r fig.height=10, fig.width=20}
 # gpcca$plot_macrostates(which="all",
@@ -1448,7 +1471,6 @@ Macrostates, and their classification as initial or terminal, are written to the
 meta <- py_to_r(gpcca$adata$obs) %>% 
   mutate_at(vars(macrostates_fwd,init_states_fwd, term_states_fwd), ~ as.character(.) %>% 
            ifelse(is.na(.), "other",.))
-
 
 # Add metadata
 ipsc_obj <- AddMetaData(ipsc_obj, metadata = select(meta, day:init_states_fwd_probs))
@@ -1489,7 +1511,6 @@ length(unique(meta$macrostates_fwd)) #15
 # tail(colnames(meta), n = 20)
 ```
 
-
 ```{r}
 check <- meta %>% 
   select(orig.ident, time_point, batch,
@@ -1507,26 +1528,17 @@ check %>%
 ```
 
 ```{r}
-meta %>% 
-  filter(subtype_standardized == "dl3") %>% 
-  select(macrostates_fwd, term_states_fwd, init_states_fwd, umapscanvi_1:init_states_fwd_probs) %>% 
-  group_by(macrostates_fwd, term_states_fwd, init_states_fwd) %>% 
-  dplyr::count()
-```
-
-
-```{r}
 class(gpcca$coarse_stationary_distribution)
 gpcca$coarse_stationary_distribution
 ```
 
 ```{r fig.height=10, fig.width=10}
-gpcca$plot_coarse_T(save = here::here("figures/gpcca_plot_coarse_T.pdf"), 
+gpcca$plot_coarse_T(save = here::here("figures/gpcca_nstates_17_plot_coarse_T.pdf"), 
                      figsize = c(10L,10L), dpi = 125L)
 
 
 gpcca$plot_macrostate_composition(key="subtype_standardized",
-                                  save = here::here("figures/gpcca_plot_macrostate_composition.pdf"),
+                                  save = here::here("figures/gpcca_nstates_17_plot_macrostate_composition.pdf"),
                                   figsize=c(15L, 10L), dpi = 125L)
 ```
 
@@ -1545,7 +1557,6 @@ VlnPlot(ipsc_obj, features = "time_point", cols = cc_states) +
   scale_y_continuous(breaks = seq(0,50, by = 2.5))
 
 ```
-
 
 ```{r fig.height=5, fig.width=10, eval=FALSE}
 # marker_genes_iPSC
